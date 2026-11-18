@@ -7,9 +7,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -19,6 +16,9 @@ jobs:
       with:
         distribution: 'temurin'
         java-version: '17'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
 
     - name: Build with Gradle
       uses: gradle/actions/setup-gradle@v3
