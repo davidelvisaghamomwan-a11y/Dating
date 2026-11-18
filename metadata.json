@@ -1,0 +1,6 @@
+{
+  "name": "Kindred",
+  "description": "A dating app with real-time chat, location-based matching, and secure user profile verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

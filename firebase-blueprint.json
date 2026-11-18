@@ -1,0 +1,225 @@
+{
+  "entities": {
+    "PrivateUser": {
+      "title": "PrivateUser",
+      "description": "Private user account preferences, PII, and exact device GPS coordinates.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Authenticated Firebase UID owning this private profile." },
+        "email": { "type": "string", "description": "Google account email address (PII, owner-only)." },
+        "interestedIn": { "type": "string", "enum": ["Everyone", "Women", "Men", "Non-binary"] },
+        "minAgePref": { "type": "integer" },
+        "maxAgePref": { "type": "integer" },
+        "maxDistanceKm": { "type": "integer" },
+        "verifiedOnlyFilter": { "type": "boolean" },
+        "exactLatitude": { "type": "number" },
+        "exactLongitude": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "interestedIn", "minAgePref", "maxAgePref", "maxDistanceKm", "verifiedOnlyFilter", "createdAt", "updatedAt"]
+    },
+    "VerificationRecord": {
+      "title": "VerificationRecord",
+      "description": "Immutable live-camera liveness and face detection audit record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "challengeCode": { "type": "string" },
+        "challengePrompt": { "type": "string" },
+        "faceCount": { "type": "integer" },
+        "faceConfidence": { "type": "number" },
+        "eyesDistancePx": { "type": "number" },
+        "photoSha256": { "type": "string" },
+        "locationVerified": { "type": "boolean" },
+        "googleVerified": { "type": "boolean" },
+        "comparedPhotoCount": { "type": "integer", "description": "Number of profile photos compared against live selfie." },
+        "photoSimilarityScore": { "type": "number", "description": "Composite selfie-to-profile similarity score (0.0 to 1.0)." },
+        "livenessPassed": { "type": "boolean" },
+        "faceMatchPassed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "challengeCode", "challengePrompt", "faceCount", "faceConfidence", "eyesDistancePx", "photoSha256", "locationVerified", "googleVerified", "comparedPhotoCount", "photoSimilarityScore", "livenessPassed", "faceMatchPassed", "createdAt"]
+    },
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Discoverable dating profile card with coarse coordinates, GeoHash index, and verification badge.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "age": { "type": "integer" },
+        "gender": { "type": "string", "enum": ["Woman", "Man", "Non-binary"] },
+        "bio": { "type": "string" },
+        "cityLabel": { "type": "string" },
+        "coarseLatitude": { "type": "number" },
+        "coarseLongitude": { "type": "number" },
+        "geohash": { "type": "string", "description": "Base-32 precision-7 GeoHash of coarse coordinates." },
+        "geohash3": { "type": "string", "description": "Precision-3 GeoHash cell prefix for wide-radius proximity queries." },
+        "geohash4": { "type": "string", "description": "Precision-4 GeoHash cell prefix for local proximity queries." },
+        "interests": { "type": "array" },
+        "photoDataUrl": { "type": "string" },
+        "profilePhotos": { "type": "array", "description": "Up to 4 compressed profile photo data URLs used for display and anti-catfish verification." },
+        "avatarSeed": { "type": "string" },
+        "discoverable": { "type": "boolean" },
+        "verificationStatus": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"] },
+        "verificationId": { "type": "string" },
+        "verificationScore": { "type": "integer" },
+        "verificationHash": { "type": "string" },
+        "verifiedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "verificationStatus", "verificationScore", "createdAt", "updatedAt"]
+    },
+    "GeoCellProfile": {
+      "title": "GeoCellProfile",
+      "description": "GeoHash-partitioned discoverable profile projection for proximity matching.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "geohash": { "type": "string" },
+        "cellPrecision": { "type": "integer" },
+        "displayName": { "type": "string" },
+        "age": { "type": "integer" },
+        "gender": { "type": "string", "enum": ["Woman", "Man", "Non-binary"] },
+        "bio": { "type": "string" },
+        "cityLabel": { "type": "string" },
+        "coarseLatitude": { "type": "number" },
+        "coarseLongitude": { "type": "number" },
+        "interests": { "type": "array" },
+        "photoDataUrl": { "type": "string" },
+        "profilePhotos": { "type": "array" },
+        "avatarSeed": { "type": "string" },
+        "discoverable": { "type": "boolean" },
+        "verificationStatus": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"] },
+        "verificationId": { "type": "string" },
+        "verificationScore": { "type": "integer" },
+        "verificationHash": { "type": "string" },
+        "verifiedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "geohash", "cellPrecision", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "verificationStatus", "verificationScore", "createdAt", "updatedAt"]
+    },
+    "Swipe": {
+      "title": "Swipe",
+      "description": "Directional swipe action from one user to another.",
+      "type": "object",
+      "properties": {
+        "fromUserId": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "direction": { "type": "string", "enum": ["LIKE", "PASS"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fromUserId", "toUserId", "direction", "createdAt"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "Mutual match between two users enabling real-time chat.",
+      "type": "object",
+      "properties": {
+        "participantUids": { "type": "array" },
+        "createdBy": { "type": "string" },
+        "lastMessageText": { "type": "string" },
+        "lastMessageSenderId": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participantUids", "createdBy", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Real-time chat message inside a mutual match.",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "text": { "type": "string" },
+        "messageType": { "type": "string", "enum": ["TEXT", "ICEBREAKER"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["matchId", "senderId", "participantUids", "text", "messageType", "createdAt"]
+    },
+    "UserPresence": {
+      "title": "UserPresence",
+      "description": "Real-time user online and last-seen presence status.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "online": { "type": "boolean" },
+        "lastSeenAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "online", "lastSeenAt", "updatedAt"]
+    },
+    "FcmToken": {
+      "title": "FcmToken",
+      "description": "Device Firebase Cloud Messaging registration token for push notifications.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "token": { "type": "string" },
+        "platform": { "type": "string", "enum": ["android"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "token", "platform", "updatedAt"]
+    },
+    "BlockRecord": {
+      "title": "BlockRecord",
+      "description": "User block record keyed by {blockerUid}_{blockedUid} enforcing mutual exclusion.",
+      "type": "object",
+      "properties": {
+        "blockerUid": { "type": "string" },
+        "blockedUid": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["blockerUid", "blockedUid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/PrivateUser" },
+      "description": "Owner-only private user preferences, PII, and exact coordinates."
+    },
+    "/users/{userId}/verifications/{verificationId}": {
+      "schema": { "$ref": "#/entities/VerificationRecord" },
+      "description": "Immutable live-camera profile verification audit records."
+    },
+    "/publicProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Discoverable public dating profiles with GeoHash prefixes and verified badges."
+    },
+    "/geoCells/{cellId}/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/GeoCellProfile" },
+      "description": "GeoHash cell-partitioned profiles queried by GeoHashMatchingService."
+    },
+    "/swipes/{swipeId}": {
+      "schema": { "$ref": "#/entities/Swipe" },
+      "description": "Swipe actions keyed by {fromUserId}_{toUserId}."
+    },
+    "/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/Match" },
+      "description": "Mutual matches keyed by sorted {uid1}_{uid2}."
+    },
+    "/matches/{matchId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Real-time chat messages within a match."
+    },
+    "/presence/{userId}": {
+      "schema": { "$ref": "#/entities/UserPresence" },
+      "description": "Real-time user online/last-seen presence documents keyed by userId."
+    },
+    "/users/{userId}/fcmTokens/{tokenId}": {
+      "schema": { "$ref": "#/entities/FcmToken" },
+      "description": "Device FCM push notification tokens scoped per authenticated user."
+    },
+    "/blocks/{blockId}": {
+      "schema": { "$ref": "#/entities/BlockRecord" },
+      "description": "User blocking records keyed by {blockerUid}_{blockedUid}."
+    }
+  }
+}
