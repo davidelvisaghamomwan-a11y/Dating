@@ -8,7 +8,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -25,6 +24,18 @@ import kotlinx.coroutines.withContext
 object GoogleAuthHelper {
     private const val TAG = "KindredAuth"
 
+    private fun resolveDefaultWebClientId(context: Context): String? {
+        val resId = context.resources.getIdentifier(
+            "default_web_client_id",
+            "string",
+            context.packageName
+        )
+        if (resId == 0) return null
+        return runCatching { context.getString(resId) }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+    }
+
     fun attemptAutoSignIn(
         context: Context,
         credentialManager: CredentialManager,
@@ -36,9 +47,7 @@ object GoogleAuthHelper {
             onAuthSuccess()
             return
         }
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
+        val clientId = resolveDefaultWebClientId(context) ?: run {
             onUnauthenticated()
             return
         }
@@ -75,10 +84,8 @@ object GoogleAuthHelper {
         onAuthCancelled: () -> Unit,
         scope: CoroutineScope
     ) {
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
-            onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+        val clientId = resolveDefaultWebClientId(context) ?: run {
+            onAuthError("Google Sign-In configuration missing: add app/google-services.json before building.")
             return
         }
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
