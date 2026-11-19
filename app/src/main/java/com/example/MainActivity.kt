@@ -66,6 +66,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -77,6 +78,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.data.KindredRepository
 import com.example.model.UiState
 import com.example.notifications.KindredNotificationHelper
+import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
 import com.example.ui.components.NewMatchCelebrationDialog
 import com.example.ui.screens.AuthScreen
@@ -84,9 +86,11 @@ import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
 import com.example.ui.screens.MatchesAndChatScreen
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.VerificationScreen
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.KindredTheme
+import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
 import com.example.viewmodel.KindredPushAlert
 import com.example.viewmodel.KindredViewModel
@@ -108,6 +112,7 @@ const val ROUTE_MATCHES = "matches"
 const val ROUTE_VERIFY = "verify"
 const val ROUTE_PROFILE = "profile"
 const val ROUTE_EDIT_PROFILE = "edit_profile"
+const val ROUTE_SETTINGS = "settings"
 
 private data class NavTabItem(
     val route: String,
@@ -159,11 +164,18 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 class MainActivity : ComponentActivity() {
     private var pendingDeepLinkMatchId by mutableStateOf<String?>(null)
 
+    private fun extractMatchDeepLink(sourceIntent: Intent?): String? {
+        return sourceIntent?.getStringExtra(KindredNotificationHelper.EXTRA_MATCH_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: sourceIntent?.getStringExtra("matchId")?.takeIf { it.isNotBlank() }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         KindredNotificationHelper.ensureChannels(this)
-        pendingDeepLinkMatchId = intent?.getStringExtra(KindredNotificationHelper.EXTRA_MATCH_ID)
+        pendingDeepLinkMatchId = extractMatchDeepLink(intent)
         setContent {
             KindredTheme {
                 AppNavigation(
@@ -177,7 +189,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val deepLinkId = intent.getStringExtra(KindredNotificationHelper.EXTRA_MATCH_ID)
+        val deepLinkId = extractMatchDeepLink(intent)
         if (!deepLinkId.isNullOrBlank()) {
             pendingDeepLinkMatchId = deepLinkId
         }
@@ -242,9 +254,15 @@ private fun MainKindredApp(
     val newMatchPopup by viewModel.newMatchPopup.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val activeChallenge by viewModel.activeChallenge.collectAsStateWithLifecycle()
+    val aiPhotoGenState by viewModel.aiPhotoGenState.collectAsStateWithLifecycle()
+    val latestLocation by viewModel.latestLocation.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val presenceScope = rememberCoroutineScope()
+    var hasLocationPermission by remember {
+        mutableStateOf(LocationAndGeoHelper.hasLocationPermission(context))
+    }
 
     DisposableEffect(lifecycleOwner, user.uid) {
         var heartbeatJob: Job? = null
@@ -265,7 +283,13 @@ private fun MainKindredApp(
 
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> startForegroundHeartbeat()
+                Lifecycle.Event.ON_START -> {
+                    hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
+                    startForegroundHeartbeat()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
+                }
                 Lifecycle.Event.ON_STOP -> {
                     heartbeatJob?.cancel()
                     heartbeatJob = null
@@ -282,7 +306,15 @@ private fun MainKindredApp(
         }
     }
 
-    val context = LocalContext.current
+    LaunchedEffect(lifecycleOwner, user.uid, hasLocationPermission) {
+        if (!hasLocationPermission) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            LocationAndGeoHelper.observeLocationUpdates(context).collect { resolved ->
+                viewModel.onLiveLocationTick(resolved)
+            }
+        }
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -361,7 +393,11 @@ private fun MainKindredApp(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
         val isInFullScreenChat = !useRail && currentRoute == ROUTE_MATCHES && !selectedMatchId.isNullOrBlank()
-        val hideBottomBar = !useRail && (isInFullScreenChat || currentRoute == ROUTE_EDIT_PROFILE)
+        val hideBottomBar = !useRail && (
+            isInFullScreenChat ||
+                currentRoute == ROUTE_EDIT_PROFILE ||
+                currentRoute == ROUTE_SETTINGS
+            )
 
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
@@ -505,7 +541,16 @@ private fun MainKindredApp(
                                             )
                                         },
                                         onNavigateToProfile = { navigateToTab(ROUTE_PROFILE) },
-                                        onNavigateToVerify = { navigateToTab(ROUTE_VERIFY) }
+                                        onNavigateToVerify = { navigateToTab(ROUTE_VERIFY) },
+                                        onOpenSettings = {
+                                            navController.navigate(ROUTE_SETTINGS) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        latestLocation = latestLocation,
+                                        onLocationPermissionGranted = {
+                                            hasLocationPermission = true
+                                        }
                                     )
                                 }
 
@@ -585,6 +630,24 @@ private fun MainKindredApp(
                                                 launchSingleTop = true
                                             }
                                         },
+                                        onOpenSettings = {
+                                            navController.navigate(ROUTE_SETTINGS) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        aiPhotoGenState = aiPhotoGenState,
+                                        onGenerateAiPhoto = { preset, customDetails, subjectGender, referenceBitmap ->
+                                            viewModel.generateAiProfilePhoto(
+                                                preset = preset,
+                                                customDetails = customDetails,
+                                                subjectGender = subjectGender,
+                                                referenceBitmap = referenceBitmap
+                                            )
+                                        },
+                                        onResetAiPhotoState = { viewModel.resetAiPhotoGenState() },
+                                        onAddGeneratedPhoto = { dataUrl ->
+                                            viewModel.addGeneratedPhotoToProfile(dataUrl)
+                                        },
                                         blockedUsers = data.blockedUsers,
                                         onUnblockUser = { targetUid ->
                                             viewModel.unblockUser(targetUid)
@@ -615,8 +678,43 @@ private fun MainKindredApp(
                                                 onComplete = { navController.popBackStack() }
                                             )
                                         },
+                                        aiPhotoGenState = aiPhotoGenState,
+                                        onGenerateAiPhoto = { preset, customDetails, subjectGender, referenceBitmap ->
+                                            viewModel.generateAiProfilePhoto(
+                                                preset = preset,
+                                                customDetails = customDetails,
+                                                subjectGender = subjectGender,
+                                                referenceBitmap = referenceBitmap
+                                            )
+                                        },
+                                        onResetAiPhotoState = { viewModel.resetAiPhotoGenState() },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_SETTINGS) {
+                                    SettingsScreen(
+                                        myProfile = data.myProfile,
+                                        privateUser = data.privateUser,
+                                        includeDemoProfiles = data.includeDemoProfiles,
+                                        isBusy = isBusy,
+                                        onBack = { navController.popBackStack() },
+                                        onToggleDemoProfiles = { enabled ->
+                                            viewModel.toggleDemoProfiles(enabled)
+                                        },
+                                        onSavePreferences = { interestedIn, minAge, maxAge, maxDist, verifiedOnly, myGender, discoverable ->
+                                            viewModel.saveSettingsPreferences(
+                                                interestedIn = interestedIn,
+                                                minAgePref = minAge,
+                                                maxAgePref = maxAge,
+                                                maxDistanceKm = maxDist,
+                                                verifiedOnlyFilter = verifiedOnly,
+                                                myGender = myGender,
+                                                discoverable = discoverable,
+                                                onComplete = { navController.popBackStack() }
+                                            )
                                         }
                                     )
                                 }

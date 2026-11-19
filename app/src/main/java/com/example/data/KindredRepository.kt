@@ -607,6 +607,174 @@ class KindredRepository(
         }
     }
 
+    /**
+     * Persists dating preferences (interestedIn, age range, radius, verified-only) in /users/{uid}
+     * (creating the private user document if needed) and optionally updates gender & discoverable
+     * visibility atomically across /publicProfiles/{uid} and /geoCells/{cellId}/profiles/{uid}.
+     */
+    suspend fun saveSettingsPreferences(
+        email: String?,
+        interestedIn: String,
+        minAgePref: Int,
+        maxAgePref: Int,
+        maxDistanceKm: Int,
+        verifiedOnlyFilter: Boolean,
+        myGender: String? = null,
+        discoverable: Boolean? = null
+    ): Result<Unit> {
+        var docPath = "users"
+        return try {
+            val uid = requireUserId()
+            val privateRef = db.collection("users").document(uid)
+            val publicRef = db.collection("publicProfiles").document(uid)
+            docPath = privateRef.path
+
+            val safeMin = minAgePref.coerceIn(18, 99)
+            val safeMax = maxAgePref.coerceIn(safeMin, 99)
+            val safeDist = maxDistanceKm.coerceIn(5, 500)
+
+            val privateExists = privateRef.get().await().exists()
+            val publicSnap = publicRef.get().await()
+            val existingPublic = if (publicSnap.exists()) {
+                publicSnap.toObject(PublicProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            } else {
+                null
+            }
+
+            val batch = db.batch()
+            if (privateExists) {
+                val updatePrivate = mutableMapOf<String, Any>(
+                    "interestedIn" to interestedIn,
+                    "minAgePref" to safeMin.toLong(),
+                    "maxAgePref" to safeMax.toLong(),
+                    "maxDistanceKm" to safeDist.toLong(),
+                    "verifiedOnlyFilter" to verifiedOnlyFilter,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (!email.isNullOrBlank()) {
+                    updatePrivate["email"] = email.take(200)
+                }
+                batch.update(privateRef, updatePrivate)
+            } else {
+                val createPrivate = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "interestedIn" to interestedIn,
+                    "minAgePref" to safeMin.toLong(),
+                    "maxAgePref" to safeMax.toLong(),
+                    "maxDistanceKm" to safeDist.toLong(),
+                    "verifiedOnlyFilter" to verifiedOnlyFilter,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (!email.isNullOrBlank()) {
+                    createPrivate["email"] = email.take(200)
+                }
+                batch.set(privateRef, createPrivate)
+            }
+
+            if (existingPublic != null && (myGender != null || discoverable != null)) {
+                val nextGender = myGender ?: existingPublic.gender
+                val nextDiscoverable = discoverable ?: existingPublic.discoverable
+                if (nextGender != existingPublic.gender || nextDiscoverable != existingPublic.discoverable) {
+                    docPath = publicRef.path
+                    batch.update(
+                        publicRef,
+                        mapOf(
+                            "gender" to nextGender,
+                            "discoverable" to nextDiscoverable,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                    val geohash = existingPublic.geohash.ifBlank {
+                        GeoHashUtils.encode(
+                            existingPublic.coarseLatitude,
+                            existingPublic.coarseLongitude,
+                            precision = 7
+                        )
+                    }
+                    val geoProfilePayload = buildGeoCellPayload(
+                        uid = uid,
+                        displayName = existingPublic.displayName,
+                        age = existingPublic.age,
+                        gender = nextGender,
+                        bio = existingPublic.bio,
+                        cityLabel = existingPublic.cityLabel,
+                        coarseLat = existingPublic.coarseLatitude,
+                        coarseLng = existingPublic.coarseLongitude,
+                        interests = existingPublic.interests,
+                        photoDataUrl = existingPublic.photoDataUrl,
+                        profilePhotos = existingPublic.profilePhotos,
+                        discoverable = nextDiscoverable,
+                        existingPublic = existingPublic,
+                        forceUnverified = false
+                    )
+                    geoService.stageGeoCellIndexMutations(
+                        batch = batch,
+                        userId = uid,
+                        geohash = geohash,
+                        discoverable = nextDiscoverable,
+                        previousGeoHash3 = existingPublic.geohash3,
+                        previousGeoHash4 = existingPublic.geohash4,
+                        baseProfileFields = geoProfilePayload,
+                        createMissingCells = true
+                    )
+                }
+            }
+
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Appends an AI-generated or picked profile photo (up to 4) into the member's Firestore profile.
+     */
+    suspend fun appendProfilePhoto(
+        email: String?,
+        fallbackDisplayName: String?,
+        photoDataUrl: String
+    ): Result<Unit> {
+        val cleanPhoto = photoDataUrl.trim()
+        if (cleanPhoto.isBlank() || cleanPhoto.length > 180_000) {
+            return Result.failure(IllegalArgumentException("Generated image exceeds Firestore photo size limit."))
+        }
+        return try {
+            val uid = requireUserId()
+            val publicSnap = db.collection("publicProfiles").document(uid).get().await()
+            val existingPublic = if (publicSnap.exists()) {
+                publicSnap.toObject(
+                    PublicProfile::class.java,
+                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                )
+            } else {
+                null
+            }
+            val currentPhotos = existingPublic?.allProfilePhotos().orEmpty()
+            val updatedPhotos = when {
+                cleanPhoto in currentPhotos -> currentPhotos
+                currentPhotos.size < 4 -> currentPhotos + cleanPhoto
+                else -> currentPhotos.take(3) + cleanPhoto
+            }
+            updateProfileContent(
+                email = email,
+                fallbackDisplayName = fallbackDisplayName,
+                bio = existingPublic?.bio.orEmpty(),
+                interests = existingPublic?.interests ?: listOf("Coffee", "Hiking"),
+                profilePhotos = updatedPhotos
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, "publicProfiles")
+            Result.failure(e)
+        }
+    }
+
     suspend fun updateLocationCoordinates(
         latitude: Double,
         longitude: Double,

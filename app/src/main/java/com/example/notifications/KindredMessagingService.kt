@@ -35,6 +35,12 @@ class KindredMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
         val data = message.data
+        val currentUid = Firebase.auth.currentUser?.uid
+        val senderId = data["senderId"]
+        if (!currentUid.isNullOrBlank() && senderId == currentUid) {
+            return
+        }
+
         val type = data["type"]?.uppercase()
         val matchId = data["matchId"]
         val title = data["title"] ?: message.notification?.title
@@ -42,7 +48,7 @@ class KindredMessagingService : FirebaseMessagingService() {
         val senderName = data["senderName"] ?: data["partnerName"] ?: title ?: "Kindred"
 
         when (type) {
-            KindredNotificationHelper.TYPE_NEW_MATCH -> {
+            KindredNotificationHelper.TYPE_NEW_MATCH, "MATCH" -> {
                 KindredNotificationHelper.showMatchNotification(
                     context = applicationContext,
                     matchId = matchId,
@@ -51,7 +57,7 @@ class KindredMessagingService : FirebaseMessagingService() {
                 )
             }
 
-            KindredNotificationHelper.TYPE_NEW_MESSAGE -> {
+            KindredNotificationHelper.TYPE_NEW_MESSAGE, "MESSAGE" -> {
                 KindredNotificationHelper.showMessageNotification(
                     context = applicationContext,
                     matchId = matchId,

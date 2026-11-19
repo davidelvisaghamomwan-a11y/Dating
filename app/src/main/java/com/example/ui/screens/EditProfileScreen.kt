@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
@@ -38,6 +40,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -67,8 +70,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.ai.AiPhotoGenUiState
+import com.example.ai.AiPhotoStylePreset
 import com.example.model.KindredConstants
 import com.example.model.PublicProfile
+import com.example.ui.components.AiPhotoStudioSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -87,6 +93,14 @@ fun EditProfileScreen(
         interests: List<String>,
         profilePhotos: List<String>
     ) -> Unit,
+    aiPhotoGenState: AiPhotoGenUiState = AiPhotoGenUiState.Idle,
+    onGenerateAiPhoto: (
+        preset: AiPhotoStylePreset,
+        customDetails: String,
+        subjectGender: String?,
+        referenceBitmap: Bitmap?
+    ) -> Unit = { _, _, _, _ -> },
+    onResetAiPhotoState: () -> Unit = {},
     onStatusMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -99,6 +113,7 @@ fun EditProfileScreen(
     var bio by remember(myProfile) { mutableStateOf(initialBio) }
     var selectedInterests by remember(myProfile) { mutableStateOf(initialInterests) }
     var profilePhotos by remember(myProfile) { mutableStateOf(initialPhotos) }
+    var showAiPhotoStudio by remember { mutableStateOf(false) }
 
     val displayName = (myProfile?.displayName ?: defaultDisplayName).orEmpty().ifBlank { "Member" }
     val avatarSeed = myProfile?.avatarSeed ?: myProfile?.userId ?: "kindred"
@@ -332,6 +347,29 @@ fun EditProfileScreen(
                             }
                         }
 
+                        FilledTonalButton(
+                            onClick = {
+                                onResetAiPhotoState()
+                                showAiPhotoStudio = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("edit_ai_photo_studio_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.AutoAwesome,
+                                contentDescription = null,
+                                tint = CoralRose,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.btn_open_ai_studio),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
                         val photosChangedWhileVerified = myProfile?.isProfileVerified == true &&
                             profilePhotos != initialPhotos
                         if (photosChangedWhileVerified) {
@@ -486,5 +524,29 @@ fun EditProfileScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
         }
+    }
+
+    if (showAiPhotoStudio) {
+        AiPhotoStudioSheet(
+            state = aiPhotoGenState,
+            subjectGender = myProfile?.gender,
+            existingProfilePhotos = profilePhotos,
+            onGenerate = onGenerateAiPhoto,
+            onApplyPhoto = { dataUrl ->
+                profilePhotos = if (profilePhotos.size < 4) {
+                    (profilePhotos + dataUrl).distinct().take(4)
+                } else {
+                    (profilePhotos.take(3) + dataUrl).distinct().take(4)
+                }
+                showAiPhotoStudio = false
+                onResetAiPhotoState()
+                onStatusMessage("AI portrait added — tap Save Changes to publish")
+            },
+            onResetState = onResetAiPhotoState,
+            onDismiss = {
+                showAiPhotoStudio = false
+                onResetAiPhotoState()
+            }
+        )
     }
 }

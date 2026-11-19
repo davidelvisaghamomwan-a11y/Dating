@@ -320,7 +320,7 @@ class GeoHashMatchingService(
                 .filter { !verifiedOnly || it.isProfileVerified }
                 .map { candidate ->
                     val distKm = if (myLat != null && myLng != null) {
-                        LocationAndGeoHelper.haversineDistanceKm(
+                        LocationAndGeoHelper.calculateDistanceKm(
                             myLat,
                             myLng,
                             candidate.coarseLatitude,

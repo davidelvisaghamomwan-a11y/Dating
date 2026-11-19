@@ -43,4 +43,12 @@
     <string name="fcm_messages_channel_name">Messages</string>
     <string name="btn_enable_notifications">Enable Push Alerts</string>
     <string name="btn_unblock">Unblock</string>
+    <string name="settings_title">Dating Preferences</string>
+    <string name="settings_cd">Dating preferences settings</string>
+    <string name="settings_back_cd">Back from settings</string>
+    <string name="btn_save_preferences">Save Preferences</string>
+    <string name="ai_studio_title">AI Photo Studio</string>
+    <string name="btn_open_ai_studio">AI Photo Studio</string>
+    <string name="btn_generate_ai_photo">Generate Portrait</string>
+    <string name="btn_use_ai_photo">Add to Profile Photos</string>
 </resources>

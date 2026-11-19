@@ -1,8 +1,12 @@
 package com.example.viewmodel
 
+import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ai.AiPhotoGenUiState
+import com.example.ai.AiPhotoStylePreset
+import com.example.ai.AiProfilePhotoService
 import com.example.data.KindredRepository
 import com.example.data.SampleProfilesProvider
 import com.example.model.BlockRecord
@@ -25,9 +29,11 @@ import com.example.service.GeoHashSpatialSnapshot
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
 import com.example.util.ResolvedDeviceLocation
+import com.example.util.VerificationAnalyzer
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -45,6 +51,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface KindredPushAlert {
     data class NewMatch(val matchId: String, val partnerName: String) : KindredPushAlert
@@ -92,7 +99,8 @@ class KindredViewModel(
     val currentUserId: String,
     val userEmail: String?,
     val defaultDisplayName: String?,
-    val isEmailVerified: Boolean
+    val isEmailVerified: Boolean,
+    private val aiPhotoService: AiProfilePhotoService = AiProfilePhotoService()
 ) : ViewModel() {
 
     private fun <T> Flow<T>.asFirestoreUiState(label: String): StateFlow<UiState<T>> =
@@ -121,16 +129,35 @@ class KindredViewModel(
     private val usersIBlockedFlow = repository.observeUsersIBlocked(currentUserId)
     private val usersWhoBlockedMeFlow = repository.observeUsersWhoBlockedMe(currentUserId)
 
-    // Real-time GeoHash cell stream keyed by the user's location and search radius
-    private val spatialGeoCellsFlow: Flow<GeoHashSpatialSnapshot?> = combine(
+    private val _latestLocation = MutableStateFlow<ResolvedDeviceLocation?>(null)
+    val latestLocation: StateFlow<ResolvedDeviceLocation?> = _latestLocation.asStateFlow()
+
+    private var lastPersistedGeoLat: Double? = null
+    private var lastPersistedGeoLng: Double? = null
+    private var lastGeoPersistMs: Long = 0L
+
+    private val effectiveLocationFlow: Flow<Triple<PrivateUser?, PublicProfile?, ResolvedDeviceLocation?>> = combine(
         privateUserFlow,
-        myProfileFlow
-    ) { priv, pub ->
-        val lat = priv?.exactLatitude ?: pub?.coarseLatitude
-        val lng = priv?.exactLongitude ?: pub?.coarseLongitude
-        val dist = (priv?.maxDistanceKm ?: 100L).toDouble()
-        if (lat != null && lng != null) SpatialQueryKey(lat, lng, dist) else null
+        myProfileFlow,
+        _latestLocation
+    ) { priv, pub, live ->
+        Triple(priv, pub, live)
     }
+
+    // Real-time GeoHash cell stream keyed by the user's live/stored location and search radius
+    private val spatialGeoCellsFlow: Flow<GeoHashSpatialSnapshot?> = effectiveLocationFlow
+        .map { (priv, pub, live) ->
+            val lat = live?.exactLatitude ?: priv?.exactLatitude ?: pub?.coarseLatitude
+            val lng = live?.exactLongitude ?: priv?.exactLongitude ?: pub?.coarseLongitude
+            val dist = (priv?.maxDistanceKm ?: 100L).toDouble()
+            if (lat != null && lng != null) {
+                SpatialQueryKey(
+                    lat = LocationAndGeoHelper.roundToCoarse(lat),
+                    lng = LocationAndGeoHelper.roundToCoarse(lng),
+                    maxDistanceKm = dist
+                )
+            } else null
+        }
         .distinctUntilChanged()
         .flatMapLatest { key ->
             if (key == null) {
@@ -162,8 +189,7 @@ class KindredViewModel(
     }
 
     val dashboardState: StateFlow<UiState<DashboardSnapshot>> = combine(
-        privateUserFlow,
-        myProfileFlow,
+        effectiveLocationFlow,
         allProfilesFlow,
         spatialGeoCellsFlow,
         outgoingSwipesFlow,
@@ -174,26 +200,28 @@ class KindredViewModel(
         blockingStateFlow
     ) { values ->
         @Suppress("UNCHECKED_CAST")
-        val privateUser = values[0] as PrivateUser?
-        val myProfile = values[1] as PublicProfile?
+        val locationTriple = values[0] as Triple<PrivateUser?, PublicProfile?, ResolvedDeviceLocation?>
+        val privateUser = locationTriple.first
+        val myProfile = locationTriple.second
+        val liveLocation = locationTriple.third
         @Suppress("UNCHECKED_CAST")
-        val allProfiles = values[2] as List<PublicProfile>
-        val spatialSnapshot = values[3] as GeoHashSpatialSnapshot?
+        val allProfiles = values[1] as List<PublicProfile>
+        val spatialSnapshot = values[2] as GeoHashSpatialSnapshot?
         @Suppress("UNCHECKED_CAST")
-        val swipes = values[4] as List<SwipeRecord>
+        val swipes = values[3] as List<SwipeRecord>
         @Suppress("UNCHECKED_CAST")
-        val matches = values[5] as List<MatchRecord>
+        val matches = values[4] as List<MatchRecord>
         @Suppress("UNCHECKED_CAST")
-        val verifications = values[6] as List<VerificationRecord>
-        val includeDemos = values[7] as Boolean
+        val verifications = values[5] as List<VerificationRecord>
+        val includeDemos = values[6] as Boolean
         @Suppress("UNCHECKED_CAST")
-        val demoSwipes = values[8] as Map<String, String>
-        val blocking = values[9] as BlockingSnapshot
+        val demoSwipes = values[7] as Map<String, String>
+        val blocking = values[8] as BlockingSnapshot
 
         val blockedIds = blocking.allBlockedIds
         val swipedIds = swipes.map { it.toUserId }.toSet() + demoSwipes.keys
-        val myLat = privateUser?.exactLatitude ?: myProfile?.coarseLatitude
-        val myLng = privateUser?.exactLongitude ?: myProfile?.coarseLongitude
+        val myLat = liveLocation?.exactLatitude ?: privateUser?.exactLatitude ?: myProfile?.coarseLatitude
+        val myLng = liveLocation?.exactLongitude ?: privateUser?.exactLongitude ?: myProfile?.coarseLongitude
 
         val minAge = (privateUser?.minAgePref ?: 18L).toInt()
         val maxAge = (privateUser?.maxAgePref ?: 99L).toInt()
@@ -262,7 +290,7 @@ class KindredViewModel(
                 val partnerId = match.participantUids.firstOrNull { it != currentUserId } ?: ""
                 val partnerProfile = profileById[partnerId]
                 val dist = if (myLat != null && myLng != null && partnerProfile != null) {
-                    LocationAndGeoHelper.haversineDistanceKm(
+                    LocationAndGeoHelper.calculateDistanceKm(
                         myLat,
                         myLng,
                         partnerProfile.coarseLatitude,
@@ -368,11 +396,11 @@ class KindredViewModel(
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
 
-    private val _latestLocation = MutableStateFlow<ResolvedDeviceLocation?>(null)
-    val latestLocation: StateFlow<ResolvedDeviceLocation?> = _latestLocation.asStateFlow()
-
     private val _activeChallenge = MutableStateFlow(KindredConstants.VERIFICATION_CHALLENGES.first())
     val activeChallenge: StateFlow<VerificationChallenge> = _activeChallenge.asStateFlow()
+
+    private val _aiPhotoGenState = MutableStateFlow<AiPhotoGenUiState>(AiPhotoGenUiState.Idle)
+    val aiPhotoGenState: StateFlow<AiPhotoGenUiState> = _aiPhotoGenState.asStateFlow()
 
     private val _pushAlerts = MutableSharedFlow<KindredPushAlert>(extraBufferCapacity = 16)
     val pushAlerts: SharedFlow<KindredPushAlert> = _pushAlerts.asSharedFlow()
@@ -499,8 +527,40 @@ class KindredViewModel(
         _activeChallenge.value = list[nextIndex]
     }
 
+    fun onLiveLocationTick(resolved: ResolvedDeviceLocation) {
+        _latestLocation.value = resolved
+        val now = System.currentTimeMillis()
+        val anchorLat = lastPersistedGeoLat
+        val anchorLng = lastPersistedGeoLng
+        val movedKm = if (anchorLat != null && anchorLng != null) {
+            LocationAndGeoHelper.calculateDistanceKm(
+                anchorLat,
+                anchorLng,
+                resolved.exactLatitude,
+                resolved.exactLongitude
+            )
+        } else {
+            Double.MAX_VALUE
+        }
+        if (movedKm >= 0.5 && (now - lastGeoPersistMs) >= 30_000L) {
+            lastPersistedGeoLat = resolved.exactLatitude
+            lastPersistedGeoLng = resolved.exactLongitude
+            lastGeoPersistMs = now
+            viewModelScope.launch {
+                repository.updateLocationCoordinates(
+                    latitude = resolved.exactLatitude,
+                    longitude = resolved.exactLongitude,
+                    cityLabel = resolved.cityLabel
+                )
+            }
+        }
+    }
+
     fun applyResolvedLocation(resolved: ResolvedDeviceLocation) {
         _latestLocation.value = resolved
+        lastPersistedGeoLat = resolved.exactLatitude
+        lastPersistedGeoLng = resolved.exactLongitude
+        lastGeoPersistMs = System.currentTimeMillis()
         viewModelScope.launch {
             val result = repository.updateLocationCoordinates(
                 latitude = resolved.exactLatitude,
@@ -742,6 +802,96 @@ class KindredViewModel(
                 _actionStatusMessage.value = "Discovery preferences updated"
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Save your profile first to store filters"
+            }
+        }
+    }
+
+    fun saveSettingsPreferences(
+        interestedIn: String,
+        minAgePref: Int,
+        maxAgePref: Int,
+        maxDistanceKm: Int,
+        verifiedOnlyFilter: Boolean,
+        myGender: String?,
+        discoverable: Boolean?,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.saveSettingsPreferences(
+                email = userEmail,
+                interestedIn = interestedIn,
+                minAgePref = minAgePref,
+                maxAgePref = maxAgePref,
+                maxDistanceKm = maxDistanceKm,
+                verifiedOnlyFilter = verifiedOnlyFilter,
+                myGender = myGender,
+                discoverable = discoverable
+            )
+            _isBusy.value = false
+            result.onSuccess {
+                _actionStatusMessage.value = "Dating preferences saved to Firestore"
+                onComplete()
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to save dating preferences"
+            }
+        }
+    }
+
+    fun generateAiProfilePhoto(
+        preset: AiPhotoStylePreset,
+        customDetails: String,
+        subjectGender: String?,
+        referenceBitmap: Bitmap? = null
+    ) {
+        if (_aiPhotoGenState.value is AiPhotoGenUiState.Loading) return
+        _aiPhotoGenState.value = AiPhotoGenUiState.Loading
+        viewModelScope.launch {
+            val result = aiPhotoService.generateProfilePortrait(
+                preset = preset,
+                customDetails = customDetails,
+                subjectGender = subjectGender,
+                referenceBitmap = referenceBitmap
+            )
+            result.onSuccess { bitmap ->
+                val dataUrl = withContext(Dispatchers.Default) {
+                    VerificationAnalyzer.compressBitmapToDataUrl(bitmap)
+                }
+                _aiPhotoGenState.value = AiPhotoGenUiState.Success(
+                    bitmap = bitmap,
+                    dataUrl = dataUrl,
+                    styleTitle = preset.title,
+                    usedReferencePhoto = referenceBitmap != null
+                )
+            }.onFailure { err ->
+                _aiPhotoGenState.value = AiPhotoGenUiState.Error(
+                    err.localizedMessage ?: "Could not generate AI profile photo."
+                )
+            }
+        }
+    }
+
+    fun resetAiPhotoGenState() {
+        _aiPhotoGenState.value = AiPhotoGenUiState.Idle
+    }
+
+    fun addGeneratedPhotoToProfile(
+        photoDataUrl: String,
+        onComplete: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.appendProfilePhoto(
+                email = userEmail,
+                fallbackDisplayName = defaultDisplayName,
+                photoDataUrl = photoDataUrl
+            )
+            _isBusy.value = false
+            result.onSuccess {
+                _actionStatusMessage.value = "AI portrait added to your profile photos"
+                onComplete()
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to save AI portrait to profile"
             }
         }
     }

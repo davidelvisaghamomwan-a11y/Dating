@@ -22,6 +22,20 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Accept Android SDK licenses and install SDK 36.1
+        run: |
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ -d "$SDK_DIR" ] && [ ! -w "$SDK_DIR" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$SDK_DIR"
+          fi
+          SDKMANAGER="$SDK_DIR/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --update || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
+
       - name: Prepare debug keystore and env properties
         run: |
           if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
@@ -30,6 +44,7 @@ jobs:
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
           fi
+          ls -la debug.keystore app/google-services.json || true
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
@@ -37,7 +52,7 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4

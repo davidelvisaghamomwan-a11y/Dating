@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.graphics.Bitmap
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -32,12 +33,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,12 +81,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import com.example.R
+import com.example.ai.AiPhotoGenUiState
+import com.example.ai.AiPhotoStylePreset
 import com.example.auth.GoogleAuthHelper
 import com.example.model.BlockedUserItem
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.notifications.KindredNotificationHelper
+import com.example.ui.components.AiPhotoStudioSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.theme.ChampagneGold
@@ -123,6 +129,16 @@ fun ProfileScreen(
         verifiedOnlyFilter: Boolean
     ) -> Unit,
     onEditProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    aiPhotoGenState: AiPhotoGenUiState = AiPhotoGenUiState.Idle,
+    onGenerateAiPhoto: (
+        preset: AiPhotoStylePreset,
+        customDetails: String,
+        subjectGender: String?,
+        referenceBitmap: Bitmap?
+    ) -> Unit = { _, _, _, _ -> },
+    onResetAiPhotoState: () -> Unit = {},
+    onAddGeneratedPhoto: (String) -> Unit = {},
     blockedUsers: List<BlockedUserItem> = emptyList(),
     onUnblockUser: (String) -> Unit = {},
     onNotificationsGranted: () -> Unit = {},
@@ -193,6 +209,7 @@ fun ProfileScreen(
     }
 
     var isFetchingGps by remember { mutableStateOf(false) }
+    var showAiPhotoStudio by remember { mutableStateOf(false) }
 
     // Zero-permission Android Photo Picker supporting up to 4 profile photos (Play Policy compliant)
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -262,10 +279,33 @@ fun ProfileScreen(
                     text = stringResource(R.string.profile_title),
                     style = MaterialTheme.typography.displaySmall
                 )
-                VerifiedShieldBadge(
-                    isVerified = myProfile?.isProfileVerified == true,
-                    score = myProfile?.verificationScore?.toInt()
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    VerifiedShieldBadge(
+                        isVerified = myProfile?.isProfileVerified == true,
+                        score = myProfile?.verificationScore?.toInt()
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("profile_settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = stringResource(R.string.settings_cd),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
             }
 
             // Photo & Account Header Card
@@ -462,6 +502,29 @@ fun ProfileScreen(
                                 modifier = Modifier.padding(10.dp)
                             )
                         }
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            onResetAiPhotoState()
+                            showAiPhotoStudio = true
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("profile_ai_photo_studio_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            tint = CoralRose,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.btn_open_ai_studio),
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     FilledTonalButton(
@@ -910,5 +973,33 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    if (showAiPhotoStudio) {
+        AiPhotoStudioSheet(
+            state = aiPhotoGenState,
+            subjectGender = gender,
+            existingProfilePhotos = profilePhotos,
+            onGenerate = onGenerateAiPhoto,
+            onApplyPhoto = { dataUrl ->
+                profilePhotos = if (profilePhotos.size < 4) {
+                    (profilePhotos + dataUrl).distinct().take(4)
+                } else {
+                    (profilePhotos.take(3) + dataUrl).distinct().take(4)
+                }
+                if (myProfile != null) {
+                    onAddGeneratedPhoto(dataUrl)
+                } else {
+                    onStatusMessage("AI portrait added — tap Save Profile to publish")
+                }
+                showAiPhotoStudio = false
+                onResetAiPhotoState()
+            },
+            onResetState = onResetAiPhotoState,
+            onDismiss = {
+                showAiPhotoStudio = false
+                onResetAiPhotoState()
+            }
+        )
     }
 }

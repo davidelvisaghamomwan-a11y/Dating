@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
@@ -115,7 +116,10 @@ fun DiscoverScreen(
     onLocationError: (String) -> Unit,
     onUpdateFilters: (String, Int, Int, Int, Boolean) -> Unit,
     onNavigateToProfile: () -> Unit,
-    onNavigateToVerify: () -> Unit
+    onNavigateToVerify: () -> Unit,
+    onOpenSettings: () -> Unit = {},
+    latestLocation: ResolvedDeviceLocation? = null,
+    onLocationPermissionGranted: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -142,6 +146,7 @@ fun DiscoverScreen(
         val granted = grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
             grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
         if (granted) {
+            onLocationPermissionGranted()
             fetchAndApplyGps()
         } else {
             onLocationError("Location permission denied. You can still set your city manually in Profile.")
@@ -149,7 +154,8 @@ fun DiscoverScreen(
     }
 
     val maxDistanceKm = (privateUser?.maxDistanceKm ?: 100L).toInt()
-    val cityDisplay = myProfile?.cityLabel ?: "Set location"
+    val isLiveGps = latestLocation?.isLiveGps == true
+    val cityDisplay = latestLocation?.cityLabel ?: myProfile?.cityLabel ?: "Set location"
 
     BoxWithConstraints(
         modifier = Modifier
@@ -213,12 +219,13 @@ fun DiscoverScreen(
                                 Icon(
                                     imageVector = Icons.Filled.MyLocation,
                                     contentDescription = stringResource(R.string.btn_update_location),
-                                    tint = CoralRose,
+                                    tint = if (isLiveGps) EmeraldMint else CoralRose,
                                     modifier = Modifier.size(15.dp)
                                 )
                             }
                             Text(
                                 text = buildString {
+                                    if (isLiveGps) append("Live GPS • ")
                                     append("$cityDisplay • ${maxDistanceKm} km")
                                     if (geoHashMeta != null) {
                                         val cell = geoHashMeta.centerGeoHash.take(geoHashMeta.queryPrecision)
@@ -234,22 +241,46 @@ fun DiscoverScreen(
                     }
                 }
 
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.size(48.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = { showFilterSheet = true },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("open_filters_button")
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.Tune,
-                            contentDescription = "Discovery filters",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
+                        IconButton(
+                            onClick = { showFilterSheet = true },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("open_filters_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Tune,
+                                contentDescription = "Discovery filters",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("discover_settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = stringResource(R.string.settings_cd),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
             }

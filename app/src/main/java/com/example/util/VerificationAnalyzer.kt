@@ -405,23 +405,37 @@ object VerificationAnalyzer {
             try {
                 val inputStream = context.contentResolver.openInputStream(uri) ?: return@withContext null
                 val original = inputStream.use { BitmapFactory.decodeStream(it) } ?: return@withContext null
-                val resized = resizeToMaxDim(original, maxDim = 360)
-
-                var quality = 78
-                var bytes: ByteArray
-                do {
-                    val out = ByteArrayOutputStream()
-                    resized.compress(Bitmap.CompressFormat.JPEG, quality, out)
-                    bytes = out.toByteArray()
-                    quality -= 8
-                } while (bytes.size > 85_000 && quality >= 35)
-
-                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                "data:image/jpeg;base64,$encoded"
+                compressBitmapToDataUrl(original)
             } catch (_: Exception) {
                 null
             }
         }
+
+    suspend fun decodeUriToBitmap(context: Context, uri: Uri, maxDim: Int = 768): Bitmap? =
+        withContext(Dispatchers.IO) {
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri) ?: return@withContext null
+                val original = inputStream.use { BitmapFactory.decodeStream(it) } ?: return@withContext null
+                resizeToMaxDim(original, maxDim = maxDim)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+    fun compressBitmapToDataUrl(bitmap: Bitmap): String {
+        val resized = resizeToMaxDim(bitmap, maxDim = 420)
+        var quality = 82
+        var bytes: ByteArray
+        do {
+            val out = ByteArrayOutputStream()
+            resized.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            bytes = out.toByteArray()
+            quality -= 8
+        } while (bytes.size > 95_000 && quality >= 38)
+
+        val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        return "data:image/jpeg;base64,$encoded"
+    }
 
     fun decodeBase64DataUrl(dataUrl: String?): ImageBitmap? {
         return decodeBitmapFromDataUrl(dataUrl)?.asImageBitmap()

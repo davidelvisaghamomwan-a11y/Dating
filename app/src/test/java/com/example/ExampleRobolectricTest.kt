@@ -33,18 +33,25 @@ import com.example.model.ProfilePhotoComparison
 import com.example.model.PublicProfile
 import com.example.model.UiState
 import com.example.model.UserPresence
+import com.example.ai.AiPhotoGenUiState
+import com.example.ai.AiPhotoStylePresets
+import com.example.ai.AiProfilePhotoService
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
+import com.example.ui.components.AiPhotoStudioContent
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.VerificationScreen
 import com.example.ui.theme.KindredTheme
 import com.example.util.FaceComparisonEngine
 import com.example.util.FaceDescriptor
 import com.example.util.FacePoint
+import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
+import com.example.util.ResolvedDeviceLocation
 import com.google.firebase.Timestamp
 import java.util.Date
 import org.junit.Assert.assertEquals
@@ -796,6 +803,230 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
 
         assertEquals("blocked_user_1", unblockedUid)
+    }
+
+    @Test
+    fun `ai profile photo service builds tailored prompts for text and reference modes`() {
+        val preset = AiPhotoStylePresets.PRESETS.first()
+        val textOnlyPrompt = AiProfilePhotoService.buildPortraitPrompt(
+            preset = preset,
+            customDetails = "linen jacket",
+            subjectGender = "Woman",
+            hasReference = false
+        )
+        assertTrue(textOnlyPrompt.contains("adult woman"))
+        assertTrue(textOnlyPrompt.contains("linen jacket"))
+        assertTrue(textOnlyPrompt.contains(preset.promptGuidance))
+
+        val refPrompt = AiProfilePhotoService.buildPortraitPrompt(
+            preset = preset,
+            customDetails = "",
+            subjectGender = "Man",
+            hasReference = true
+        )
+        assertTrue(refPrompt.contains("strictly preserving their exact facial identity"))
+        assertTrue(refPrompt.contains(preset.promptGuidance))
+    }
+
+    @Test
+    fun `ai photo studio content handles error and success apply flows`() {
+        var appliedDataUrl = ""
+        val sampleBitmap = Bitmap.createBitmap(120, 140, Bitmap.Config.ARGB_8888)
+
+        composeTestRule.setContent {
+            var uiState by remember {
+                mutableStateOf<AiPhotoGenUiState>(
+                    AiPhotoGenUiState.Error("Quota exceeded for preview")
+                )
+            }
+            KindredTheme {
+                AiPhotoStudioContent(
+                    state = uiState,
+                    subjectGender = "Woman",
+                    existingProfilePhotos = emptyList(),
+                    onGenerate = { _, _, _, _ ->
+                        uiState = AiPhotoGenUiState.Success(
+                            bitmap = sampleBitmap,
+                            dataUrl = "data:image/jpeg;base64,GENERATED_OK",
+                            styleTitle = "Golden Hour Rooftop",
+                            usedReferencePhoto = false
+                        )
+                    },
+                    onApplyPhoto = { appliedDataUrl = it },
+                    onResetState = { uiState = AiPhotoGenUiState.Idle }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("ai_error_banner").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Quota exceeded for preview").assertIsDisplayed()
+
+        // Generate triggers transition to Success and clicking apply emits dataUrl
+        composeTestRule.onNodeWithTag("ai_generate_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("ai_result_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("ai_use_photo_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("data:image/jpeg;base64,GENERATED_OK", appliedDataUrl)
+    }
+
+    @Test
+    fun `settings screen updates dating preferences and invokes save callback`() {
+        var savedInterestedIn = ""
+        var savedMinAge = 0
+        var savedMaxAge = 0
+        var savedRadius = 0
+        var savedVerifiedOnly = false
+        var savedGender: String? = null
+        var savedDiscoverable: Boolean? = null
+
+        val profile = PublicProfile(
+            userId = "me",
+            displayName = "Alex",
+            age = 27,
+            gender = "Man",
+            discoverable = true
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                SettingsScreen(
+                    myProfile = profile,
+                    privateUser = null,
+                    includeDemoProfiles = true,
+                    isBusy = false,
+                    onBack = {},
+                    onToggleDemoProfiles = {},
+                    onSavePreferences = { interestedIn, minAge, maxAge, radius, verifiedOnly, myGender, discoverable ->
+                        savedInterestedIn = interestedIn
+                        savedMinAge = minAge
+                        savedMaxAge = maxAge
+                        savedRadius = radius
+                        savedVerifiedOnly = verifiedOnly
+                        savedGender = myGender
+                        savedDiscoverable = discoverable
+                    }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_interested_in_Women").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("settings_verified_only_switch").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("settings_gender_Non-binary").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("settings_discoverable_switch").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("settings_save_preferences_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("Women", savedInterestedIn)
+        assertEquals(20, savedMinAge)
+        assertEquals(45, savedMaxAge)
+        assertEquals(100, savedRadius)
+        assertTrue(savedVerifiedOnly)
+        assertEquals("Non-binary", savedGender)
+        assertEquals(false, savedDiscoverable)
+    }
+
+    @Test
+    fun `realtime location distance recalculates accurately as user moves closer`() {
+        assertEquals(
+            0.0,
+            LocationAndGeoHelper.calculateDistanceKm(37.7749, -122.4194, 37.7749, -122.4194),
+            0.001
+        )
+        // San Francisco Ferry Building to Downtown Oakland (~13-14 km)
+        val sfToOaklandKm = LocationAndGeoHelper.calculateDistanceKm(
+            37.7955, -122.3937,
+            37.8044, -122.2712
+        )
+        assertTrue("Expected ~10.8 km, got $sfToOaklandKm", sfToOaklandKm in 10.0..12.0)
+
+        val candidateProfile = PublicProfile(
+            userId = "candidate_oakland",
+            displayName = "Aria",
+            age = 27,
+            gender = "Woman",
+            coarseLatitude = 37.8044,
+            coarseLongitude = -122.2712,
+            cityLabel = "Oakland, CA",
+            interests = listOf("Coffee")
+        )
+
+        val initialRanked = GeoHashMatchingService.rankAndFilterCandidates(
+            rawProfiles = listOf(candidateProfile),
+            currentUserId = "me",
+            myLat = 37.7955,
+            myLng = -122.3937,
+            myGeoHash = "9q8yy",
+            maxDistanceKm = 50.0,
+            minAge = 18,
+            maxAge = 50,
+            interestedIn = "Everyone",
+            verifiedOnly = false,
+            myInterests = listOf("Coffee"),
+            excludedUserIds = emptySet()
+        )
+        val movedCloserRanked = GeoHashMatchingService.rankAndFilterCandidates(
+            rawProfiles = listOf(candidateProfile),
+            currentUserId = "me",
+            myLat = 37.8040,
+            myLng = -122.2800,
+            myGeoHash = "9q9p1",
+            maxDistanceKm = 50.0,
+            minAge = 18,
+            maxAge = 50,
+            interestedIn = "Everyone",
+            verifiedOnly = false,
+            myInterests = listOf("Coffee"),
+            excludedUserIds = emptySet()
+        )
+
+        assertEquals(1, initialRanked.size)
+        assertEquals(1, movedCloserRanked.size)
+        assertTrue(initialRanked.first().distanceKm > 9.0)
+        assertTrue(movedCloserRanked.first().distanceKm < 1.5)
+    }
+
+    @Test
+    fun `discover screen shows Live GPS indicator and updated city when latestLocation streams`() {
+        val myProfile = PublicProfile(
+            userId = "me",
+            displayName = "Alex",
+            age = 27,
+            cityLabel = "San Francisco, CA"
+        )
+        val liveLocation = ResolvedDeviceLocation(
+            exactLatitude = 37.8044,
+            exactLongitude = -122.2712,
+            coarseLatitude = 37.80,
+            coarseLongitude = -122.27,
+            cityLabel = "Oakland, CA",
+            isLiveGps = true
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                DiscoverScreen(
+                    myProfile = myProfile,
+                    privateUser = null,
+                    geoHashMeta = null,
+                    candidates = emptyList(),
+                    onSwipe = { _, _ -> },
+                    onRefreshLocation = {},
+                    onLocationError = {},
+                    onUpdateFilters = { _, _, _, _, _ -> },
+                    onNavigateToProfile = {},
+                    onNavigateToVerify = {},
+                    latestLocation = liveLocation
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Live GPS • Oakland, CA • 100 km", useUnmergedTree = true)
+            .assertIsDisplayed()
     }
 
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)
