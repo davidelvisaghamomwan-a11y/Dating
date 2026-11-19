@@ -300,94 +300,22 @@ class GeoHashMatchingService(
             myInterests: List<String>,
             excludedUserIds: Set<String>,
             blockedUserIds: Set<String> = emptySet()
-        ): List<DiscoveryCandidate> {
-            val myInterestSet = myInterests.map { it.lowercase() }.toSet()
-
-            return rawProfiles
-                .asSequence()
-                .filter { it.userId != currentUserId }
-                .filter { it.userId !in excludedUserIds }
-                .filter { it.userId !in blockedUserIds }
-                .filter { it.age in minAge..maxAge }
-                .filter { candidate ->
-                    when (interestedIn) {
-                        "Women" -> candidate.gender == "Woman"
-                        "Men" -> candidate.gender == "Man"
-                        "Non-binary" -> candidate.gender == "Non-binary"
-                        else -> true
-                    }
-                }
-                .filter { !verifiedOnly || it.isProfileVerified }
-                .map { candidate ->
-                    val distKm = if (myLat != null && myLng != null) {
-                        LocationAndGeoHelper.calculateDistanceKm(
-                            myLat,
-                            myLng,
-                            candidate.coarseLatitude,
-                            candidate.coarseLongitude
-                        )
-                    } else {
-                        0.0
-                    }
-                    val candidateHash = candidate.geohash.ifBlank {
-                        GeoHashUtils.encode(candidate.coarseLatitude, candidate.coarseLongitude, 7)
-                    }
-                    val sharedPrefix = if (myGeoHash.isNotBlank()) {
-                        GeoHashUtils.sharedPrefixLength(myGeoHash, candidateHash)
-                    } else {
-                        0
-                    }
-                    val proximityScore = computeProximityMatchScore(
-                        distanceKm = distKm,
-                        maxDistanceKm = maxDistanceKm,
-                        sharedGeoPrefix = sharedPrefix,
-                        candidateInterests = candidate.interests,
-                        myInterestSet = myInterestSet,
-                        isVerified = candidate.isProfileVerified
-                    )
-                    DiscoveryCandidate(
-                        profile = candidate.copy(geohash = candidateHash),
-                        distanceKm = distKm,
-                        sharedGeoPrefixLength = sharedPrefix,
-                        proximityMatchScore = proximityScore
-                    )
-                }
-                .filter { myLat == null || it.distanceKm <= maxDistanceKm }
-                .sortedWith(
-                    compareByDescending<DiscoveryCandidate> { it.proximityMatchScore }
-                        .thenBy { it.distanceKm }
-                )
-                .toList()
-        }
-
-        private fun computeProximityMatchScore(
-            distanceKm: Double,
-            maxDistanceKm: Double,
-            sharedGeoPrefix: Int,
-            candidateInterests: List<String>,
-            myInterestSet: Set<String>,
-            isVerified: Boolean
-        ): Int {
-            val safeRadius = maxDistanceKm.coerceAtLeast(1.0)
-            val distanceRatio = (1.0 - (distanceKm / safeRadius)).coerceIn(0.0, 1.0)
-            val distancePoints = (distanceRatio * 50.0).roundToInt()
-
-            val interestPoints = if (myInterestSet.isEmpty()) {
-                10
-            } else {
-                val sharedCount = candidateInterests.count { it.lowercase() in myInterestSet }
-                (sharedCount.coerceAtMost(5) * 5)
-            }
-
-            val verifiedPoints = if (isVerified) 15 else 0
-            val geoCellPoints = when {
-                sharedGeoPrefix >= 5 -> 10
-                sharedGeoPrefix == 4 -> 8
-                sharedGeoPrefix == 3 -> 5
-                else -> 2
-            }
-
-            return (distancePoints + interestPoints + verifiedPoints + geoCellPoints).coerceIn(1, 100)
-        }
+        ): List<DiscoveryCandidate> = MatchingLogicService.filterAndRankCandidates(
+            rawProfiles = rawProfiles,
+            criteria = com.example.model.MatchingCriteria(
+                currentUserId = currentUserId,
+                latitude = myLat,
+                longitude = myLng,
+                geoHash = myGeoHash,
+                maxDistanceKm = maxDistanceKm,
+                minAge = minAge,
+                maxAge = maxAge,
+                interestedIn = interestedIn,
+                verifiedOnly = verifiedOnly,
+                myInterests = myInterests,
+                excludedUserIds = excludedUserIds,
+                blockedUserIds = blockedUserIds
+            )
+        )
     }
 }

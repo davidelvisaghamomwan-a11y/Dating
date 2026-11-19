@@ -17,6 +17,7 @@ import com.example.model.KindredConstants
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
+import com.example.model.MatchingCriteria
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.model.SwipeRecord
@@ -26,6 +27,7 @@ import com.example.model.VerificationChallenge
 import com.example.model.VerificationRecord
 import com.example.service.GeoHashMatchingService
 import com.example.service.GeoHashSpatialSnapshot
+import com.example.service.MatchingLogicService
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
 import com.example.util.ResolvedDeviceLocation
@@ -100,7 +102,8 @@ class KindredViewModel(
     val userEmail: String?,
     val defaultDisplayName: String?,
     val isEmailVerified: Boolean,
-    private val aiPhotoService: AiProfilePhotoService = AiProfilePhotoService()
+    private val aiPhotoService: AiProfilePhotoService = AiProfilePhotoService(),
+    private val matchingService: MatchingLogicService? = null
 ) : ViewModel() {
 
     private fun <T> Flow<T>.asFirestoreUiState(label: String): StateFlow<UiState<T>> =
@@ -220,15 +223,14 @@ class KindredViewModel(
 
         val blockedIds = blocking.allBlockedIds
         val swipedIds = swipes.map { it.toUserId }.toSet() + demoSwipes.keys
-        val myLat = liveLocation?.exactLatitude ?: privateUser?.exactLatitude ?: myProfile?.coarseLatitude
-        val myLng = liveLocation?.exactLongitude ?: privateUser?.exactLongitude ?: myProfile?.coarseLongitude
-
-        val minAge = (privateUser?.minAgePref ?: 18L).toInt()
-        val maxAge = (privateUser?.maxAgePref ?: 99L).toInt()
-        val maxDistKm = (privateUser?.maxDistanceKm ?: 100L).toDouble()
-        val interestedIn = privateUser?.interestedIn ?: "Everyone"
-        val verifiedOnly = privateUser?.verifiedOnlyFilter ?: false
-        val myInterests = myProfile?.interests ?: emptyList()
+        val resolvedPrefs = MatchingLogicService.resolveUserPreferences(
+            userId = currentUserId,
+            privateUser = privateUser,
+            myProfile = myProfile,
+            liveLocation = liveLocation
+        )
+        val myLat = resolvedPrefs.effectiveLatitude
+        val myLng = resolvedPrefs.effectiveLongitude
 
         val myGeoHash = spatialSnapshot?.centerGeoHash ?: if (myLat != null && myLng != null) {
             GeoHashUtils.encode(myLat, myLng, 7)
@@ -264,21 +266,22 @@ class KindredViewModel(
             demoProfiles.forEach { if (!containsKey(it.userId)) put(it.userId, it) }
         }.values.toList()
 
-        val candidates = geoService.rankAndFilterCandidates(
-            rawProfiles = combinedProfiles,
+        val criteria = MatchingCriteria(
             currentUserId = currentUserId,
-            myLat = myLat,
-            myLng = myLng,
-            myGeoHash = myGeoHash,
-            maxDistanceKm = maxDistKm,
-            minAge = minAge,
-            maxAge = maxAge,
-            interestedIn = interestedIn,
-            verifiedOnly = verifiedOnly,
-            myInterests = myInterests,
+            latitude = myLat,
+            longitude = myLng,
+            geoHash = myGeoHash,
+            maxDistanceKm = resolvedPrefs.maxDistanceKm,
+            minAge = resolvedPrefs.minAge,
+            maxAge = resolvedPrefs.maxAge,
+            interestedIn = resolvedPrefs.interestedIn,
+            verifiedOnly = resolvedPrefs.verifiedOnly,
+            myInterests = resolvedPrefs.myInterests,
             excludedUserIds = swipedIds,
             blockedUserIds = blockedIds
         )
+        val candidates = matchingService?.filterAndRankCandidates(combinedProfiles, criteria)
+            ?: MatchingLogicService.filterAndRankCandidates(combinedProfiles, criteria)
 
         val profileById = allProfiles.associateBy { it.userId }
         val matchItems = matches

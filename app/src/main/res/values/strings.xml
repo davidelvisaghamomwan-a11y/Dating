@@ -51,4 +51,8 @@
     <string name="btn_open_ai_studio">AI Photo Studio</string>
     <string name="btn_generate_ai_photo">Generate Portrait</string>
     <string name="btn_use_ai_photo">Add to Profile Photos</string>
+    <string name="discover_mode_deck">Swipe</string>
+    <string name="discover_mode_feed">Feed</string>
+    <string name="cd_switch_to_deck">Switch to swipe deck view</string>
+    <string name="cd_switch_to_feed">Switch to card feed view</string>
 </resources>

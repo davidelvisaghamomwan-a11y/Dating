@@ -2,12 +2,14 @@ package com.example.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -15,6 +17,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -24,16 +27,18 @@ import kotlinx.coroutines.withContext
 object GoogleAuthHelper {
     private const val TAG = "KindredAuth"
 
-    private fun resolveDefaultWebClientId(context: Context): String? {
-        val resId = context.resources.getIdentifier(
-            "default_web_client_id",
-            "string",
-            context.packageName
-        )
-        if (resId == 0) return null
-        return runCatching { context.getString(resId) }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() }
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+
+    private fun resolveServerClientId(context: Context): String? {
+        return try {
+            context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun attemptAutoSignIn(
@@ -47,7 +52,7 @@ object GoogleAuthHelper {
             onAuthSuccess()
             return
         }
-        val clientId = resolveDefaultWebClientId(context) ?: run {
+        val clientId = resolveServerClientId(context) ?: run {
             onUnauthenticated()
             return
         }
@@ -62,14 +67,27 @@ object GoogleAuthHelper {
 
         scope.launch {
             try {
-                val cred = credentialManager.getCredential(context, request).credential
+                val activity = context.findActivity()
+                val result = if (activity != null) {
+                    credentialManager.getCredential(activity, request)
+                } else {
+                    credentialManager.getCredential(context, request)
+                }
+                val cred = result.credential
                 if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                    val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                    Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
-                    onAuthSuccess()
+                    val idToken = GoogleIdTokenCredential.createFrom(cred.data).idToken
+                    if (idToken.isNotBlank()) {
+                        val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
+                        Firebase.auth.signInWithCredential(firebaseCredential).await()
+                        onAuthSuccess()
+                    } else {
+                        onUnauthenticated()
+                    }
                 } else {
                     onUnauthenticated()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 onUnauthenticated()
             }
@@ -84,8 +102,8 @@ object GoogleAuthHelper {
         onAuthCancelled: () -> Unit,
         scope: CoroutineScope
     ) {
-        val clientId = resolveDefaultWebClientId(context) ?: run {
-            onAuthError("Google Sign-In configuration missing: add app/google-services.json before building.")
+        val clientId = resolveServerClientId(context) ?: run {
+            onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
             return
         }
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
@@ -95,15 +113,21 @@ object GoogleAuthHelper {
 
         scope.launch {
             try {
-                val activity = context as? Activity
-                val cred = if (activity != null) {
-                    credentialManager.getCredential(activity, request).credential
+                val activity = context.findActivity()
+                val result = if (activity != null) {
+                    credentialManager.getCredential(activity, request)
                 } else {
-                    credentialManager.getCredential(context, request).credential
+                    credentialManager.getCredential(context, request)
                 }
+                val cred = result.credential
                 if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                    val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                    Firebase.auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
+                    val idToken = GoogleIdTokenCredential.createFrom(cred.data).idToken
+                    if (idToken.isBlank()) {
+                        onAuthError("Google Sign-In returned an empty ID token")
+                        return@launch
+                    }
+                    val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
+                    Firebase.auth.signInWithCredential(firebaseCredential).await()
                     onAuthSuccess()
                 } else {
                     onAuthError("Unexpected credential type returned by Google Sign-In")
@@ -111,6 +135,8 @@ object GoogleAuthHelper {
             } catch (e: GetCredentialCancellationException) {
                 Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
                 onAuthCancelled()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Google Sign-In failed", e)
                 onAuthError(e.localizedMessage ?: "Sign in failed. Please try again.")

@@ -164,7 +164,27 @@ data class DiscoveryCandidate(
     val profile: PublicProfile,
     val distanceKm: Double,
     val sharedGeoPrefixLength: Int = 0,
-    val proximityMatchScore: Int = 0
+    val proximityMatchScore: Int = 0,
+    val sharedInterests: List<String> = emptyList(),
+    val matchReasons: List<String> = emptyList(),
+    val distanceScore: Int = 0,
+    val interestScore: Int = 0,
+    val trustScore: Int = 0
+)
+
+data class MatchingCriteria(
+    val currentUserId: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    val geoHash: String = "",
+    val maxDistanceKm: Double = 50.0,
+    val minAge: Int = 18,
+    val maxAge: Int = 99,
+    val interestedIn: String = "Everyone",
+    val verifiedOnly: Boolean = false,
+    val myInterests: List<String> = emptyList(),
+    val excludedUserIds: Set<String> = emptySet(),
+    val blockedUserIds: Set<String> = emptySet()
 )
 
 data class MatchThreadItem(
