@@ -43,6 +43,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -95,6 +96,7 @@ import com.example.util.PresenceUtils
 import com.example.viewmodel.KindredPushAlert
 import com.example.viewmodel.KindredViewModel
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -178,10 +180,42 @@ class MainActivity : ComponentActivity() {
         pendingDeepLinkMatchId = extractMatchDeepLink(intent)
         setContent {
             KindredTheme {
-                AppNavigation(
-                    pendingDeepLinkMatchId = pendingDeepLinkMatchId,
-                    onConsumeDeepLink = { pendingDeepLinkMatchId = null }
-                )
+                val firebaseReady = remember {
+                    FirebaseApp.getApps(this@MainActivity).isNotEmpty()
+                }
+                if (firebaseReady) {
+                    AppNavigation(
+                        pendingDeepLinkMatchId = pendingDeepLinkMatchId,
+                        onConsumeDeepLink = { pendingDeepLinkMatchId = null }
+                    )
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Firebase Configuration Missing",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Add app/google-services.json (or set the GOOGLE_SERVICES_JSON GitHub secret) and rebuild the APK to enable sign-in and live sync.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
             }
         }
     }
