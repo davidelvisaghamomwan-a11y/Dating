@@ -25,11 +25,15 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -37,11 +41,14 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
@@ -64,13 +71,21 @@ class SwipeCardController internal constructor(
     suspend fun animateSwipe(direction: SwipeDirection) {
         if (isAnimatingOut) return
         isAnimatingOut = true
-        val targetX = if (direction == SwipeDirection.RIGHT) flyDistancePx else -flyDistancePx
-        val targetY = offset.value.y.coerceIn(-120f, 180f) + 90f
-        offset.animateTo(
-            targetValue = Offset(targetX, targetY),
-            animationSpec = tween(durationMillis = 240)
-        )
-        onCommitSwipe(direction)
+        var committed = false
+        try {
+            val targetX = if (direction == SwipeDirection.RIGHT) flyDistancePx else -flyDistancePx
+            val targetY = offset.value.y.coerceIn(-120f, 180f) + 90f
+            offset.animateTo(
+                targetValue = Offset(targetX, targetY),
+                animationSpec = tween(durationMillis = 230)
+            )
+            committed = true
+            onCommitSwipe(direction)
+        } finally {
+            if (!committed) {
+                isAnimatingOut = false
+            }
+        }
     }
 
     suspend fun springBack() {
@@ -78,7 +93,7 @@ class SwipeCardController internal constructor(
         offset.animateTo(
             targetValue = Offset.Zero,
             animationSpec = spring(
-                dampingRatio = 0.68f,
+                dampingRatio = 0.66f,
                 stiffness = Spring.StiffnessMediumLow
             )
         )
@@ -86,23 +101,29 @@ class SwipeCardController internal constructor(
 }
 
 /**
- * Tinder-style 2-card swipe deck driven by Compose's Foundation gesture detector
+ * Tinder-style 3-card stacked swipe deck driven by Compose's Foundation gesture detector
  * (`detectDragGestures`) and `VelocityTracker` for responsive flicks, 2D drag tilt,
- * LIKE/PASS stamps, and smooth background card elevation.
+ * LIKE/PASS stamps, directional edge glow, and smooth background card elevation.
  */
 @Composable
 fun <T> SwipeCardDeck(
     topItem: T,
     topKey: Any,
     nextItem: T?,
+    thirdItem: T? = null,
     onSwiped: (T, SwipeDirection) -> Unit,
     modifier: Modifier = Modifier,
     controllerOut: ((SwipeCardController) -> Unit)? = null,
+    onDragProgressChanged: ((SwipeDirection?, Float) -> Unit)? = null,
     cardContent: @Composable (item: T, isTopCard: Boolean) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
+
+    val latestTopItem by rememberUpdatedState(topItem)
+    val latestOnSwiped by rememberUpdatedState(onSwiped)
+    val latestOnDragProgress by rememberUpdatedState(onDragProgressChanged)
 
     BoxWithConstraints(
         modifier = modifier,
@@ -119,18 +140,50 @@ fun <T> SwipeCardDeck(
             SwipeCardController(
                 offset = offset,
                 flyDistancePx = flyDistancePx,
-                onCommitSwipe = { dir -> onSwiped(topItem, dir) }
+                onCommitSwipe = { dir -> latestOnSwiped(latestTopItem, dir) }
             )
         }
         LaunchedEffect(controller) {
             controllerOut?.invoke(controller)
         }
 
-        val dragFraction = (abs(offset.value.x) / thresholdPx).coerceIn(0f, 1f)
+        val currentX = offset.value.x
+        val dragFraction = (abs(currentX) / thresholdPx).coerceIn(0f, 1f)
+        val activeDragDirection = when {
+            currentX > stampRevealStartPx -> SwipeDirection.RIGHT
+            currentX < -stampRevealStartPx -> SwipeDirection.LEFT
+            else -> null
+        }
+
+        LaunchedEffect(activeDragDirection, dragFraction, topKey) {
+            latestOnDragProgress?.invoke(activeDragDirection, dragFraction)
+        }
+
         var crossedThresholdHaptic by remember(topKey) { mutableStateOf(false) }
         var dragTiltSign by remember(topKey) { mutableFloatStateOf(1f) }
 
-        // Background card smoothly scales and rises as top card is dragged away
+        // Third card in deck peeks softly beneath the second card
+        if (thirdItem != null) {
+            val thirdScale = 0.87f + (0.06f * dragFraction)
+            val thirdAlpha = 0.44f + (0.28f * dragFraction)
+            val thirdTranslationY = with(density) { (22.dp - (10.dp * dragFraction)).toPx() }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .graphicsLayer {
+                        scaleX = thirdScale
+                        scaleY = thirdScale
+                        alpha = thirdAlpha
+                        translationY = thirdTranslationY
+                    }
+            ) {
+                cardContent(thirdItem, false)
+            }
+        }
+
+        // Background second card smoothly scales and rises as top card is dragged away
         if (nextItem != null) {
             val backScale = 0.93f + (0.07f * dragFraction)
             val backAlpha = 0.72f + (0.28f * dragFraction)
@@ -151,7 +204,10 @@ fun <T> SwipeCardDeck(
             }
         }
 
-        // Top interactive card with 2D drag + velocity gesture detector
+        val glowStrokeWidthPx = with(density) { 3.5.dp.toPx() }
+        val glowCornerRadiusPx = with(density) { 28.dp.toPx() }
+
+        // Top interactive card with synchronous 2D drag + velocity gesture detector
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -166,21 +222,43 @@ fun <T> SwipeCardDeck(
                     val normalizedX = (offset.value.x / widthPx).coerceIn(-1.2f, 1.2f)
                     rotationZ = normalizedX * 15f * dragTiltSign
                 }
+                .drawWithContent {
+                    drawContent()
+                    if (activeDragDirection != null && dragFraction > 0.05f) {
+                        val glowColor = if (activeDragDirection == SwipeDirection.RIGHT) {
+                            EmeraldMint
+                        } else {
+                            CoralRose
+                        }
+                        drawRoundRect(
+                            color = glowColor.copy(alpha = 0.72f * dragFraction),
+                            cornerRadius = CornerRadius(glowCornerRadiusPx, glowCornerRadiusPx),
+                            style = Stroke(width = glowStrokeWidthPx)
+                        )
+                    }
+                }
                 .pointerInput(topKey, controller) {
                     val velocityTracker = VelocityTracker()
+                    var currentDrag = Offset.Zero
                     detectDragGestures(
                         onDragStart = { startOffset ->
+                            if (controller.isAnimatingOut) return@detectDragGestures
                             velocityTracker.resetTracking()
+                            currentDrag = offset.value
                             crossedThresholdHaptic = false
                             dragTiltSign = if (startOffset.y > size.height * 0.65f) 0.75f else 1f
+                            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                offset.stop()
+                            }
                         },
                         onDragCancel = {
                             crossedThresholdHaptic = false
                             scope.launch { controller.springBack() }
                         },
                         onDragEnd = {
+                            if (controller.isAnimatingOut) return@detectDragGestures
                             val vx = velocityTracker.calculateVelocity().x
-                            val curX = offset.value.x
+                            val curX = currentDrag.x
                             val targetDirection = when {
                                 curX > thresholdPx || (vx > velocityThresholdPx && curX > stampRevealStartPx) ->
                                     SwipeDirection.RIGHT
@@ -200,19 +278,20 @@ fun <T> SwipeCardDeck(
                             if (controller.isAnimatingOut) return@detectDragGestures
                             change.consume()
                             velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            val nextOffset = Offset(
-                                x = offset.value.x + dragAmount.x,
-                                y = (offset.value.y + dragAmount.y * 0.55f)
+                            currentDrag = Offset(
+                                x = currentDrag.x + dragAmount.x,
+                                y = (currentDrag.y + dragAmount.y * 0.55f)
                                     .coerceIn(-160f, 160f)
                             )
-                            if (!crossedThresholdHaptic && abs(nextOffset.x) >= thresholdPx) {
+                            if (!crossedThresholdHaptic && abs(currentDrag.x) >= thresholdPx) {
                                 crossedThresholdHaptic = true
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            } else if (crossedThresholdHaptic && abs(nextOffset.x) < thresholdPx * 0.85f) {
+                            } else if (crossedThresholdHaptic && abs(currentDrag.x) < thresholdPx * 0.85f) {
                                 crossedThresholdHaptic = false
                             }
-                            scope.launch {
-                                offset.snapTo(nextOffset)
+                            val snapped = currentDrag
+                            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                offset.snapTo(snapped)
                             }
                         }
                     )
@@ -220,9 +299,9 @@ fun <T> SwipeCardDeck(
         ) {
             cardContent(topItem, true)
 
-            if (offset.value.x > stampRevealStartPx) {
+            if (activeDragDirection == SwipeDirection.RIGHT) {
                 SwipeDecisionStamp(
-                    text = "LIKE",
+                    text = stringResource(R.string.swipe_like_label),
                     color = EmeraldMint,
                     alpha = dragFraction,
                     tiltDegrees = -14f,
@@ -231,9 +310,9 @@ fun <T> SwipeCardDeck(
                         .padding(start = 24.dp, top = 76.dp)
                         .testTag("swipe_like_stamp")
                 )
-            } else if (offset.value.x < -stampRevealStartPx) {
+            } else if (activeDragDirection == SwipeDirection.LEFT) {
                 SwipeDecisionStamp(
-                    text = "PASS",
+                    text = stringResource(R.string.swipe_pass_label),
                     color = CoralRose,
                     alpha = dragFraction,
                     tiltDegrees = 14f,

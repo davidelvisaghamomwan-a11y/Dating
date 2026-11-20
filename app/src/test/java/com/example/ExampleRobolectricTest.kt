@@ -16,7 +16,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -30,8 +29,6 @@ import com.example.model.KindredConstants
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
-import com.example.model.MatchingCriteria
-import com.example.model.PrivateUser
 import com.example.model.ProfilePhotoComparison
 import com.example.model.PublicProfile
 import com.example.model.UiState
@@ -41,7 +38,6 @@ import com.example.ai.AiPhotoStylePresets
 import com.example.ai.AiProfilePhotoService
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
-import com.example.service.MatchingLogicService
 import com.example.ui.components.AiPhotoStudioContent
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.DiscoverScreen
@@ -1034,257 +1030,70 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `matching logic service filters by firestore location and preferences and computes shared interests`() {
-        val myPrivate = PrivateUser(
-            userId = "me",
-            interestedIn = "Women",
-            minAgePref = 24L,
-            maxAgePref = 34L,
-            maxDistanceKm = 25L,
-            verifiedOnlyFilter = true,
-            exactLatitude = 37.7749,
-            exactLongitude = -122.4194
+    fun `discover card deck buttons trigger swipes and undo restores last card`() {
+        val recordedSwipes = mutableListOf<Pair<String, String>>()
+        val myProfile = PublicProfile(userId = "me", displayName = "Alex", age = 27)
+        val firstCandidate = DiscoveryCandidate(
+            profile = PublicProfile(userId = "user_alpha", displayName = "Sienna", age = 25, gender = "Woman"),
+            distanceKm = 1.5,
+            proximityMatchScore = 92
         )
-        val myPublic = PublicProfile(
-            userId = "me",
-            displayName = "Alex",
-            age = 28L,
-            gender = "Man",
-            coarseLatitude = 37.77,
-            coarseLongitude = -122.42,
-            interests = listOf("Coffee", "Hiking", "Architecture")
-        )
-        val resolvedPrefs = MatchingLogicService.resolveUserPreferences(
-            userId = "me",
-            privateUser = myPrivate,
-            myProfile = myPublic
-        )
-        assertEquals("Women", resolvedPrefs.interestedIn)
-        assertEquals(24, resolvedPrefs.minAge)
-        assertEquals(34, resolvedPrefs.maxAge)
-        assertEquals(25.0, resolvedPrefs.maxDistanceKm, 0.01)
-        assertTrue(resolvedPrefs.verifiedOnly)
-
-        val perfectMatch = PublicProfile(
-            userId = "match_1",
-            displayName = "Elena",
-            age = 27L,
-            gender = "Woman",
-            coarseLatitude = 37.78,
-            coarseLongitude = -122.41,
-            interests = listOf("Coffee", "Architecture", "Travel"),
-            discoverable = true,
-            verificationStatus = "VERIFIED",
-            verificationScore = 92L
-        )
-        val secondMatch = PublicProfile(
-            userId = "match_2",
-            displayName = "Nora",
-            age = 30L,
-            gender = "Woman",
-            coarseLatitude = 37.80,
-            coarseLongitude = -122.27, // ~13 km away in Oakland, 0 shared interests
-            interests = listOf("Cycling"),
-            discoverable = true,
-            verificationStatus = "VERIFIED",
-            verificationScore = 88L
-        )
-        val wrongGender = PublicProfile(
-            userId = "wrong_gender",
-            displayName = "Julian",
-            age = 29L,
-            gender = "Man",
-            coarseLatitude = 37.78,
-            coarseLongitude = -122.41,
-            verificationStatus = "VERIFIED"
-        )
-        val outOfAgeRange = PublicProfile(
-            userId = "too_young",
-            displayName = "Chloe",
-            age = 21L,
-            gender = "Woman",
-            coarseLatitude = 37.78,
-            coarseLongitude = -122.41,
-            verificationStatus = "VERIFIED"
-        )
-        val unverifiedUser = PublicProfile(
-            userId = "unverified_user",
-            displayName = "Maya",
-            age = 26L,
-            gender = "Woman",
-            coarseLatitude = 37.78,
-            coarseLongitude = -122.41,
-            verificationStatus = "UNVERIFIED"
-        )
-        val tooFarUser = PublicProfile(
-            userId = "too_far",
-            displayName = "Sienna",
-            age = 28L,
-            gender = "Woman",
-            coarseLatitude = 37.3382, // San Jose (~68 km)
-            coarseLongitude = -121.8863,
-            verificationStatus = "VERIFIED"
-        )
-        val hiddenUser = PublicProfile(
-            userId = "hidden_user",
-            displayName = "Iris",
-            age = 28L,
-            gender = "Woman",
-            coarseLatitude = 37.78,
-            coarseLongitude = -122.41,
-            discoverable = false,
-            verificationStatus = "VERIFIED"
-        )
-        val swipedUser = PublicProfile(
-            userId = "already_swiped",
-            displayName = "Clara",
-            age = 28L,
-            gender = "Woman",
-            coarseLatitude = 37.78,
-            coarseLongitude = -122.41,
-            verificationStatus = "VERIFIED"
-        )
-
-        val criteria = MatchingCriteria(
-            currentUserId = "me",
-            latitude = resolvedPrefs.effectiveLatitude,
-            longitude = resolvedPrefs.effectiveLongitude,
-            maxDistanceKm = resolvedPrefs.maxDistanceKm,
-            minAge = resolvedPrefs.minAge,
-            maxAge = resolvedPrefs.maxAge,
-            interestedIn = resolvedPrefs.interestedIn,
-            verifiedOnly = resolvedPrefs.verifiedOnly,
-            myInterests = resolvedPrefs.myInterests,
-            excludedUserIds = setOf("already_swiped"),
-            blockedUserIds = emptySet()
-        )
-
-        val results = MatchingLogicService.filterAndRankCandidates(
-            rawProfiles = listOf(
-                secondMatch,
-                wrongGender,
-                outOfAgeRange,
-                unverifiedUser,
-                tooFarUser,
-                hiddenUser,
-                swipedUser,
-                perfectMatch
-            ),
-            criteria = criteria
-        )
-
-        assertEquals(2, results.size)
-        assertEquals("match_1", results[0].profile.userId)
-        assertEquals(listOf("Coffee", "Architecture"), results[0].sharedInterests)
-        assertTrue(results[0].proximityMatchScore > results[1].proximityMatchScore)
-        assertTrue(results[0].matchReasons.any { it.contains("shared interests") })
-        assertEquals("match_2", results[1].profile.userId)
-    }
-
-    @Test
-    fun `discover screen switches to card feed filters by interest and handles like and pass`() {
-        val swipes = mutableListOf<Pair<String, String>>()
-        val myProfile = PublicProfile(
-            userId = "me",
-            displayName = "Alex",
-            age = 27L,
-            interests = listOf("Coffee")
-        )
-        val privatePrefs = PrivateUser(
-            userId = "me",
-            interestedIn = "Everyone",
-            minAgePref = 22L,
-            maxAgePref = 35L,
-            maxDistanceKm = 50L
-        )
-        val candidates = listOf(
-            DiscoveryCandidate(
-                profile = PublicProfile(
-                    userId = "cand_coffee",
-                    displayName = "Elena",
-                    age = 26L,
-                    gender = "Woman",
-                    cityLabel = "Mission District",
-                    bio = "Pour-over espresso fan",
-                    interests = listOf("Coffee", "Design"),
-                    verificationStatus = "VERIFIED",
-                    verificationScore = 94L
-                ),
-                distanceKm = 2.1,
-                proximityMatchScore = 94,
-                sharedInterests = listOf("Coffee"),
-                matchReasons = listOf("Nearby (< 5 km)", "1 shared interest", "Verified profile")
-            ),
-            DiscoveryCandidate(
-                profile = PublicProfile(
-                    userId = "cand_hiking",
-                    displayName = "Julian",
-                    age = 29L,
-                    gender = "Man",
-                    cityLabel = "Sausalito",
-                    bio = "Weekend ridge trail runner",
-                    interests = listOf("Hiking", "Travel"),
-                    verificationStatus = "VERIFIED",
-                    verificationScore = 88L
-                ),
-                distanceKm = 8.4,
-                proximityMatchScore = 82,
-                sharedInterests = emptyList(),
-                matchReasons = listOf("8 km away", "Verified profile")
-            )
+        val secondCandidate = DiscoveryCandidate(
+            profile = PublicProfile(userId = "user_beta", displayName = "Marcus", age = 30, gender = "Man"),
+            distanceKm = 3.1,
+            proximityMatchScore = 85
         )
 
         composeTestRule.setContent {
-            var activeCandidates by remember { mutableStateOf(candidates) }
+            var activeCandidates by remember { mutableStateOf(listOf(firstCandidate, secondCandidate)) }
+            var lastRemoved by remember { mutableStateOf<DiscoveryCandidate?>(null) }
             KindredTheme {
                 DiscoverScreen(
                     myProfile = myProfile,
-                    privateUser = privatePrefs,
+                    privateUser = null,
                     geoHashMeta = null,
                     candidates = activeCandidates,
                     onSwipe = { candidate, direction ->
-                        swipes += candidate.profile.userId to direction
+                        recordedSwipes += candidate.profile.userId to direction
+                        lastRemoved = candidate
                         activeCandidates = activeCandidates.filterNot { it.profile.userId == candidate.profile.userId }
                     },
                     onRefreshLocation = {},
                     onLocationError = {},
                     onUpdateFilters = { _, _, _, _, _ -> },
                     onNavigateToProfile = {},
-                    onNavigateToVerify = {}
+                    onNavigateToVerify = {},
+                    canUndoLastSwipe = lastRemoved != null,
+                    onUndoSwipe = {
+                        lastRemoved?.let { restored ->
+                            activeCandidates = listOf(restored) + activeCandidates
+                            lastRemoved = null
+                        }
+                    }
                 )
             }
         }
 
         composeTestRule.waitForIdle()
-        // Switch from Deck view to Card-Based Feed view
-        composeTestRule.onNodeWithTag("view_mode_feed_button").performClick()
-        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Sienna, 25", useUnmergedTree = true).assertIsDisplayed()
 
-        composeTestRule.onNodeWithTag("match_card_feed").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("feed_match_card_cand_coffee").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("match_card_feed").performScrollToKey("cand_hiking")
-        composeTestRule.onNodeWithTag("feed_match_card_cand_hiking").assertIsDisplayed()
+        // Tap Pass button -> animates card out and advances to Marcus
+        composeTestRule.onNodeWithTag("pass_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(400)
+        composeTestRule.waitForIdle()
+        assertEquals(listOf("user_alpha" to "PASS"), recordedSwipes)
+        composeTestRule.onNodeWithText("Marcus, 30", useUnmergedTree = true).assertIsDisplayed()
 
-        // Filter feed by "Coffee" interest chip
-        composeTestRule.onNodeWithTag("feed_interest_chip_Coffee").performClick()
+        // Tap Undo button -> restores Sienna to top of deck
+        composeTestRule.onNodeWithTag("undo_swipe_button").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("feed_match_card_cand_coffee").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("feed_match_card_cand_hiking").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Sienna, 25", useUnmergedTree = true).assertIsDisplayed()
 
-        // Reset to All interests and Like Elena, Pass Julian
-        composeTestRule.onNodeWithTag("feed_interest_chip_all").performClick()
+        // Tap Like button -> animates card right and records LIKE
+        composeTestRule.onNodeWithTag("like_button").performClick()
+        composeTestRule.mainClock.advanceTimeBy(400)
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("match_card_feed").performScrollToKey("cand_coffee")
-        composeTestRule.onNodeWithTag("feed_like_button_cand_coffee").performScrollTo().performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("match_card_feed").performScrollToKey("cand_hiking")
-        composeTestRule.onNodeWithTag("feed_pass_button_cand_hiking").performScrollTo().performClick()
-        composeTestRule.waitForIdle()
-
-        assertEquals(
-            listOf("cand_coffee" to "LIKE", "cand_hiking" to "PASS"),
-            swipes
-        )
+        assertEquals(listOf("user_alpha" to "PASS", "user_alpha" to "LIKE"), recordedSwipes)
     }
 
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)

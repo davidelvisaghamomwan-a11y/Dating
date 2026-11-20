@@ -81,7 +81,6 @@ import com.example.model.UiState
 import com.example.notifications.KindredNotificationHelper
 import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
-import com.example.service.MatchingLogicService
 import com.example.ui.components.NewMatchCelebrationDialog
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.DiscoverScreen
@@ -269,15 +268,13 @@ private fun MainKindredApp(
                 val databaseId = app.getString(R.string.firestore_database_id)
                 val db = FirebaseFirestore.getInstance(databaseId)
                 val geoService = GeoHashMatchingService(db = db)
-                val matchingService = MatchingLogicService(db = db, geoService = geoService)
                 KindredViewModel(
                     repository = KindredRepository(db = db, geoService = geoService),
                     geoService = geoService,
                     currentUserId = user.uid,
                     userEmail = user.email,
                     defaultDisplayName = user.displayName,
-                    isEmailVerified = user.isEmailVerified,
-                    matchingService = matchingService
+                    isEmailVerified = user.isEmailVerified
                 )
             }
         }
@@ -293,6 +290,7 @@ private fun MainKindredApp(
     val activeChallenge by viewModel.activeChallenge.collectAsStateWithLifecycle()
     val aiPhotoGenState by viewModel.aiPhotoGenState.collectAsStateWithLifecycle()
     val latestLocation by viewModel.latestLocation.collectAsStateWithLifecycle()
+    val canUndoLastSwipe by viewModel.canUndoLastSwipe.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -587,7 +585,9 @@ private fun MainKindredApp(
                                         latestLocation = latestLocation,
                                         onLocationPermissionGranted = {
                                             hasLocationPermission = true
-                                        }
+                                        },
+                                        canUndoLastSwipe = canUndoLastSwipe,
+                                        onUndoSwipe = { viewModel.undoLastSwipe() }
                                     )
                                 }
 

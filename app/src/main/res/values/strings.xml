@@ -13,6 +13,9 @@
     <string name="profile_title">Your Profile</string>
     <string name="btn_like">Like</string>
     <string name="btn_pass">Pass</string>
+    <string name="btn_undo_swipe">Undo last swipe</string>
+    <string name="swipe_like_label">LIKE</string>
+    <string name="swipe_pass_label">PASS</string>
     <string name="btn_send">Send message</string>
     <string name="btn_update_location">Refresh GPS</string>
     <string name="btn_start_verification">Start Camera Check</string>
@@ -51,8 +54,4 @@
     <string name="btn_open_ai_studio">AI Photo Studio</string>
     <string name="btn_generate_ai_photo">Generate Portrait</string>
     <string name="btn_use_ai_photo">Add to Profile Photos</string>
-    <string name="discover_mode_deck">Swipe</string>
-    <string name="discover_mode_feed">Feed</string>
-    <string name="cd_switch_to_deck">Switch to swipe deck view</string>
-    <string name="cd_switch_to_feed">Switch to card feed view</string>
 </resources>

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,25 +24,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -77,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -92,7 +88,6 @@ import com.example.model.DiscoveryCandidate
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
-import com.example.service.MatchingLogicService
 import com.example.ui.components.LocationDistancePill
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.SwipeCardController
@@ -107,11 +102,6 @@ import com.example.util.ResolvedDeviceLocation
 import com.example.viewmodel.GeoHashContextMeta
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
-enum class DiscoveryFeedMode {
-    DECK,
-    FEED
-}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -132,7 +122,9 @@ fun DiscoverScreen(
     onNavigateToVerify: () -> Unit,
     onOpenSettings: () -> Unit = {},
     latestLocation: ResolvedDeviceLocation? = null,
-    onLocationPermissionGranted: () -> Unit = {}
+    onLocationPermissionGranted: () -> Unit = {},
+    canUndoLastSwipe: Boolean = false,
+    onUndoSwipe: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -167,32 +159,8 @@ fun DiscoverScreen(
     }
 
     val maxDistanceKm = (privateUser?.maxDistanceKm ?: 100L).toInt()
-    val minAgePref = (privateUser?.minAgePref ?: 18L).toInt()
-    val maxAgePref = (privateUser?.maxAgePref ?: 99L).toInt()
-    val interestedInPref = privateUser?.interestedIn ?: "Everyone"
-    val verifiedOnlyPref = privateUser?.verifiedOnlyFilter ?: false
     val isLiveGps = latestLocation?.isLiveGps == true
     val cityDisplay = latestLocation?.cityLabel ?: myProfile?.cityLabel ?: "Set location"
-
-    var feedMode by remember { mutableStateOf(DiscoveryFeedMode.DECK) }
-    var selectedInterestTag by remember { mutableStateOf<String?>(null) }
-
-    val availableInterests = remember(candidates) {
-        candidates
-            .flatMap { it.profile.interests }
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .groupingBy { it }
-            .eachCount()
-            .entries
-            .sortedByDescending { it.value }
-            .map { it.key }
-            .take(8)
-    }
-
-    val filteredCandidates = remember(candidates, selectedInterestTag) {
-        MatchingLogicService.filterByInterestTag(candidates, selectedInterestTag)
-    }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -322,80 +290,54 @@ fun DiscoverScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            if (myProfile != null) {
-                DiscoveryFeedControlsBar(
-                    feedMode = feedMode,
-                    onSelectMode = { feedMode = it },
-                    interestedIn = interestedInPref,
-                    minAge = minAgePref,
-                    maxAge = maxAgePref,
-                    verifiedOnly = verifiedOnlyPref,
-                    matchCount = filteredCandidates.size,
-                    availableInterests = availableInterests,
-                    selectedInterest = selectedInterestTag,
-                    onSelectInterest = { tag ->
-                        selectedInterestTag = if (selectedInterestTag == tag) null else tag
-                    }
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-            }
+            Spacer(modifier = Modifier.height(14.dp))
 
             if (myProfile == null) {
                 OnboardingProfilePromptCard(
                     onCreateProfile = onNavigateToProfile,
                     modifier = Modifier.weight(1f)
                 )
-            } else if (filteredCandidates.isEmpty()) {
-                if (candidates.isNotEmpty() && selectedInterestTag != null) {
-                    EmptyInterestFilterCard(
-                        selectedInterest = selectedInterestTag!!,
-                        onClearInterest = { selectedInterestTag = null },
-                        modifier = Modifier.weight(1f)
-                    )
-                } else {
-                    EmptyDiscoveryCard(
-                        maxDistanceKm = maxDistanceKm,
-                        isVerified = myProfile.isProfileVerified,
-                        includeDemoProfiles = includeDemoProfiles,
-                        onExpandRadius = {
-                            onUpdateFilters(
-                                privateUser?.interestedIn ?: "Everyone",
-                                (privateUser?.minAgePref ?: 18L).toInt(),
-                                (privateUser?.maxAgePref ?: 99L).toInt(),
-                                500,
-                                false
-                            )
-                        },
-                        onResetDemoSwipes = onResetDemoSwipes,
-                        onOpenFilters = { showFilterSheet = true },
-                        onGoVerify = onNavigateToVerify,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            } else if (feedMode == DiscoveryFeedMode.FEED) {
-                MatchCardFeed(
-                    candidates = filteredCandidates,
-                    onLike = { candidate -> onSwipe(candidate, "LIKE") },
-                    onPass = { candidate -> onSwipe(candidate, "PASS") },
-                    onBlockUser = { candidate -> blockConfirmCandidate = candidate },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+            } else if (candidates.isEmpty()) {
+                EmptyDiscoveryCard(
+                    maxDistanceKm = maxDistanceKm,
+                    isVerified = myProfile.isProfileVerified,
+                    includeDemoProfiles = includeDemoProfiles,
+                    onExpandRadius = {
+                        onUpdateFilters(
+                            privateUser?.interestedIn ?: "Everyone",
+                            (privateUser?.minAgePref ?: 18L).toInt(),
+                            (privateUser?.maxAgePref ?: 99L).toInt(),
+                            500,
+                            false
+                        )
+                    },
+                    onResetDemoSwipes = onResetDemoSwipes,
+                    onOpenFilters = { showFilterSheet = true },
+                    onGoVerify = onNavigateToVerify,
+                    modifier = Modifier.weight(1f)
                 )
             } else {
-                val topCandidate = filteredCandidates.first()
-                val nextCandidate = filteredCandidates.getOrNull(1)
+                val topCandidate = candidates.first()
+                val nextCandidate = candidates.getOrNull(1)
+                val thirdCandidate = candidates.getOrNull(2)
                 var activeController by remember { mutableStateOf<SwipeCardController?>(null) }
+                var dragDirection by remember { mutableStateOf<SwipeDirection?>(null) }
+                var dragProgress by remember { mutableFloatStateOf(0f) }
 
                 SwipeCardDeck(
                     topItem = topCandidate,
                     topKey = topCandidate.profile.userId,
                     nextItem = nextCandidate,
+                    thirdItem = thirdCandidate,
                     onSwiped = { candidate, swipeDirection ->
+                        dragDirection = null
+                        dragProgress = 0f
                         val mapped = if (swipeDirection == SwipeDirection.RIGHT) "LIKE" else "PASS"
                         onSwipe(candidate, mapped)
+                    },
+                    onDragProgressChanged = { dir, progress ->
+                        dragDirection = dir
+                        dragProgress = progress
                     },
                     modifier = Modifier
                         .weight(1f)
@@ -409,22 +351,71 @@ fun DiscoverScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Bottom Swipe Controls (>= 48dp accessible touch targets) with card fly-off sync
+                val passScale = if (dragDirection == SwipeDirection.LEFT) 1f + (0.14f * dragProgress) else 1f
+                val likeScale = if (dragDirection == SwipeDirection.RIGHT) 1f + (0.14f * dragProgress) else 1f
+
+                // Bottom Swipe Controls (>= 48dp accessible touch targets): Undo, Pass, Like
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+                        border = BorderStroke(
+                            1.dp,
+                            if (canUndoLastSwipe) {
+                                ChampagneGold.copy(alpha = 0.65f)
+                            } else {
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                            }
+                        ),
+                        shadowElevation = if (canUndoLastSwipe) 4.dp else 0.dp,
+                        modifier = Modifier.size(52.dp)
+                    ) {
+                        IconButton(
+                            onClick = onUndoSwipe,
+                            enabled = canUndoLastSwipe,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("undo_swipe_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = stringResource(R.string.btn_undo_swipe),
+                                tint = if (canUndoLastSwipe) {
+                                    ChampagneGold
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                                },
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(
+                            width = if (dragDirection == SwipeDirection.LEFT) 2.dp else 1.dp,
+                            color = if (dragDirection == SwipeDirection.LEFT) {
+                                CoralRose
+                            } else {
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                            }
+                        ),
                         shadowElevation = 6.dp,
-                        modifier = Modifier.size(64.dp)
+                        modifier = Modifier
+                            .size(64.dp)
+                            .graphicsLayer {
+                                scaleX = passScale
+                                scaleY = passScale
+                            }
                     ) {
                         IconButton(
                             onClick = {
@@ -442,7 +433,7 @@ fun DiscoverScreen(
                             Icon(
                                 imageVector = Icons.Filled.Close,
                                 contentDescription = stringResource(R.string.btn_pass),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (dragDirection == SwipeDirection.LEFT) CoralRose else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(30.dp)
                             )
                         }
@@ -450,9 +441,14 @@ fun DiscoverScreen(
 
                     Surface(
                         shape = CircleShape,
-                        color = CoralRose,
+                        color = if (dragDirection == SwipeDirection.RIGHT) EmeraldMint else CoralRose,
                         shadowElevation = 10.dp,
-                        modifier = Modifier.size(72.dp)
+                        modifier = Modifier
+                            .size(72.dp)
+                            .graphicsLayer {
+                                scaleX = likeScale
+                                scaleY = likeScale
+                            }
                     ) {
                         IconButton(
                             onClick = {
@@ -545,19 +541,7 @@ private fun ProfileDeckCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (photos.size > 1) {
-                        Modifier.clickable {
-                            activePhotoIndex = (activePhotoIndex + 1) % photos.size
-                        }
-                    } else {
-                        Modifier
-                    }
-                )
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             ProfileAvatarImage(
                 photoDataUrl = displayedPhoto,
                 displayName = profile.displayName,
@@ -566,6 +550,31 @@ private fun ProfileDeckCard(
                 shape = RoundedCornerShape(28.dp),
                 initialsFontSizeSp = 72
             )
+
+            if (photos.size > 1) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(0.35f)
+                            .fillMaxHeight()
+                            .clickable {
+                                activePhotoIndex = if (activePhotoIndex > 0) {
+                                    activePhotoIndex - 1
+                                } else {
+                                    photos.lastIndex
+                                }
+                            }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(0.65f)
+                            .fillMaxHeight()
+                            .clickable {
+                                activePhotoIndex = (activePhotoIndex + 1) % photos.size
+                            }
+                    )
+                }
+            }
 
             // Bottom atmospheric readability scrim
             Box(
@@ -725,554 +734,26 @@ private fun ProfileDeckCard(
 
                 if (profile.interests.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    val sharedLower = remember(candidate.sharedInterests) {
-                        candidate.sharedInterests.map { it.lowercase() }.toSet()
-                    }
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         profile.interests.take(5).forEach { tag ->
-                            val isShared = tag.lowercase() in sharedLower
                             Surface(
                                 shape = RoundedCornerShape(50),
-                                color = if (isShared) EmeraldMint.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.16f),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isShared) EmeraldMint.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.25f)
-                                )
+                                color = Color.White.copy(alpha = 0.16f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
                             ) {
                                 Text(
-                                    text = if (isShared) "★ $tag" else tag,
+                                    text = tag,
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = if (isShared) EmeraldMint else Color.White,
+                                    color = Color.White,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoveryFeedControlsBar(
-    feedMode: DiscoveryFeedMode,
-    onSelectMode: (DiscoveryFeedMode) -> Unit,
-    interestedIn: String,
-    minAge: Int,
-    maxAge: Int,
-    verifiedOnly: Boolean,
-    matchCount: Int,
-    availableInterests: List<String>,
-    selectedInterest: String?,
-    onSelectInterest: (String) -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = buildString {
-                    append("$matchCount ")
-                    append(if (matchCount == 1) "match" else "matches")
-                    append(" • $interestedIn • $minAge–$maxAge")
-                    if (verifiedOnly) append(" • Verified")
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp)
-                    .testTag("matching_summary_label")
-            )
-
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ModeTogglePill(
-                        label = stringResource(R.string.discover_mode_deck),
-                        icon = Icons.Filled.Style,
-                        selected = feedMode == DiscoveryFeedMode.DECK,
-                        contentDescription = stringResource(R.string.cd_switch_to_deck),
-                        onClick = { onSelectMode(DiscoveryFeedMode.DECK) },
-                        testTag = "view_mode_deck_button"
-                    )
-                    ModeTogglePill(
-                        label = stringResource(R.string.discover_mode_feed),
-                        icon = Icons.Filled.ViewAgenda,
-                        selected = feedMode == DiscoveryFeedMode.FEED,
-                        contentDescription = stringResource(R.string.cd_switch_to_feed),
-                        onClick = { onSelectMode(DiscoveryFeedMode.FEED) },
-                        testTag = "view_mode_feed_button"
-                    )
-                }
-            }
-        }
-
-        if (feedMode == DiscoveryFeedMode.FEED && availableInterests.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                item(key = "all_interests") {
-                    FilterChip(
-                        selected = selectedInterest == null,
-                        onClick = {
-                            if (selectedInterest != null) onSelectInterest(selectedInterest)
-                        },
-                        label = { Text("All") },
-                        modifier = Modifier.testTag("feed_interest_chip_all"),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = CoralRose.copy(alpha = 0.2f),
-                            selectedLabelColor = CoralRose
-                        )
-                    )
-                }
-                items(availableInterests, key = { it }) { tag ->
-                    FilterChip(
-                        selected = selectedInterest == tag,
-                        onClick = { onSelectInterest(tag) },
-                        label = { Text(tag) },
-                        modifier = Modifier.testTag("feed_interest_chip_$tag"),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = CoralRose.copy(alpha = 0.2f),
-                            selectedLabelColor = CoralRose
-                        )
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ModeTogglePill(
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    selected: Boolean,
-    contentDescription: String,
-    onClick: () -> Unit,
-    testTag: String
-) {
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = if (selected) CoralRose else Color.Transparent,
-        modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(50))
-            .clickable(onClick = onClick)
-            .testTag(testTag)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(15.dp)
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun MatchCardFeed(
-    candidates: List<DiscoveryCandidate>,
-    onLike: (DiscoveryCandidate) -> Unit,
-    onPass: (DiscoveryCandidate) -> Unit,
-    onBlockUser: (DiscoveryCandidate) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    LazyColumn(
-        modifier = modifier.testTag("match_card_feed"),
-        contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        items(
-            items = candidates,
-            key = { it.profile.userId }
-        ) { candidate ->
-            FeedMatchCard(
-                candidate = candidate,
-                onLike = { onLike(candidate) },
-                onPass = { onPass(candidate) },
-                onBlockClick = { onBlockUser(candidate) }
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun FeedMatchCard(
-    candidate: DiscoveryCandidate,
-    onLike: () -> Unit,
-    onPass: () -> Unit,
-    onBlockClick: () -> Unit
-) {
-    val profile = candidate.profile
-    val photos = remember(profile.userId, profile.photoDataUrl, profile.profilePhotos) {
-        profile.allProfilePhotos()
-    }
-    var activePhotoIndex by remember(profile.userId, photos.size) {
-        mutableStateOf(0)
-    }
-    val displayedPhoto = photos.getOrNull(activePhotoIndex.coerceIn(0, (photos.size - 1).coerceAtLeast(0)))
-    val sharedLower = remember(candidate.sharedInterests) {
-        candidate.sharedInterests.map { it.lowercase() }.toSet()
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("feed_match_card_${profile.userId}"),
-        shape = RoundedCornerShape(26.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(320.dp)
-                    .then(
-                        if (photos.size > 1) {
-                            Modifier.clickable {
-                                activePhotoIndex = (activePhotoIndex + 1) % photos.size
-                            }
-                        } else {
-                            Modifier
-                        }
-                    )
-            ) {
-                ProfileAvatarImage(
-                    photoDataUrl = displayedPhoto,
-                    displayName = profile.displayName,
-                    seed = profile.avatarSeed,
-                    modifier = Modifier.fillMaxSize(),
-                    shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-                    initialsFontSizeSp = 64
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.0f to Color.Black.copy(alpha = 0.30f),
-                                0.42f to Color.Transparent,
-                                0.72f to Color(0xFF140D13).copy(alpha = 0.68f),
-                                1.0f to Color(0xFF140D13).copy(alpha = 0.94f)
-                            )
-                        )
-                )
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (photos.size > 1) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            photos.indices.forEach { idx ->
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(3.5.dp)
-                                        .clip(RoundedCornerShape(50))
-                                        .background(
-                                            if (idx == activePhotoIndex) Color.White
-                                            else Color.White.copy(alpha = 0.35f)
-                                        )
-                                )
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        LocationDistancePill(
-                            cityLabel = profile.cityLabel,
-                            distanceKm = candidate.distanceKm,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = CoralRose.copy(alpha = 0.92f)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Text(
-                                        text = "${candidate.proximityMatchScore}% Match",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = onBlockClick,
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("feed_block_button_${profile.userId}")
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color.Black.copy(alpha = 0.55f),
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Block,
-                                            contentDescription = stringResource(R.string.discover_block_cd),
-                                            tint = Color.White,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomStart)
-                        .padding(horizontal = 18.dp, vertical = 14.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "${profile.displayName}, ${profile.age}",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (profile.isProfileVerified) {
-                            Icon(
-                                imageVector = Icons.Filled.VerifiedUser,
-                                contentDescription = stringResource(R.string.cd_verified_badge),
-                                tint = EmeraldMint,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = profile.gender,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = ChampagneGold
-                        )
-                        if (SampleProfilesProvider.isDemoProfileId(profile.userId)) {
-                            Text(
-                                text = "• Sample",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = ChampagneGold.copy(alpha = 0.85f)
-                            )
-                        }
-                        if (candidate.matchReasons.isNotEmpty()) {
-                            Text(
-                                text = "• ${candidate.matchReasons.joinToString(" • ")}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(alpha = 0.86f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (profile.bio.isNotBlank()) {
-                    Text(
-                        text = profile.bio,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                if (profile.interests.isNotEmpty()) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        profile.interests.take(6).forEach { tag ->
-                            val isShared = tag.lowercase() in sharedLower
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = if (isShared) {
-                                    EmeraldMint.copy(alpha = 0.16f)
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceContainerHigh
-                                },
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isShared) EmeraldMint.copy(alpha = 0.7f)
-                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
-                                )
-                            ) {
-                                Text(
-                                    text = if (isShared) "★ $tag" else tag,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (isShared) EmeraldMint else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onPass,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("feed_pass_button_${profile.userId}"),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(R.string.btn_pass))
-                    }
-
-                    Button(
-                        onClick = onLike,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("feed_like_button_${profile.userId}"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Favorite,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(stringResource(R.string.btn_like))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyInterestFilterCard(
-    selectedInterest: String,
-    onClearInterest: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(28.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "No matches for \"$selectedInterest\"",
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "Clear this quick interest filter to see all members matching your Firestore location and preferences.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(20.dp))
-            Button(
-                onClick = onClearInterest,
-                colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
-                modifier = Modifier
-                    .height(48.dp)
-                    .testTag("clear_interest_filter_button")
-            ) {
-                Text("Show All Matches")
             }
         }
     }

@@ -896,6 +896,52 @@ class KindredRepository(
                 return Result.failure(IllegalStateException("This profile cannot be matched because a block is active."))
             }
 
+            // /swipes/{swipeId} has `allow update: if false;` in firestore.rules, so check if already recorded
+            val alreadySwipedDoc = db.collection("swipes")
+                .whereEqualTo("fromUserId", uid)
+                .get()
+                .await()
+                .documents
+                .firstOrNull { it.getString("toUserId") == targetUserId }
+
+            if (alreadySwipedDoc != null) {
+                val recordedDirection = alreadySwipedDoc.getString("direction")
+                if (direction == "LIKE" && recordedDirection == "LIKE") {
+                    val incomingLikes = db.collection("swipes")
+                        .whereEqualTo("toUserId", uid)
+                        .get()
+                        .await()
+                    val mutualLikeExists = incomingLikes.documents.any { doc ->
+                        doc.getString("fromUserId") == targetUserId &&
+                            doc.getString("direction") == "LIKE"
+                    }
+                    if (mutualLikeExists) {
+                        val sortedParticipants = listOf(uid, targetUserId).sorted()
+                        val matchId = "${sortedParticipants[0]}_${sortedParticipants[1]}"
+                        val matchRef = db.collection("matches").document(matchId)
+                        val existingMatch = db.collection("matches")
+                            .whereArrayContains("participantUids", uid)
+                            .get()
+                            .await()
+                            .documents
+                            .any { it.id == matchId }
+                        if (!existingMatch) {
+                            docPath = matchRef.path
+                            matchRef.set(
+                                mapOf(
+                                    "participantUids" to sortedParticipants,
+                                    "createdBy" to uid,
+                                    "createdAt" to FieldValue.serverTimestamp(),
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).await()
+                        }
+                        return Result.success(matchId)
+                    }
+                }
+                return Result.success(null)
+            }
+
             val swipePayload = mapOf(
                 "fromUserId" to uid,
                 "toUserId" to targetUserId,
@@ -952,6 +998,26 @@ class KindredRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteSwipe(targetUserId: String): Result<Unit> {
+        var docPath = "swipes"
+        return try {
+            val uid = requireUserId()
+            require(targetUserId.isNotBlank() && targetUserId != uid) {
+                "Invalid target user to undo swipe."
+            }
+            val swipeId = "${uid}_${targetUserId}"
+            val swipeRef = db.collection("swipes").document(swipeId)
+            docPath = swipeRef.path
+            swipeRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
     }

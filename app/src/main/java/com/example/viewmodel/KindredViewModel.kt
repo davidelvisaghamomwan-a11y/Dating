@@ -17,7 +17,6 @@ import com.example.model.KindredConstants
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
-import com.example.model.MatchingCriteria
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.model.SwipeRecord
@@ -27,7 +26,6 @@ import com.example.model.VerificationChallenge
 import com.example.model.VerificationRecord
 import com.example.service.GeoHashMatchingService
 import com.example.service.GeoHashSpatialSnapshot
-import com.example.service.MatchingLogicService
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
 import com.example.util.ResolvedDeviceLocation
@@ -102,8 +100,7 @@ class KindredViewModel(
     val userEmail: String?,
     val defaultDisplayName: String?,
     val isEmailVerified: Boolean,
-    private val aiPhotoService: AiProfilePhotoService = AiProfilePhotoService(),
-    private val matchingService: MatchingLogicService? = null
+    private val aiPhotoService: AiProfilePhotoService = AiProfilePhotoService()
 ) : ViewModel() {
 
     private fun <T> Flow<T>.asFirestoreUiState(label: String): StateFlow<UiState<T>> =
@@ -177,7 +174,23 @@ class KindredViewModel(
 
     private val _includeDemoProfiles = MutableStateFlow(true)
     private val _demoSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val _pendingSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
     private val _demoBlockedUsers = MutableStateFlow<Map<String, BlockedUserItem>>(emptyMap())
+
+    private data class UndoableSwipe(
+        val targetUserId: String,
+        val displayName: String,
+        val isDemo: Boolean
+    )
+
+    private val _lastUndoableSwipe = MutableStateFlow<UndoableSwipe?>(null)
+    val canUndoLastSwipe: StateFlow<Boolean> = _lastUndoableSwipe
+        .map { it != null }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = false
+        )
 
     private val blockingStateFlow: Flow<BlockingSnapshot> = combine(
         usersIBlockedFlow,
@@ -191,15 +204,22 @@ class KindredViewModel(
         )
     }
 
+    private val effectiveSwipedIdsFlow: Flow<Set<String>> = combine(
+        outgoingSwipesFlow,
+        _demoSwipes,
+        _pendingSwipes
+    ) { swipes, demoSwipes, pendingSwipes ->
+        swipes.map { it.toUserId }.toSet() + demoSwipes.keys + pendingSwipes.keys
+    }
+
     val dashboardState: StateFlow<UiState<DashboardSnapshot>> = combine(
         effectiveLocationFlow,
         allProfilesFlow,
         spatialGeoCellsFlow,
-        outgoingSwipesFlow,
+        effectiveSwipedIdsFlow,
         matchesFlow,
         verificationsFlow,
         _includeDemoProfiles,
-        _demoSwipes,
         blockingStateFlow
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -211,26 +231,24 @@ class KindredViewModel(
         val allProfiles = values[1] as List<PublicProfile>
         val spatialSnapshot = values[2] as GeoHashSpatialSnapshot?
         @Suppress("UNCHECKED_CAST")
-        val swipes = values[3] as List<SwipeRecord>
+        val swipedIds = values[3] as Set<String>
         @Suppress("UNCHECKED_CAST")
         val matches = values[4] as List<MatchRecord>
         @Suppress("UNCHECKED_CAST")
         val verifications = values[5] as List<VerificationRecord>
         val includeDemos = values[6] as Boolean
-        @Suppress("UNCHECKED_CAST")
-        val demoSwipes = values[7] as Map<String, String>
-        val blocking = values[8] as BlockingSnapshot
+        val blocking = values[7] as BlockingSnapshot
 
         val blockedIds = blocking.allBlockedIds
-        val swipedIds = swipes.map { it.toUserId }.toSet() + demoSwipes.keys
-        val resolvedPrefs = MatchingLogicService.resolveUserPreferences(
-            userId = currentUserId,
-            privateUser = privateUser,
-            myProfile = myProfile,
-            liveLocation = liveLocation
-        )
-        val myLat = resolvedPrefs.effectiveLatitude
-        val myLng = resolvedPrefs.effectiveLongitude
+        val myLat = liveLocation?.exactLatitude ?: privateUser?.exactLatitude ?: myProfile?.coarseLatitude
+        val myLng = liveLocation?.exactLongitude ?: privateUser?.exactLongitude ?: myProfile?.coarseLongitude
+
+        val minAge = (privateUser?.minAgePref ?: 18L).toInt()
+        val maxAge = (privateUser?.maxAgePref ?: 99L).toInt()
+        val maxDistKm = (privateUser?.maxDistanceKm ?: 100L).toDouble()
+        val interestedIn = privateUser?.interestedIn ?: "Everyone"
+        val verifiedOnly = privateUser?.verifiedOnlyFilter ?: false
+        val myInterests = myProfile?.interests ?: emptyList()
 
         val myGeoHash = spatialSnapshot?.centerGeoHash ?: if (myLat != null && myLng != null) {
             GeoHashUtils.encode(myLat, myLng, 7)
@@ -266,22 +284,21 @@ class KindredViewModel(
             demoProfiles.forEach { if (!containsKey(it.userId)) put(it.userId, it) }
         }.values.toList()
 
-        val criteria = MatchingCriteria(
+        val candidates = geoService.rankAndFilterCandidates(
+            rawProfiles = combinedProfiles,
             currentUserId = currentUserId,
-            latitude = myLat,
-            longitude = myLng,
-            geoHash = myGeoHash,
-            maxDistanceKm = resolvedPrefs.maxDistanceKm,
-            minAge = resolvedPrefs.minAge,
-            maxAge = resolvedPrefs.maxAge,
-            interestedIn = resolvedPrefs.interestedIn,
-            verifiedOnly = resolvedPrefs.verifiedOnly,
-            myInterests = resolvedPrefs.myInterests,
+            myLat = myLat,
+            myLng = myLng,
+            myGeoHash = myGeoHash,
+            maxDistanceKm = maxDistKm,
+            minAge = minAge,
+            maxAge = maxAge,
+            interestedIn = interestedIn,
+            verifiedOnly = verifiedOnly,
+            myInterests = myInterests,
             excludedUserIds = swipedIds,
             blockedUserIds = blockedIds
         )
-        val candidates = matchingService?.filterAndRankCandidates(combinedProfiles, criteria)
-            ?: MatchingLogicService.filterAndRankCandidates(combinedProfiles, criteria)
 
         val profileById = allProfiles.associateBy { it.userId }
         val matchItems = matches
@@ -590,36 +607,89 @@ class KindredViewModel(
 
     fun resetDemoSwipes() {
         _demoSwipes.value = emptyMap()
+        if (_lastUndoableSwipe.value?.isDemo == true) {
+            _lastUndoableSwipe.value = null
+        }
         _includeDemoProfiles.value = true
         _actionStatusMessage.value = "Restored all 23 sample profiles"
     }
 
     fun swipeProfile(candidate: DiscoveryCandidate, direction: String) {
-        if (SampleProfilesProvider.isDemoProfileId(candidate.profile.userId)) {
-            _demoSwipes.value = _demoSwipes.value + (candidate.profile.userId to direction)
+        val targetId = candidate.profile.userId
+        val targetName = candidate.profile.displayName
+
+        if (SampleProfilesProvider.isDemoProfileId(targetId)) {
+            _demoSwipes.value = _demoSwipes.value + (targetId to direction)
+            _lastUndoableSwipe.value = UndoableSwipe(
+                targetUserId = targetId,
+                displayName = targetName,
+                isDemo = true
+            )
             if (direction == "LIKE") {
-                _actionStatusMessage.value = "Liked ${candidate.profile.displayName} (sample profile)"
+                _actionStatusMessage.value = "Liked $targetName (sample profile)"
             }
             return
         }
 
+        if (targetId in _pendingSwipes.value) return
+        _pendingSwipes.value = _pendingSwipes.value + (targetId to direction)
+        _lastUndoableSwipe.value = UndoableSwipe(
+            targetUserId = targetId,
+            displayName = targetName,
+            isDemo = false
+        )
+
         viewModelScope.launch {
-            val result = repository.recordSwipe(candidate.profile.userId, direction)
+            val result = repository.recordSwipe(targetId, direction)
             result.onSuccess { createdMatchId ->
                 if (!createdMatchId.isNullOrBlank()) {
+                    // Mutual matches cannot be rewound silently after a match record is created
+                    if (_lastUndoableSwipe.value?.targetUserId == targetId) {
+                        _lastUndoableSwipe.value = null
+                    }
                     _newMatchPopup.value = MatchThreadItem(
                         match = MatchRecord(
                             id = createdMatchId,
-                            participantUids = listOf(currentUserId, candidate.profile.userId).sorted(),
+                            participantUids = listOf(currentUserId, targetId).sorted(),
                             createdBy = currentUserId
                         ),
-                        partnerId = candidate.profile.userId,
+                        partnerId = targetId,
                         partnerProfile = candidate.profile,
                         distanceKm = candidate.distanceKm
                     )
                 }
             }.onFailure { err ->
+                _pendingSwipes.value = _pendingSwipes.value - targetId
+                if (_lastUndoableSwipe.value?.targetUserId == targetId) {
+                    _lastUndoableSwipe.value = null
+                }
                 _actionStatusMessage.value = err.localizedMessage ?: "Could not save swipe"
+            }
+        }
+    }
+
+    fun undoLastSwipe() {
+        val entry = _lastUndoableSwipe.value ?: return
+        _lastUndoableSwipe.value = null
+
+        if (entry.isDemo) {
+            _demoSwipes.value = _demoSwipes.value - entry.targetUserId
+            _actionStatusMessage.value = "Brought ${entry.displayName} back to your deck"
+            return
+        }
+
+        val previousPending = _pendingSwipes.value[entry.targetUserId]
+        _pendingSwipes.value = _pendingSwipes.value - entry.targetUserId
+
+        viewModelScope.launch {
+            val result = repository.deleteSwipe(entry.targetUserId)
+            result.onSuccess {
+                _actionStatusMessage.value = "Brought ${entry.displayName} back to your deck"
+            }.onFailure { err ->
+                if (previousPending != null) {
+                    _pendingSwipes.value = _pendingSwipes.value + (entry.targetUserId to previousPending)
+                }
+                _actionStatusMessage.value = err.localizedMessage ?: "Could not undo swipe"
             }
         }
     }
