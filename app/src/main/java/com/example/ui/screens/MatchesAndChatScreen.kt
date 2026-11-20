@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ai.IcebreakerAiUiState
+import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.MatchThreadItem
@@ -97,6 +98,7 @@ fun MatchesAndChatScreen(
     activePartnerPresence: UserPresence? = null,
     activePartnerTyping: TypingStatus? = null,
     activeCallSession: CallSession? = null,
+    activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
     icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     onSelectMatch: (String?) -> Unit,
     onOpenSearch: () -> Unit = {},
@@ -125,6 +127,7 @@ fun MatchesAndChatScreen(
     onDeclineCall: (CallSession) -> Unit = {},
     onToggleCallMute: (CallSession) -> Unit = {},
     onToggleCallCamera: (CallSession) -> Unit = {},
+    onSendCallAudioChunk: (session: CallSession, seq: Long, sampleRateHz: Int, audioBase64: String) -> Unit = { _, _, _, _ -> },
     onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
@@ -169,6 +172,7 @@ fun MatchesAndChatScreen(
                             myProfile = myProfile,
                             partnerTyping = activePartnerTyping,
                             activeCallSession = activeCallSession,
+                            activeCallAudioChunks = activeCallAudioChunks,
                             icebreakerAiState = icebreakerAiState,
                             showBackButton = false,
                             onBack = { onSelectMatch(null) },
@@ -187,6 +191,7 @@ fun MatchesAndChatScreen(
                             onDeclineCall = onDeclineCall,
                             onToggleCallMute = onToggleCallMute,
                             onToggleCallCamera = onToggleCallCamera,
+                            onSendCallAudioChunk = onSendCallAudioChunk,
                             onEndCall = onEndCall,
                             onUnmatch = onUnmatch,
                             onBlockUser = onBlockUser,
@@ -211,6 +216,7 @@ fun MatchesAndChatScreen(
                     myProfile = myProfile,
                     partnerTyping = activePartnerTyping,
                     activeCallSession = activeCallSession,
+                    activeCallAudioChunks = activeCallAudioChunks,
                     icebreakerAiState = icebreakerAiState,
                     showBackButton = true,
                     onBack = { onSelectMatch(null) },
@@ -229,6 +235,7 @@ fun MatchesAndChatScreen(
                     onDeclineCall = onDeclineCall,
                     onToggleCallMute = onToggleCallMute,
                     onToggleCallCamera = onToggleCallCamera,
+                    onSendCallAudioChunk = onSendCallAudioChunk,
                     onEndCall = onEndCall,
                     onUnmatch = onUnmatch,
                     onBlockUser = onBlockUser,

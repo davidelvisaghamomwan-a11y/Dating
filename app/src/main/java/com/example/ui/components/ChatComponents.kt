@@ -12,6 +12,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,18 +20,24 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
@@ -39,18 +46,25 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +76,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.communication.GifCatalog
 import com.example.model.ChatMessage
@@ -604,24 +620,38 @@ internal fun PartnerProfileQuickSheet(
     onUnmatchClick: (() -> Unit)? = null,
     onBlockClick: (() -> Unit)? = null
 ) {
+    val photos = remember(partner.userId, partner.photoDataUrl, partner.profilePhotos) {
+        partner.allProfilePhotos()
+    }
+    var galleryStartIndex by remember(partner.userId) { mutableStateOf<Int?>(null) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp)
-            .padding(bottom = 28.dp),
+            .padding(bottom = 28.dp)
+            .testTag("partner_profile_quick_sheet"),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            ProfileAvatarImage(
-                photoDataUrl = partner.photoDataUrl,
-                displayName = partner.displayName,
-                seed = partner.avatarSeed,
-                modifier = Modifier.size(68.dp),
-                initialsFontSizeSp = 24
-            )
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(enabled = photos.isNotEmpty()) { galleryStartIndex = 0 }
+                    .testTag("partner_sheet_avatar")
+            ) {
+                ProfileAvatarImage(
+                    photoDataUrl = partner.photoDataUrl,
+                    displayName = partner.displayName,
+                    seed = partner.avatarSeed,
+                    modifier = Modifier.size(68.dp),
+                    initialsFontSizeSp = 24
+                )
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "${partner.displayName}, ${partner.age}",
@@ -654,7 +684,7 @@ internal fun PartnerProfileQuickSheet(
                     )
                     Text(
                         text = buildString {
-                            append(partner.cityLabel)
+                            append(partner.formattedLocation())
                             if (distanceKm != null) {
                                 append(" • ")
                                 append(LocationAndGeoHelper.formatDistanceLabel(distanceKm))
@@ -663,6 +693,62 @@ internal fun PartnerProfileQuickSheet(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+        }
+
+        if (photos.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Profile Photos (${photos.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    FilledTonalButton(
+                        onClick = { galleryStartIndex = 0 },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("sheet_view_photos_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PhotoLibrary,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("View Photos (${photos.size})")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    photos.forEachIndexed { index, photoUrl ->
+                        Box(
+                            modifier = Modifier
+                                .size(width = 88.dp, height = 108.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { galleryStartIndex = index }
+                                .testTag("partner_photo_thumb_$index")
+                        ) {
+                            ProfileAvatarImage(
+                                photoDataUrl = photoUrl,
+                                displayName = partner.displayName,
+                                seed = partner.avatarSeed,
+                                modifier = Modifier.fillMaxSize(),
+                                shape = RoundedCornerShape(14.dp),
+                                initialsFontSizeSp = 24
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -735,6 +821,162 @@ internal fun PartnerProfileQuickSheet(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Block")
+                    }
+                }
+            }
+        }
+    }
+
+    val startIdx = galleryStartIndex
+    if (startIdx != null && photos.isNotEmpty()) {
+        PartnerPhotoGalleryDialog(
+            photos = photos,
+            initialIndex = startIdx,
+            partnerName = partner.displayName,
+            onDismiss = { galleryStartIndex = null }
+        )
+    }
+}
+
+@Composable
+internal fun PartnerPhotoGalleryDialog(
+    photos: List<String>,
+    initialIndex: Int = 0,
+    partnerName: String,
+    onDismiss: () -> Unit
+) {
+    var activeIndex by remember(photos, initialIndex) {
+        mutableIntStateOf(initialIndex.coerceIn(0, (photos.size - 1).coerceAtLeast(0)))
+    }
+    val activePhoto = photos.getOrNull(activeIndex)
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.95f))
+                .padding(16.dp)
+                .testTag("partner_photo_gallery_dialog")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "$partnerName's Photos",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Photo ${activeIndex + 1} of ${photos.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.78f),
+                        modifier = Modifier.testTag("gallery_counter_label")
+                    )
+                }
+
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("gallery_close_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Close gallery",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 72.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                val decodedBitmap = remember(activePhoto) {
+                    com.example.util.VerificationAnalyzer.decodeBase64DataUrl(activePhoto)
+                }
+                if (decodedBitmap != null) {
+                    Image(
+                        bitmap = decodedBitmap,
+                        contentDescription = "$partnerName photo ${activeIndex + 1}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(18.dp))
+                    )
+                } else if (!activePhoto.isNullOrBlank() && activePhoto.startsWith("http")) {
+                    AsyncImage(
+                        model = activePhoto,
+                        contentDescription = "$partnerName photo ${activeIndex + 1}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(18.dp))
+                    )
+                } else {
+                    ProfileAvatarImage(
+                        photoDataUrl = activePhoto,
+                        displayName = partnerName,
+                        seed = partnerName,
+                        modifier = Modifier.size(220.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        initialsFontSizeSp = 64
+                    )
+                }
+            }
+
+            if (photos.size > 1) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            activeIndex = if (activeIndex > 0) activeIndex - 1 else photos.lastIndex
+                        },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("gallery_prev_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Previous photo",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Prev")
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            activeIndex = (activeIndex + 1) % photos.size
+                        },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("gallery_next_button")
+                    ) {
+                        Text("Next")
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Next photo",
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }

@@ -84,7 +84,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.SampleProfilesProvider
 import com.example.model.DiscoveryCandidate
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
@@ -111,9 +110,6 @@ fun DiscoverScreen(
     privateUser: PrivateUser?,
     geoHashMeta: GeoHashContextMeta?,
     candidates: List<DiscoveryCandidate>,
-    includeDemoProfiles: Boolean = true,
-    onToggleDemoProfiles: (Boolean) -> Unit = {},
-    onResetDemoSwipes: () -> Unit = {},
     onSwipe: (DiscoveryCandidate, String) -> Unit,
     onBlockUser: (DiscoveryCandidate) -> Unit = {},
     onRefreshLocation: (ResolvedDeviceLocation) -> Unit,
@@ -328,7 +324,7 @@ fun DiscoverScreen(
                 EmptyDiscoveryCard(
                     maxDistanceKm = maxDistanceKm,
                     isVerified = myProfile.isProfileVerified,
-                    includeDemoProfiles = includeDemoProfiles,
+                    onSearchPeople = onOpenSearch,
                     onExpandRadius = {
                         onUpdateFilters(
                             privateUser?.interestedIn ?: "Everyone",
@@ -338,7 +334,6 @@ fun DiscoverScreen(
                             false
                         )
                     },
-                    onResetDemoSwipes = onResetDemoSwipes,
                     onOpenFilters = { showFilterSheet = true },
                     onGoVerify = onNavigateToVerify,
                     modifier = Modifier.weight(1f)
@@ -506,8 +501,6 @@ fun DiscoverScreen(
     if (showFilterSheet) {
         DiscoveryFiltersBottomSheet(
             privateUser = privateUser,
-            includeDemoProfiles = includeDemoProfiles,
-            onToggleDemoProfiles = onToggleDemoProfiles,
             onDismiss = { showFilterSheet = false },
             onApply = { interestedIn, minAge, maxAge, maxDist, verifiedOnly ->
                 showFilterSheet = false
@@ -660,20 +653,6 @@ private fun ProfileDeckCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (SampleProfilesProvider.isDemoProfileId(profile.userId)) {
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = Color.Black.copy(alpha = 0.55f),
-                                border = BorderStroke(1.dp, ChampagneGold.copy(alpha = 0.55f))
-                            ) {
-                                Text(
-                                    text = "Sample",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = ChampagneGold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
                         VerifiedShieldBadge(
                             isVerified = profile.isProfileVerified,
                             score = profile.verificationScore.toInt()
@@ -844,9 +823,8 @@ private fun OnboardingProfilePromptCard(
 private fun EmptyDiscoveryCard(
     maxDistanceKm: Int,
     isVerified: Boolean,
-    includeDemoProfiles: Boolean,
+    onSearchPeople: () -> Unit,
     onExpandRadius: () -> Unit,
-    onResetDemoSwipes: () -> Unit,
     onOpenFilters: () -> Unit,
     onGoVerify: () -> Unit,
     modifier: Modifier = Modifier
@@ -880,21 +858,23 @@ private fun EmptyDiscoveryCard(
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "You've seen everyone within $maxDistanceKm km matching your current filters. New members appear automatically in real time as they join.",
+                text = "You've seen everyone within $maxDistanceKm km matching your current filters. Search real members by name or expand your radius to connect in real time.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(22.dp))
             Button(
-                onClick = onResetDemoSwipes,
+                onClick = onSearchPeople,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp)
-                    .testTag("reset_demo_swipes_button"),
+                    .testTag("empty_discover_search_button"),
                 colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
             ) {
-                Text(if (includeDemoProfiles) "Replay 23 Sample Profiles" else "Show 23 Sample Profiles")
+                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Search People")
             }
             Spacer(modifier = Modifier.height(10.dp))
             if (maxDistanceKm < 500) {
@@ -939,8 +919,6 @@ private fun EmptyDiscoveryCard(
 @Composable
 private fun DiscoveryFiltersBottomSheet(
     privateUser: PrivateUser?,
-    includeDemoProfiles: Boolean,
-    onToggleDemoProfiles: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onApply: (String, Int, Int, Int, Boolean) -> Unit
 ) {
@@ -1047,27 +1025,6 @@ private fun DiscoveryFiltersBottomSheet(
                 Switch(
                     checked = verifiedOnly,
                     onCheckedChange = { verifiedOnly = it }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Include sample profiles (23)", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = "10 Women, 7 Men, 6 Non-binary nearby demo cards",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = includeDemoProfiles,
-                    onCheckedChange = onToggleDemoProfiles
                 )
             }
 

@@ -6,9 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
 import com.example.data.KindredRepository
-import com.example.data.SampleProfilesProvider
 import com.example.model.BlockRecord
 import com.example.model.BlockedUserItem
+import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.DiscoveryCandidate
@@ -57,7 +57,18 @@ import java.util.UUID
 sealed interface KindredPushAlert {
     data class NewMatch(val matchId: String, val partnerName: String) : KindredPushAlert
     data class NewMessage(val matchId: String, val senderName: String, val messageText: String) : KindredPushAlert
+    data class IncomingCall(
+        val matchId: String,
+        val callId: String,
+        val callerName: String,
+        val callType: String
+    ) : KindredPushAlert
 }
+
+data class IncomingCallAlert(
+    val session: CallSession,
+    val thread: MatchThreadItem
+)
 
 data class GeoHashContextMeta(
     val centerGeoHash: String,
@@ -73,7 +84,6 @@ data class DashboardSnapshot(
     val matches: List<MatchThreadItem>,
     val verifications: List<VerificationRecord>,
     val geoHashMeta: GeoHashContextMeta?,
-    val includeDemoProfiles: Boolean = true,
     val blockedUsers: List<BlockedUserItem> = emptyList()
 )
 
@@ -85,13 +95,11 @@ private data class SpatialQueryKey(
 
 private data class BlockingSnapshot(
     val usersIBlocked: List<BlockRecord>,
-    val usersWhoBlockedMe: List<BlockRecord>,
-    val demoBlocked: Map<String, BlockedUserItem>
+    val usersWhoBlockedMe: List<BlockRecord>
 ) {
     val allBlockedIds: Set<String>
         get() = usersIBlocked.map { it.blockedUid }.toSet() +
-            usersWhoBlockedMe.map { it.blockerUid }.toSet() +
-            demoBlocked.keys
+            usersWhoBlockedMe.map { it.blockerUid }.toSet()
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -136,6 +144,8 @@ class KindredViewModel(
 
     private var lastPersistedGeoLat: Double? = null
     private var lastPersistedGeoLng: Double? = null
+    private var lastPersistedCity: String? = null
+    private var lastPersistedCountry: String? = null
     private var lastGeoPersistMs: Long = 0L
 
     private val effectiveLocationFlow: Flow<Triple<PrivateUser?, PublicProfile?, ResolvedDeviceLocation?>> = combine(
@@ -174,17 +184,11 @@ class KindredViewModel(
             }
         }
 
-    private val _includeDemoProfiles = MutableStateFlow(true)
-    private val _demoSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
     private val _pendingSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
-    private val _demoBlockedUsers = MutableStateFlow<Map<String, BlockedUserItem>>(emptyMap())
-    private val _demoMatches = MutableStateFlow<List<MatchRecord>>(emptyList())
-    private val _demoMessages = MutableStateFlow<Map<String, List<ChatMessage>>>(emptyMap())
 
     private data class UndoableSwipe(
         val targetUserId: String,
-        val displayName: String,
-        val isDemo: Boolean
+        val displayName: String
     )
 
     private val _lastUndoableSwipe = MutableStateFlow<UndoableSwipe?>(null)
@@ -198,41 +202,35 @@ class KindredViewModel(
 
     private val blockingStateFlow: Flow<BlockingSnapshot> = combine(
         usersIBlockedFlow,
-        usersWhoBlockedMeFlow,
-        _demoBlockedUsers
-    ) { iBlocked, blockedMe, demoBlocked ->
+        usersWhoBlockedMeFlow
+    ) { iBlocked, blockedMe ->
         BlockingSnapshot(
             usersIBlocked = iBlocked,
-            usersWhoBlockedMe = blockedMe,
-            demoBlocked = demoBlocked
+            usersWhoBlockedMe = blockedMe
         )
     }
 
     private val effectiveSwipedIdsFlow: Flow<Set<String>> = combine(
         outgoingSwipesFlow,
-        _demoSwipes,
         _pendingSwipes
-    ) { swipes, demoSwipes, pendingSwipes ->
-        swipes.map { it.toUserId }.toSet() + demoSwipes.keys + pendingSwipes.keys
+    ) { swipes, pendingSwipes ->
+        swipes.map { it.toUserId }.toSet() + pendingSwipes.keys
     }
 
-    private val mergedMatchesFlow: Flow<List<MatchRecord>> = combine(
-        matchesFlow,
-        _demoMatches
-    ) { remoteMatches, demoMatches ->
-        (remoteMatches + demoMatches)
-            .distinctBy { it.id }
-            .sortedByDescending { it.lastMessageAt ?: it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
-    }
+    private val sortedMatchesFlow: Flow<List<MatchRecord>> = matchesFlow
+        .map { remoteMatches ->
+            remoteMatches
+                .distinctBy { it.id }
+                .sortedByDescending { it.lastMessageAt ?: it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+        }
 
     val dashboardState: StateFlow<UiState<DashboardSnapshot>> = combine(
         effectiveLocationFlow,
         allProfilesFlow,
         spatialGeoCellsFlow,
         effectiveSwipedIdsFlow,
-        mergedMatchesFlow,
+        sortedMatchesFlow,
         verificationsFlow,
-        _includeDemoProfiles,
         blockingStateFlow
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -249,8 +247,7 @@ class KindredViewModel(
         val matches = values[4] as List<MatchRecord>
         @Suppress("UNCHECKED_CAST")
         val verifications = values[5] as List<VerificationRecord>
-        val includeDemos = values[6] as Boolean
-        val blocking = values[7] as BlockingSnapshot
+        val blocking = values[6] as BlockingSnapshot
 
         val blockedIds = blocking.allBlockedIds
         val myLat = liveLocation?.exactLatitude ?: privateUser?.exactLatitude ?: myProfile?.coarseLatitude
@@ -283,22 +280,8 @@ class KindredViewModel(
             spatialSnapshot?.profiles ?: allProfiles
         }
 
-        val demoProfiles = if (includeDemos) {
-            SampleProfilesProvider.generateProfiles(
-                anchorLatitude = myLat ?: 37.7749,
-                anchorLongitude = myLng ?: -122.4194
-            )
-        } else {
-            emptyList()
-        }
-
-        val combinedProfiles = LinkedHashMap<String, PublicProfile>().apply {
-            firestoreProfiles.forEach { put(it.userId, it) }
-            demoProfiles.forEach { if (!containsKey(it.userId)) put(it.userId, it) }
-        }.values.toList()
-
         val candidates = geoService.rankAndFilterCandidates(
-            rawProfiles = combinedProfiles,
+            rawProfiles = firestoreProfiles,
             currentUserId = currentUserId,
             myLat = myLat,
             myLng = myLng,
@@ -315,7 +298,7 @@ class KindredViewModel(
 
         val allSearchableMap = LinkedHashMap<String, PublicProfile>().apply {
             allProfiles.forEach { put(it.userId, it) }
-            combinedProfiles.forEach { if (!containsKey(it.userId)) put(it.userId, it) }
+            firestoreProfiles.forEach { if (!containsKey(it.userId)) put(it.userId, it) }
         }
         val searchableCandidates = allSearchableMap.values
             .filter { profile ->
@@ -343,8 +326,7 @@ class KindredViewModel(
                 )
             }
             .sortedWith(
-                compareBy<DiscoveryCandidate> { SampleProfilesProvider.isDemoProfileId(it.profile.userId) }
-                    .thenByDescending { it.profile.isProfileVerified }
+                compareByDescending<DiscoveryCandidate> { it.profile.isProfileVerified }
                     .thenBy { it.distanceKm }
             )
 
@@ -373,19 +355,13 @@ class KindredViewModel(
                 )
             }
 
-        val blockedUserItems = buildList {
-            blocking.usersIBlocked.forEach { block ->
-                val name = profileById[block.blockedUid]?.displayName ?: "Kindred Member"
-                add(
-                    BlockedUserItem(
-                        blockedUid = block.blockedUid,
-                        displayName = name,
-                        reason = block.reason,
-                        isDemo = false
-                    )
-                )
-            }
-            blocking.demoBlocked.values.forEach { add(it) }
+        val blockedUserItems = blocking.usersIBlocked.map { block ->
+            val name = profileById[block.blockedUid]?.displayName ?: "Kindred Member"
+            BlockedUserItem(
+                blockedUid = block.blockedUid,
+                displayName = name,
+                reason = block.reason
+            )
         }
 
         val geoMeta = spatialSnapshot?.let {
@@ -404,7 +380,6 @@ class KindredViewModel(
             matches = matchItems,
             verifications = verifications,
             geoHashMeta = geoMeta,
-            includeDemoProfiles = includeDemos,
             blockedUsers = blockedUserItems
         )
     }.asFirestoreUiState("kindred data")
@@ -419,10 +394,10 @@ class KindredViewModel(
         _chatRetryNonce
     ) { matchId, _ -> matchId }
         .flatMapLatest { matchId ->
-            when {
-                matchId.isNullOrBlank() -> flowOf(emptyList())
-                isDemoMatchId(matchId) -> _demoMessages.map { it[matchId].orEmpty() }
-                else -> repository.observeMessages(matchId, currentUserId)
+            if (matchId.isNullOrBlank()) {
+                flowOf(emptyList())
+            } else {
+                repository.observeMessages(matchId, currentUserId)
             }
         }
         .asFirestoreUiState("chat messages")
@@ -511,6 +486,80 @@ class KindredViewModel(
             initialValue = null
         )
 
+    private val allMatchCallSessionsFlow: Flow<List<CallSession>> = matchesFlow
+        .map { matches -> matches.map { it.id }.distinct().sorted() }
+        .distinctUntilChanged()
+        .flatMapLatest { matchIds ->
+            if (matchIds.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                val perMatchFlows = matchIds.map { matchId ->
+                    repository.observeMatchCalls(matchId, currentUserId)
+                        .catch { error ->
+                            if (error is CancellationException) throw error
+                            emit(emptyList())
+                        }
+                }
+                combine(perMatchFlows) { arrays ->
+                    arrays.flatMap { it }
+                        .filter { it.status == "RINGING" || it.status == "ACTIVE" }
+                        .sortedByDescending { it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+                }
+            }
+        }
+
+    val globalCallSession: StateFlow<CallSession?> = allMatchCallSessionsFlow
+        .map { sessions ->
+            sessions.firstOrNull { it.status == "ACTIVE" }
+                ?: sessions.firstOrNull { it.status == "RINGING" }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null
+        )
+
+    val globalIncomingCallAlert: StateFlow<IncomingCallAlert?> = combine(
+        allMatchCallSessionsFlow,
+        dashboardState
+    ) { sessions, dash ->
+        val ringing = sessions.firstOrNull { it.status == "RINGING" && it.calleeUid == currentUserId }
+            ?: return@combine null
+        val thread = (dash as? UiState.Success)?.data?.matches?.firstOrNull { it.match.id == ringing.matchId }
+            ?: return@combine null
+        IncomingCallAlert(session = ringing, thread = thread)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.Eagerly,
+        initialValue = null
+    )
+
+    val activeCallAudioChunks: StateFlow<List<CallAudioChunk>> = combine(
+        activeMatchCallSession,
+        globalCallSession
+    ) { selectedCall, globalCall ->
+        val call = selectedCall ?: globalCall
+        call?.takeIf { it.status == "ACTIVE" }
+    }
+        .distinctUntilChanged { a, b -> a?.id == b?.id && a?.status == b?.status }
+        .flatMapLatest { session ->
+            if (session == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeCallAudioChunks(session.matchId, session.id, currentUserId)
+                    .map { chunks -> chunks.filter { it.senderUid != currentUserId } }
+                    .catch { error ->
+                        if (error is CancellationException) throw error
+                        emit(emptyList())
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
     private val _actionStatusMessage = MutableStateFlow<String?>(null)
     val actionStatusMessage: StateFlow<String?> = _actionStatusMessage.asStateFlow()
 
@@ -593,6 +642,38 @@ class KindredViewModel(
                             }
                         }
                     }
+                }
+        }
+
+        // Real-time incoming call notification emitter across all matches
+        viewModelScope.launch {
+            val notifiedIncomingCallIds = mutableSetOf<String>()
+            combine(
+                allMatchCallSessionsFlow,
+                allProfilesFlow
+            ) { sessions, profiles ->
+                sessions to profiles.associateBy { it.userId }
+            }
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    Log.w(TAG, "Incoming call notification watcher paused", error)
+                }
+                .collect { (sessions, profileMap) ->
+                    sessions
+                        .filter { it.status == "RINGING" && it.calleeUid == currentUserId }
+                        .forEach { ringingCall ->
+                            if (notifiedIncomingCallIds.add(ringingCall.id)) {
+                                val callerName = profileMap[ringingCall.callerUid]?.displayName ?: "Kindred Match"
+                                _pushAlerts.tryEmit(
+                                    KindredPushAlert.IncomingCall(
+                                        matchId = ringingCall.matchId,
+                                        callId = ringingCall.id,
+                                        callerName = callerName,
+                                        callType = ringingCall.callType
+                                    )
+                                )
+                            }
+                        }
                 }
         }
     }
@@ -678,16 +759,27 @@ class KindredViewModel(
         } else {
             Double.MAX_VALUE
         }
-        if (movedKm >= 0.5 && (now - lastGeoPersistMs) >= 30_000L) {
+        val cityOrCountryChanged = (lastPersistedCity != resolved.cityLabel) ||
+            (resolved.countryName.isNotBlank() && lastPersistedCountry != resolved.countryName)
+        val shouldPersist = anchorLat == null ||
+            cityOrCountryChanged ||
+            (movedKm >= 0.5 && (now - lastGeoPersistMs) >= 30_000L)
+
+        if (shouldPersist) {
             lastPersistedGeoLat = resolved.exactLatitude
             lastPersistedGeoLng = resolved.exactLongitude
+            lastPersistedCity = resolved.cityLabel
+            if (resolved.countryName.isNotBlank()) {
+                lastPersistedCountry = resolved.countryName
+            }
             lastGeoPersistMs = now
             viewModelScope.launch {
                 repository.updateLocationCoordinates(
                     latitude = resolved.exactLatitude,
                     longitude = resolved.exactLongitude,
                     cityLabel = resolved.cityLabel,
-                    countryName = resolved.countryName
+                    countryName = resolved.countryName,
+                    email = userEmail
                 )
             }
         }
@@ -697,13 +789,18 @@ class KindredViewModel(
         _latestLocation.value = resolved
         lastPersistedGeoLat = resolved.exactLatitude
         lastPersistedGeoLng = resolved.exactLongitude
+        lastPersistedCity = resolved.cityLabel
+        if (resolved.countryName.isNotBlank()) {
+            lastPersistedCountry = resolved.countryName
+        }
         lastGeoPersistMs = System.currentTimeMillis()
         viewModelScope.launch {
             val result = repository.updateLocationCoordinates(
                 latitude = resolved.exactLatitude,
                 longitude = resolved.exactLongitude,
                 cityLabel = resolved.cityLabel,
-                countryName = resolved.countryName
+                countryName = resolved.countryName,
+                email = userEmail
             )
             result.onSuccess {
                 val cell = GeoHashUtils.encode(resolved.coarseLatitude, resolved.coarseLongitude, 4)
@@ -712,54 +809,22 @@ class KindredViewModel(
                 } else {
                     resolved.cityLabel
                 }
-                _actionStatusMessage.value = "Location updated to $locLabel (GeoHash $cell)"
+                _actionStatusMessage.value = "Location verified: $locLabel (GeoHash $cell)"
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to update location"
             }
         }
     }
 
-    fun toggleDemoProfiles(enabled: Boolean) {
-        _includeDemoProfiles.value = enabled
-        _actionStatusMessage.value = if (enabled) {
-            "Showing 23 sample profiles (10W / 7M / 6NB)"
-        } else {
-            "Sample profiles hidden — showing live members only"
-        }
-    }
-
-    fun resetDemoSwipes() {
-        _demoSwipes.value = emptyMap()
-        if (_lastUndoableSwipe.value?.isDemo == true) {
-            _lastUndoableSwipe.value = null
-        }
-        _includeDemoProfiles.value = true
-        _actionStatusMessage.value = "Restored all 23 sample profiles"
-    }
-
     fun swipeProfile(candidate: DiscoveryCandidate, direction: String) {
         val targetId = candidate.profile.userId
         val targetName = candidate.profile.displayName
-
-        if (SampleProfilesProvider.isDemoProfileId(targetId)) {
-            _demoSwipes.value = _demoSwipes.value + (targetId to direction)
-            _lastUndoableSwipe.value = UndoableSwipe(
-                targetUserId = targetId,
-                displayName = targetName,
-                isDemo = true
-            )
-            if (direction == "LIKE") {
-                _actionStatusMessage.value = "Liked $targetName (sample profile)"
-            }
-            return
-        }
 
         if (targetId in _pendingSwipes.value) return
         _pendingSwipes.value = _pendingSwipes.value + (targetId to direction)
         _lastUndoableSwipe.value = UndoableSwipe(
             targetUserId = targetId,
-            displayName = targetName,
-            isDemo = false
+            displayName = targetName
         )
 
         viewModelScope.launch {
@@ -795,12 +860,6 @@ class KindredViewModel(
         val entry = _lastUndoableSwipe.value ?: return
         _lastUndoableSwipe.value = null
 
-        if (entry.isDemo) {
-            _demoSwipes.value = _demoSwipes.value - entry.targetUserId
-            _actionStatusMessage.value = "Brought ${entry.displayName} back to your deck"
-            return
-        }
-
         val previousPending = _pendingSwipes.value[entry.targetUserId]
         _pendingSwipes.value = _pendingSwipes.value - entry.targetUserId
 
@@ -823,28 +882,6 @@ class KindredViewModel(
     ) {
         val targetId = targetProfile.userId
         if (targetId.isBlank() || targetId == currentUserId) return
-
-        if (SampleProfilesProvider.isDemoProfileId(targetId)) {
-            val matchId = "${DEMO_MATCH_PREFIX}$targetId"
-            val nowTs = Timestamp.now()
-            val alreadyExists = _demoMatches.value.any { it.id == matchId }
-            if (!alreadyExists) {
-                val sorted = listOf(currentUserId, targetId).sorted()
-                val newThread = MatchRecord(
-                    id = matchId,
-                    participantUids = sorted,
-                    createdBy = currentUserId,
-                    conversationType = "DIRECT",
-                    lastMessageReadByUids = listOf(currentUserId),
-                    createdAt = nowTs,
-                    updatedAt = nowTs
-                )
-                _demoMatches.value = listOf(newThread) + _demoMatches.value
-            }
-            _selectedMatchId.value = matchId
-            onOpened(matchId)
-            return
-        }
 
         viewModelScope.launch {
             _isBusy.value = true
@@ -870,49 +907,6 @@ class KindredViewModel(
         disappearingSeconds: Long = 0L,
         viewOnce: Boolean = false
     ) {
-        if (isDemoMatchId(matchId)) {
-            val cleanText = text.trim().take(1000)
-            if (cleanText.isEmpty() && messageType !in setOf("PHOTO", "VOICE", "GIF")) return
-            val nowTs = Timestamp.now()
-            val newMessage = ChatMessage(
-                id = "demo_msg_${UUID.randomUUID().toString().take(8)}",
-                matchId = matchId,
-                senderId = currentUserId,
-                participantUids = participantUids,
-                text = cleanText,
-                messageType = messageType,
-                mediaDataUrl = mediaDataUrl,
-                mediaGifId = mediaGifId,
-                mediaDurationSec = mediaDurationSec,
-                readByUids = listOf(currentUserId),
-                disappearingSeconds = disappearingSeconds,
-                viewOnce = viewOnce,
-                createdAt = nowTs
-            )
-            val currentList = _demoMessages.value[matchId].orEmpty()
-            _demoMessages.value = _demoMessages.value + (matchId to (currentList + newMessage))
-            val preview = cleanText.ifBlank {
-                when (messageType) {
-                    "PHOTO" -> "📷 Photo"
-                    "VOICE" -> "🎙️ Voice note"
-                    "GIF" -> "🎞️ Sent a GIF"
-                    else -> "Sent a message"
-                }
-            }.take(300)
-            _demoMatches.value = _demoMatches.value.map { m ->
-                if (m.id == matchId) {
-                    m.copy(
-                        lastMessageText = preview,
-                        lastMessageSenderId = currentUserId,
-                        lastMessageAt = nowTs,
-                        lastMessageReadByUids = listOf(currentUserId),
-                        updatedAt = nowTs
-                    )
-                } else m
-            }
-            return
-        }
-
         viewModelScope.launch {
             val result = repository.sendMessage(
                 matchId = matchId,
@@ -933,29 +927,12 @@ class KindredViewModel(
 
     fun markMessagesAsRead(matchId: String, messageIds: List<String>) {
         if (matchId.isBlank() || messageIds.isEmpty()) return
-        if (isDemoMatchId(matchId)) {
-            _demoMessages.value = _demoMessages.value.toMutableMap().apply {
-                val updated = get(matchId).orEmpty().map { msg ->
-                    if (msg.id in messageIds && currentUserId !in msg.readByUids) {
-                        msg.copy(readByUids = msg.readByUids + currentUserId)
-                    } else msg
-                }
-                put(matchId, updated)
-            }
-            _demoMatches.value = _demoMatches.value.map { m ->
-                if (m.id == matchId && currentUserId !in m.lastMessageReadByUids) {
-                    m.copy(lastMessageReadByUids = m.lastMessageReadByUids + currentUserId)
-                } else m
-            }
-            return
-        }
         viewModelScope.launch {
             repository.markMessagesAsRead(matchId, messageIds)
         }
     }
 
     fun markViewOnceOpened(matchId: String, messageId: String) {
-        if (isDemoMatchId(matchId)) return
         viewModelScope.launch {
             repository.markViewOnceOpened(matchId, messageId)
         }
@@ -1079,6 +1056,19 @@ class KindredViewModel(
         }
     }
 
+    fun sendCallAudioChunk(session: CallSession, seq: Long, sampleRateHz: Int, audioBase64: String) {
+        viewModelScope.launch {
+            repository.sendCallAudioChunk(
+                matchId = session.matchId,
+                callId = session.id,
+                participantUids = session.participantUids,
+                seq = seq,
+                sampleRateHz = sampleRateHz,
+                audioBase64 = audioBase64
+            )
+        }
+    }
+
     fun endCall(session: CallSession, durationSeconds: Long) {
         viewModelScope.launch {
             repository.endCallAndLogMessage(
@@ -1093,15 +1083,6 @@ class KindredViewModel(
     }
 
     fun unmatch(matchId: String) {
-        if (isDemoMatchId(matchId)) {
-            _demoMatches.value = _demoMatches.value.filterNot { it.id == matchId }
-            _demoMessages.value = _demoMessages.value - matchId
-            if (_selectedMatchId.value == matchId) {
-                _selectedMatchId.value = null
-            }
-            _actionStatusMessage.value = "Conversation removed"
-            return
-        }
         viewModelScope.launch {
             _isBusy.value = true
             val result = repository.unmatch(matchId)
@@ -1123,26 +1104,6 @@ class KindredViewModel(
         reason: String? = null,
         onBlocked: () -> Unit = {}
     ) {
-        if (SampleProfilesProvider.isDemoProfileId(targetUserId)) {
-            val demoMatchId = "${DEMO_MATCH_PREFIX}$targetUserId"
-            _demoMatches.value = _demoMatches.value.filterNot { it.id == demoMatchId }
-            _demoMessages.value = _demoMessages.value - demoMatchId
-            if (_selectedMatchId.value == demoMatchId) {
-                _selectedMatchId.value = null
-            }
-            _demoBlockedUsers.value = _demoBlockedUsers.value + (
-                targetUserId to BlockedUserItem(
-                    blockedUid = targetUserId,
-                    displayName = displayName,
-                    reason = reason,
-                    isDemo = true
-                )
-            )
-            _actionStatusMessage.value = "Blocked $displayName"
-            onBlocked()
-            return
-        }
-
         viewModelScope.launch {
             _isBusy.value = true
             val result = repository.blockUser(targetUserId, reason)
@@ -1162,12 +1123,6 @@ class KindredViewModel(
     }
 
     fun unblockUser(targetUserId: String) {
-        if (SampleProfilesProvider.isDemoProfileId(targetUserId)) {
-            _demoBlockedUsers.value = _demoBlockedUsers.value - targetUserId
-            _actionStatusMessage.value = "User unblocked"
-            return
-        }
-
         viewModelScope.launch {
             _isBusy.value = true
             val result = repository.unblockUser(targetUserId)
@@ -1341,8 +1296,5 @@ class KindredViewModel(
     private companion object {
         const val TAG = "KindredVM"
         const val STOP_TIMEOUT_MILLIS = 5000L
-        const val DEMO_MATCH_PREFIX = "demo_match_"
-
-        fun isDemoMatchId(matchId: String): Boolean = matchId.startsWith(DEMO_MATCH_PREFIX)
     }
 }

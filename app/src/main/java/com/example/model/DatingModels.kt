@@ -200,6 +200,20 @@ data class CallSession(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
+@IgnoreExtraProperties
+data class CallAudioChunk(
+    @DocumentId val id: String = "",
+    val matchId: String = "",
+    val callId: String = "",
+    val senderUid: String = "",
+    val participantUids: List<String> = emptyList(),
+    val seq: Long = 0L,
+    val sampleRateHz: Long = 8000L,
+    val audioBase64: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
 data class IcebreakerSuggestion(
     val prompt: String,
     val tone: String,
@@ -245,8 +259,7 @@ sealed interface UiState<out T> {
 data class BlockedUserItem(
     val blockedUid: String,
     val displayName: String,
-    val reason: String? = null,
-    val isDemo: Boolean = false
+    val reason: String? = null
 )
 
 data class DiscoveryCandidate(

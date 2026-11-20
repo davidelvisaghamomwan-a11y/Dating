@@ -75,6 +75,18 @@ class KindredMessagingService : FirebaseMessagingService() {
                 }
             }
 
+            KindredNotificationHelper.TYPE_INCOMING_CALL, "CALL", "VIDEO_CALL", "VOICE_CALL" -> {
+                val callId = data["callId"].orEmpty().ifBlank { matchId ?: senderName }
+                val callType = data["callType"] ?: if (type == "VOICE_CALL") "VOICE" else "VIDEO"
+                KindredNotificationHelper.showIncomingCallNotification(
+                    context = applicationContext,
+                    matchId = matchId,
+                    callId = callId,
+                    callerName = senderName,
+                    callType = callType
+                )
+            }
+
             else -> {
                 if (!body.isNullOrBlank() &&
                     !KindredNotificationHelper.shouldSuppressForegroundMessageNotification(matchId)

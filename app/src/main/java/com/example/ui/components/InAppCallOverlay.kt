@@ -1,9 +1,7 @@
 package com.example.ui.components
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import android.util.Log
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Videocam
@@ -53,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,9 +69,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.communication.CallRingtoneController
+import com.example.communication.LiveCallAudioEngine
+import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.PublicProfile
+import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import kotlinx.coroutines.delay
@@ -127,7 +132,7 @@ internal fun IncomingCallBanner(
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier.size(48.dp)
             ) {
                 IconButton(onClick = onDecline, modifier = Modifier.testTag("decline_call_button")) {
                     Icon(Icons.Filled.CallEnd, contentDescription = "Decline call", tint = Color.White)
@@ -136,7 +141,7 @@ internal fun IncomingCallBanner(
             Surface(
                 shape = CircleShape,
                 color = EmeraldMint,
-                modifier = Modifier.size(44.dp)
+                modifier = Modifier.size(48.dp)
             ) {
                 IconButton(onClick = onAccept, modifier = Modifier.testTag("accept_call_button")) {
                     Icon(
@@ -155,6 +160,8 @@ internal fun InAppCallOverlay(
     session: CallSession,
     currentUserId: String,
     partner: PublicProfile?,
+    incomingAudioChunks: List<CallAudioChunk> = emptyList(),
+    onSendAudioChunk: (seq: Long, sampleRateHz: Int, audioBase64: String) -> Unit = { _, _, _ -> },
     onToggleMute: () -> Unit,
     onToggleCamera: () -> Unit,
     onEndCall: (durationSeconds: Long) -> Unit
@@ -170,6 +177,15 @@ internal fun InAppCallOverlay(
     var useFrontCamera by remember { mutableStateOf(true) }
     var speakerOn by remember { mutableStateOf(isVideo) }
     var elapsedSec by remember(session.id, session.status) { mutableLongStateOf(0L) }
+
+    val audioEngine = remember(context) { LiveCallAudioEngine(context.applicationContext) }
+    val ringtoneController = remember(context) { CallRingtoneController(context.applicationContext) }
+    val playedChunkKeys = remember(session.id) { linkedSetOf<String>() }
+    val latestOnSendAudioChunk by rememberUpdatedState(onSendAudioChunk)
+
+    val localMicLevel by audioEngine.localMicLevel.collectAsStateWithLifecycle()
+    val remoteAudioLevel by audioEngine.remoteAudioLevel.collectAsStateWithLifecycle()
+    val isAudioHardwareActive by audioEngine.isAudioHardwareActive.collectAsStateWithLifecycle()
 
     val requiredPerms = remember(isVideo) {
         if (isVideo) {
@@ -197,20 +213,60 @@ internal fun InAppCallOverlay(
         }
     }
 
-    // Communication audio routing via Android AudioManager
-    DisposableEffect(session.id, speakerOn, isMuted) {
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        val previousMode = audioManager?.mode ?: AudioManager.MODE_NORMAL
-        runCatching {
-            audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager?.isMicrophoneMute = isMuted
-            @Suppress("DEPRECATION")
-            audioManager?.isSpeakerphoneOn = speakerOn
-        }
+    DisposableEffect(session.id) {
         onDispose {
-            runCatching {
-                audioManager?.isMicrophoneMute = false
-                audioManager?.mode = previousMode
+            ringtoneController.release()
+            audioEngine.release()
+        }
+    }
+
+    // Caller ringback tone while waiting for answer
+    LaunchedEffect(session.id, session.status, isCaller) {
+        if (session.status == "RINGING" && isCaller) {
+            ringtoneController.startOutgoingRingback()
+        } else {
+            ringtoneController.stopAll()
+        }
+    }
+
+    // Bidirectional live PCM voice capture + AudioTrack output while call is ACTIVE
+    LaunchedEffect(session.id, session.status, hasCallPermissions) {
+        if (session.status == "ACTIVE") {
+            ringtoneController.stopAll()
+            audioEngine.start(
+                speakerOn = speakerOn,
+                isMuted = isMuted,
+                onAudioFrameReady = { seq, sampleRateHz, audioBase64 ->
+                    latestOnSendAudioChunk(seq, sampleRateHz, audioBase64)
+                }
+            )
+        } else {
+            audioEngine.stop()
+        }
+    }
+
+    LaunchedEffect(session.status, speakerOn, isMuted) {
+        if (session.status == "ACTIVE") {
+            audioEngine.updateAudioRouting(speakerOn = speakerOn, isMuted = isMuted)
+        }
+    }
+
+    LaunchedEffect(session.id, session.status, incomingAudioChunks) {
+        if (session.status != "ACTIVE") return@LaunchedEffect
+        val freshChunks = incomingAudioChunks
+            .filter { it.senderUid != currentUserId && it.audioBase64.isNotBlank() }
+            .sortedBy { it.seq }
+        freshChunks.forEach { chunk ->
+            val key = chunk.id.ifBlank { "${chunk.senderUid}_${chunk.seq}" }
+            if (playedChunkKeys.add(key)) {
+                audioEngine.enqueueRemoteAudio(chunk.audioBase64)
+                if (playedChunkKeys.size > 400) {
+                    val iter = playedChunkKeys.iterator()
+                    if (iter.hasNext()) {
+                        iter.next()
+                        iter.remove()
+                    }
+                }
             }
         }
     }
@@ -281,6 +337,46 @@ internal fun InAppCallOverlay(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.72f)
                 )
+                if (session.status == "ACTIVE") {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val speakingText = when {
+                        remoteAudioLevel > 0.06f -> "$partnerName speaking"
+                        !isMuted && localMicLevel > 0.06f -> "Your mic active"
+                        isAudioHardwareActive -> "Voice audio live (${if (speakerOn) "Speaker" else "Earpiece"})"
+                        else -> "Initializing voice audio…"
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.1f),
+                        border = BorderStroke(
+                            0.5.dp,
+                            if (remoteAudioLevel > 0.06f || (!isMuted && localMicLevel > 0.06f)) {
+                                EmeraldMint.copy(alpha = 0.75f)
+                            } else {
+                                ChampagneGold.copy(alpha = 0.45f)
+                            }
+                        ),
+                        modifier = Modifier.testTag("call_audio_status_pill")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.GraphicEq,
+                                contentDescription = null,
+                                tint = if (remoteAudioLevel > 0.06f) EmeraldMint else ChampagneGold,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = speakingText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.9f)
+                            )
+                        }
+                    }
+                }
             }
 
             // Center visual stage + optional CameraX local feed

@@ -501,6 +501,41 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'callerMuted', 'calleeMuted', 'callerCameraOn', 'calleeCameraOn', 'updatedAt', 'endedAtMs']);
 
         allow delete: if isSignedIn() && isValidId(matchId) && request.auth.uid in existing().participantUids;
+
+        // 7d. Live In-App Call Audio Chunks (/matches/{matchId}/calls/{callId}/audioChunks/{chunkId})
+        match /audioChunks/{chunkId} {
+          allow get, list: if isSignedIn() &&
+                            isValidId(matchId) &&
+                            isValidId(callId) &&
+                            request.auth.uid in existing().participantUids;
+
+          allow create: if isSignedIn() &&
+                           isValidId(matchId) &&
+                           isValidId(callId) &&
+                           isValidId(chunkId) &&
+                           isMatchParticipant(matchId) &&
+                           incoming().matchId == matchId &&
+                           incoming().callId == callId &&
+                           incoming().senderUid == request.auth.uid &&
+                           request.auth.uid in incoming().participantUids &&
+                           incoming().participantUids == get(/databases/$(database)/documents/matches/$(matchId)).data.participantUids &&
+                           incoming().seq is int &&
+                           incoming().seq >= 0 &&
+                           incoming().sampleRateHz is int &&
+                           incoming().sampleRateHz in [8000, 16000] &&
+                           incoming().audioBase64 is string &&
+                           incoming().audioBase64.size() >= 1 &&
+                           incoming().audioBase64.size() <= 40000 &&
+                           incoming().keys().hasAll(['matchId', 'callId', 'senderUid', 'participantUids', 'seq', 'sampleRateHz', 'audioBase64', 'createdAt']) &&
+                           incoming().keys().hasOnly(['matchId', 'callId', 'senderUid', 'participantUids', 'seq', 'sampleRateHz', 'audioBase64', 'createdAt']) &&
+                           isValidTimestamp(incoming().createdAt);
+
+          allow update: if false;
+
+          allow delete: if isSignedIn() &&
+                           isValidId(matchId) &&
+                           request.auth.uid in existing().participantUids;
+        }
       }
     }
 

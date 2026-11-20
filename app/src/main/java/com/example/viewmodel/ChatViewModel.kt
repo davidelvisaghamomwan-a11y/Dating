@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
 import com.example.data.KindredRepository
+import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.PublicProfile
@@ -115,6 +116,25 @@ class ChatViewModel(
                 initialValue = null
             )
     }
+
+    val activeCallAudioChunks: StateFlow<List<CallAudioChunk>> = activeCallSession
+        .flatMapLatest { session ->
+            if (session == null || session.status != "ACTIVE") {
+                flowOf(emptyList())
+            } else {
+                repository.observeCallAudioChunks(session.matchId, session.id, currentUserId)
+                    .map { chunks -> chunks.filter { it.senderUid != currentUserId } }
+                    .catch { error ->
+                        if (error is CancellationException) throw error
+                        emit(emptyList())
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
 
     private val _icebreakerAiState = MutableStateFlow<IcebreakerAiUiState>(IcebreakerAiUiState.Idle)
     val icebreakerAiState: StateFlow<IcebreakerAiUiState> = _icebreakerAiState.asStateFlow()
@@ -268,6 +288,19 @@ class ChatViewModel(
                 callType = session.callType,
                 durationSeconds = durationSeconds,
                 declined = false
+            )
+        }
+    }
+
+    fun sendCallAudioChunk(session: CallSession, seq: Long, sampleRateHz: Int, audioBase64: String) {
+        viewModelScope.launch {
+            repository.sendCallAudioChunk(
+                matchId = session.matchId,
+                callId = session.id,
+                participantUids = session.participantUids,
+                seq = seq,
+                sampleRateHz = sampleRateHz,
+                audioBase64 = audioBase64
             )
         }
     }

@@ -655,4 +655,25 @@ test("Chat read receipts, typing indicators, disappearing timers, and call signa
   await assertFails(
     charlieDb.collection("matches").doc(matchId).collection("calls").doc("call_001").get()
   );
+
+  // Audio chunk streaming is participant-only and senderUid must match auth.uid
+  const chunkRef = aliceDb.collection("matches").doc(matchId).collection("calls").doc("call_001").collection("audioChunks").doc("chunk_alice_0");
+  await assertSucceeds(
+    chunkRef.set({
+      matchId,
+      callId: "call_001",
+      senderUid: ALICE_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      seq: 0,
+      sampleRateHz: 8000,
+      audioBase64: "AQIDBA==",
+      createdAt: pastDate(100),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("matches").doc(matchId).collection("calls").doc("call_001").collection("audioChunks").doc("chunk_alice_0").get()
+  );
+  await assertFails(
+    charlieDb.collection("matches").doc(matchId).collection("calls").doc("call_001").collection("audioChunks").doc("chunk_alice_0").get()
+  );
 });

@@ -3,6 +3,7 @@ package com.example.data
 import android.content.Context
 import com.example.R
 import com.example.model.BlockRecord
+import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.LivenessAnalysisResult
@@ -178,6 +179,33 @@ class KindredRepository(
                     .map { snap ->
                         snap.toObjects(CallSession::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                             .sortedByDescending { it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, path, viewerUserId) }
+            )
+        }
+    }
+
+    fun observeCallAudioChunks(
+        matchId: String,
+        callId: String,
+        viewerUserId: String
+    ): Flow<List<CallAudioChunk>> {
+        if (matchId.isBlank() || callId.isBlank() || viewerUserId.isBlank()) {
+            return flowOf(emptyList())
+        }
+        val path = "matches/$matchId/calls/$callId/audioChunks"
+        return flow {
+            emitAll(
+                db.collection("matches")
+                    .document(matchId)
+                    .collection("calls")
+                    .document(callId)
+                    .collection("audioChunks")
+                    .whereArrayContains("participantUids", viewerUserId)
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(CallAudioChunk::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedBy { it.seq }
                     }
                     .catch { handleStreamError(it, OperationType.LIST, path, viewerUserId) }
             )
@@ -808,7 +836,8 @@ class KindredRepository(
         latitude: Double,
         longitude: Double,
         cityLabel: String,
-        countryName: String = ""
+        countryName: String = "",
+        email: String? = null
     ): Result<Unit> {
         var docPath = "users"
         return try {
@@ -824,23 +853,42 @@ class KindredRepository(
 
             val cleanCity = cityLabel.trim().ifBlank { "Nearby" }.take(80)
             val cleanCountry = countryName.trim().take(80).ifBlank { existingPublic?.country.orEmpty() }
-            val coarseLat = LocationAndGeoHelper.roundToCoarse(latitude.coerceIn(-90.0, 90.0))
-            val coarseLng = LocationAndGeoHelper.roundToCoarse(longitude.coerceIn(-180.0, 180.0))
+            val safeLat = latitude.coerceIn(-90.0, 90.0)
+            val safeLng = longitude.coerceIn(-180.0, 180.0)
+            val coarseLat = LocationAndGeoHelper.roundToCoarse(safeLat)
+            val coarseLng = LocationAndGeoHelper.roundToCoarse(safeLng)
             val geohash = GeoHashUtils.encode(coarseLat, coarseLng, precision = 7)
             val geohash3 = geohash.take(3)
             val geohash4 = geohash.take(4)
 
             val batch = db.batch()
+            docPath = privateRef.path
             if (privateExists) {
-                docPath = privateRef.path
                 batch.update(
                     privateRef,
                     mapOf(
-                        "exactLatitude" to latitude.coerceIn(-90.0, 90.0),
-                        "exactLongitude" to longitude.coerceIn(-180.0, 180.0),
+                        "exactLatitude" to safeLat,
+                        "exactLongitude" to safeLng,
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
+            } else {
+                val createPrivate = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "interestedIn" to "Everyone",
+                    "minAgePref" to 20L,
+                    "maxAgePref" to 45L,
+                    "maxDistanceKm" to 100L,
+                    "verifiedOnlyFilter" to false,
+                    "exactLatitude" to safeLat,
+                    "exactLongitude" to safeLng,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (!email.isNullOrBlank()) {
+                    createPrivate["email"] = email.take(200)
+                }
+                batch.set(privateRef, createPrivate)
             }
             if (publicExists && existingPublic != null) {
                 docPath = publicRef.path
@@ -886,9 +934,7 @@ class KindredRepository(
                     createMissingCells = true
                 )
             }
-            if (privateExists || publicExists) {
-                batch.commit().await()
-            }
+            batch.commit().await()
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -1410,6 +1456,50 @@ class KindredRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun sendCallAudioChunk(
+        matchId: String,
+        callId: String,
+        participantUids: List<String>,
+        seq: Long,
+        sampleRateHz: Int,
+        audioBase64: String
+    ): Result<Unit> {
+        if (matchId.isBlank() || callId.isBlank() || audioBase64.isBlank() || participantUids.size != 2) {
+            return Result.success(Unit)
+        }
+        var docPath = "matches/$matchId/calls/$callId/audioChunks"
+        return try {
+            val uid = requireUserId()
+            if (uid !in participantUids) return Result.success(Unit)
+            val chunkId = "${uid}_$seq"
+            val chunkRef = db.collection("matches")
+                .document(matchId)
+                .collection("calls")
+                .document(callId)
+                .collection("audioChunks")
+                .document(chunkId)
+            docPath = chunkRef.path
+            chunkRef.set(
+                mapOf(
+                    "matchId" to matchId,
+                    "callId" to callId,
+                    "senderUid" to uid,
+                    "participantUids" to participantUids,
+                    "seq" to seq,
+                    "sampleRateHz" to sampleRateHz.toLong(),
+                    "audioBase64" to audioBase64.take(40_000),
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
             Result.failure(e)
         }
     }

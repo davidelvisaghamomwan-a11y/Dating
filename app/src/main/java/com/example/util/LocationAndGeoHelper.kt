@@ -3,12 +3,17 @@ package com.example.util
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.Location
+import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Looper
+import android.provider.Settings
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -56,6 +61,23 @@ object LocationAndGeoHelper {
             Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
         return coarseGranted || fineGranted
+    }
+
+    fun isLocationServicesEnabled(context: Context): Boolean {
+        val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return false
+        return runCatching { LocationManagerCompat.isLocationEnabled(manager) }.getOrDefault(false)
+    }
+
+    fun buildLocationSettingsIntent(): Intent {
+        return Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+    }
+
+    fun buildAppSettingsIntent(context: Context): Intent {
+        return Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", context.packageName, null)
+        )
     }
 
     fun roundToCoarse(coordinate: Double): Double {

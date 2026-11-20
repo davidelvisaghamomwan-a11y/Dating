@@ -71,10 +71,8 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     myProfile: PublicProfile?,
     privateUser: PrivateUser?,
-    includeDemoProfiles: Boolean,
     isBusy: Boolean,
     onBack: () -> Unit,
-    onToggleDemoProfiles: (Boolean) -> Unit,
     onSavePreferences: (
         interestedIn: String,
         minAgePref: Int,
@@ -373,28 +371,6 @@ fun SettingsScreen(
                                     modifier = Modifier.testTag("settings_discoverable_switch")
                                 )
                             }
-                        }
-
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Include sample profiles (23)", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    text = "Show curated sample profiles alongside live Firestore members",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = includeDemoProfiles,
-                                onCheckedChange = onToggleDemoProfiles,
-                                modifier = Modifier.testTag("settings_demo_profiles_switch")
-                            )
                         }
                     }
                 }

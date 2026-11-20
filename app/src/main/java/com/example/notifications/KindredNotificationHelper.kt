@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -18,11 +20,14 @@ import java.security.MessageDigest
 object KindredNotificationHelper {
     const val CHANNEL_MATCHES = "kindred_matches"
     const val CHANNEL_MESSAGES = "kindred_messages"
+    const val CHANNEL_CALLS = "kindred_calls"
 
     const val TYPE_NEW_MATCH = "NEW_MATCH"
     const val TYPE_NEW_MESSAGE = "NEW_MESSAGE"
+    const val TYPE_INCOMING_CALL = "INCOMING_CALL"
 
     const val EXTRA_MATCH_ID = "extra_match_id"
+    const val EXTRA_CALL_ID = "extra_call_id"
     const val EXTRA_NOTIFICATION_TYPE = "extra_notification_type"
 
     @Volatile
@@ -56,8 +61,29 @@ object KindredNotificationHelper {
             enableVibration(true)
         }
 
+        val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        val callsChannel = NotificationChannel(
+            CHANNEL_CALLS,
+            context.getString(R.string.fcm_calls_channel_name),
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Alerts for incoming voice and video calls"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0L, 600L, 600L)
+            if (ringtoneUri != null) {
+                setSound(
+                    ringtoneUri,
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+            }
+        }
+
         manager.createNotificationChannel(matchesChannel)
         manager.createNotificationChannel(messagesChannel)
+        manager.createNotificationChannel(callsChannel)
     }
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -74,12 +100,16 @@ object KindredNotificationHelper {
     fun buildLaunchIntent(
         context: Context,
         matchId: String?,
-        notificationType: String
+        notificationType: String,
+        callId: String? = null
     ): Intent {
         return Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             if (!matchId.isNullOrBlank()) {
                 putExtra(EXTRA_MATCH_ID, matchId)
+            }
+            if (!callId.isNullOrBlank()) {
+                putExtra(EXTRA_CALL_ID, callId)
             }
             putExtra(EXTRA_NOTIFICATION_TYPE, notificationType)
         }
@@ -154,6 +184,60 @@ object KindredNotificationHelper {
             )
         }
     }
+
+    fun showIncomingCallNotification(
+        context: Context,
+        matchId: String?,
+        callId: String,
+        callerName: String,
+        callType: String
+    ) {
+        if (!hasNotificationPermission(context)) return
+        ensureChannels(context)
+
+        val isVideo = callType.equals("VIDEO", ignoreCase = true)
+        val contentIntent = buildLaunchIntent(
+            context = context,
+            matchId = matchId,
+            notificationType = TYPE_INCOMING_CALL,
+            callId = callId
+        )
+        val notificationId = incomingCallNotificationId(callId)
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val callLabel = if (isVideo) "Incoming video call" else "Incoming voice call"
+        val notification = NotificationCompat.Builder(context, CHANNEL_CALLS)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("$callerName is calling…")
+            .setContentText("$callLabel on Kindred — tap to answer")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(true)
+            .setTimeoutAfter(45_000L)
+            .setContentIntent(pendingIntent)
+            .setFullScreenIntent(pendingIntent, true)
+            .build()
+
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+        }
+    }
+
+    fun cancelIncomingCallNotification(context: Context, callId: String) {
+        if (callId.isBlank()) return
+        runCatching {
+            NotificationManagerCompat.from(context).cancel(incomingCallNotificationId(callId))
+        }
+    }
+
+    fun incomingCallNotificationId(callId: String): Int = ("call_$callId").hashCode()
 
     fun tokenDocumentId(token: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())

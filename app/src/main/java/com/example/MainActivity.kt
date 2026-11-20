@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Explore
@@ -76,11 +77,15 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.communication.CallRingtoneController
 import com.example.data.KindredRepository
 import com.example.model.UiState
 import com.example.notifications.KindredNotificationHelper
 import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
+import com.example.ui.components.InAppCallOverlay
+import com.example.ui.components.IncomingCallBanner
+import com.example.ui.components.LocationVerificationGate
 import com.example.ui.components.NewMatchCelebrationDialog
 import com.example.ui.components.ProfileSearchSheet
 import com.example.ui.screens.AuthScreen
@@ -287,6 +292,9 @@ private fun MainKindredApp(
     val activePartnerPresence by viewModel.activePartnerPresence.collectAsStateWithLifecycle()
     val activePartnerTyping by viewModel.activePartnerTyping.collectAsStateWithLifecycle()
     val activeMatchCallSession by viewModel.activeMatchCallSession.collectAsStateWithLifecycle()
+    val globalCallSession by viewModel.globalCallSession.collectAsStateWithLifecycle()
+    val globalIncomingCallAlert by viewModel.globalIncomingCallAlert.collectAsStateWithLifecycle()
+    val activeCallAudioChunks by viewModel.activeCallAudioChunks.collectAsStateWithLifecycle()
     val icebreakerAiState by viewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusMessage by viewModel.actionStatusMessage.collectAsStateWithLifecycle()
     val newMatchPopup by viewModel.newMatchPopup.collectAsStateWithLifecycle()
@@ -301,6 +309,25 @@ private fun MainKindredApp(
     val presenceScope = rememberCoroutineScope()
     var hasLocationPermission by remember {
         mutableStateOf(LocationAndGeoHelper.hasLocationPermission(context))
+    }
+    var isLocationEnabled by remember {
+        mutableStateOf(LocationAndGeoHelper.isLocationServicesEnabled(context))
+    }
+
+    val incomingRingController = remember(context) { CallRingtoneController(context.applicationContext) }
+
+    val locationGateLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
+        isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
+    }
+
+    DisposableEffect(user.uid) {
+        onDispose {
+            incomingRingController.release()
+            KindredNotificationHelper.cancelIncomingCallNotification(context)
+        }
     }
 
     DisposableEffect(lifecycleOwner, user.uid) {
@@ -324,10 +351,12 @@ private fun MainKindredApp(
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
+                    isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
                     startForegroundHeartbeat()
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
+                    isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
                 }
                 Lifecycle.Event.ON_STOP -> {
                     heartbeatJob?.cancel()
@@ -345,8 +374,12 @@ private fun MainKindredApp(
         }
     }
 
-    LaunchedEffect(lifecycleOwner, user.uid, hasLocationPermission) {
-        if (!hasLocationPermission) return@LaunchedEffect
+    LaunchedEffect(lifecycleOwner, user.uid, hasLocationPermission, isLocationEnabled) {
+        if (!hasLocationPermission || !isLocationEnabled) return@LaunchedEffect
+        val immediateFix = LocationAndGeoHelper.fetchCurrentLocation(context)
+        if (immediateFix != null) {
+            viewModel.onLiveLocationTick(immediateFix)
+        }
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             LocationAndGeoHelper.observeLocationUpdates(context).collect { resolved ->
                 viewModel.onLiveLocationTick(resolved)
@@ -415,7 +448,27 @@ private fun MainKindredApp(
                         messageText = alert.messageText
                     )
                 }
+
+                is KindredPushAlert.IncomingCall -> {
+                    KindredNotificationHelper.showIncomingCallNotification(
+                        context = context,
+                        matchId = alert.matchId,
+                        callId = alert.callId,
+                        callerName = alert.callerName,
+                        callType = alert.callType
+                    )
+                }
             }
+        }
+    }
+
+    LaunchedEffect(globalIncomingCallAlert?.session?.id, globalIncomingCallAlert?.session?.status) {
+        val alert = globalIncomingCallAlert
+        if (alert != null) {
+            incomingRingController.startIncomingRing()
+        } else {
+            incomingRingController.stopAll()
+            KindredNotificationHelper.cancelIncomingCallNotification(context)
         }
     }
 
@@ -444,6 +497,28 @@ private fun MainKindredApp(
             navigateToTab(ROUTE_MATCHES)
             onConsumeDeepLink()
         }
+    }
+
+    if (!hasLocationPermission || !isLocationEnabled) {
+        LocationVerificationGate(
+            hasPermission = hasLocationPermission,
+            isLocationEnabled = isLocationEnabled,
+            onRequestPermission = {
+                locationGateLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    )
+                )
+            },
+            onOpenAppSettings = {
+                runCatching { context.startActivity(LocationAndGeoHelper.buildAppSettingsIntent(context)) }
+            },
+            onOpenLocationSettings = {
+                runCatching { context.startActivity(LocationAndGeoHelper.buildLocationSettingsIntent()) }
+            }
+        )
+        return
     }
 
     val matchCount = (dashboardState as? UiState.Success)?.data?.matches?.size ?: 0
@@ -571,13 +646,6 @@ private fun MainKindredApp(
                                         privateUser = data.privateUser,
                                         geoHashMeta = data.geoHashMeta,
                                         candidates = data.discoveryCandidates,
-                                        includeDemoProfiles = data.includeDemoProfiles,
-                                        onToggleDemoProfiles = { enabled ->
-                                            viewModel.toggleDemoProfiles(enabled)
-                                        },
-                                        onResetDemoSwipes = {
-                                            viewModel.resetDemoSwipes()
-                                        },
                                         onSwipe = { candidate, direction ->
                                             viewModel.swipeProfile(candidate, direction)
                                         },
@@ -629,6 +697,7 @@ private fun MainKindredApp(
                                         activePartnerPresence = activePartnerPresence,
                                         activePartnerTyping = activePartnerTyping,
                                         activeCallSession = activeMatchCallSession,
+                                        activeCallAudioChunks = activeCallAudioChunks,
                                         icebreakerAiState = icebreakerAiState,
                                         onSelectMatch = { matchId ->
                                             selectedMatchId?.takeIf { it != matchId }?.let { prev ->
@@ -687,6 +756,9 @@ private fun MainKindredApp(
                                         onToggleCallCamera = { session ->
                                             viewModel.toggleCallCamera(session)
                                         },
+                                        onSendCallAudioChunk = { session, seq, sr, b64 ->
+                                            viewModel.sendCallAudioChunk(session, seq, sr, b64)
+                                        },
                                         onEndCall = { session, duration ->
                                             viewModel.endCall(session, duration)
                                         },
@@ -731,6 +803,7 @@ private fun MainKindredApp(
                                         myProfile = data.myProfile,
                                         privateUser = data.privateUser,
                                         isBusy = isBusy,
+                                        latestLocation = latestLocation,
                                         onSaveProfile = { name, age, gender, bio, city, country, lat, lng, interests, photo, photos, discoverable, interestedIn, minAge, maxAge, maxDist, verifiedOnly ->
                                             viewModel.saveProfile(
                                                 displayName = name,
@@ -786,6 +859,7 @@ private fun MainKindredApp(
                                         myProfile = data.myProfile,
                                         defaultDisplayName = viewModel.defaultDisplayName,
                                         isBusy = isBusy,
+                                        latestLocation = latestLocation,
                                         onBack = { navController.popBackStack() },
                                         onSaveChanges = { bio, interests, photos, city, country ->
                                             viewModel.updateProfileContent(
@@ -807,12 +881,8 @@ private fun MainKindredApp(
                                     SettingsScreen(
                                         myProfile = data.myProfile,
                                         privateUser = data.privateUser,
-                                        includeDemoProfiles = data.includeDemoProfiles,
                                         isBusy = isBusy,
                                         onBack = { navController.popBackStack() },
-                                        onToggleDemoProfiles = { enabled ->
-                                            viewModel.toggleDemoProfiles(enabled)
-                                        },
                                         onSavePreferences = { interestedIn, minAge, maxAge, maxDist, verifiedOnly, myGender, discoverable ->
                                             viewModel.saveSettingsPreferences(
                                                 interestedIn = interestedIn,
@@ -845,6 +915,52 @@ private fun MainKindredApp(
                 }
             }
         }
+
+        // Global incoming call banner when ringing outside the active ChatScreen
+        val incomingAlert = globalIncomingCallAlert
+        if (incomingAlert != null &&
+            !(currentRoute == ROUTE_MATCHES && selectedMatchId == incomingAlert.session.matchId)
+        ) {
+            IncomingCallBanner(
+                session = incomingAlert.session,
+                partner = incomingAlert.thread.partnerProfile,
+                onAccept = {
+                    viewModel.answerCall(incomingAlert.session)
+                    viewModel.selectMatch(incomingAlert.session.matchId)
+                    navigateToTab(ROUTE_MATCHES)
+                },
+                onDecline = {
+                    viewModel.declineCall(incomingAlert.session)
+                },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+            )
+        }
+    }
+
+    // Global active call overlay if user switches tabs during a call
+    val ongoingGlobalCall = globalCallSession?.takeIf {
+        it.status == "ACTIVE" || (it.status == "RINGING" && it.callerUid == viewModel.currentUserId)
+    }
+    if (ongoingGlobalCall != null &&
+        !(currentRoute == ROUTE_MATCHES && selectedMatchId == ongoingGlobalCall.matchId)
+    ) {
+        val partnerProfile = (dashboardState as? UiState.Success)?.data?.matches
+            ?.firstOrNull { it.match.id == ongoingGlobalCall.matchId }
+            ?.partnerProfile
+        InAppCallOverlay(
+            session = ongoingGlobalCall,
+            currentUserId = viewModel.currentUserId,
+            partner = partnerProfile,
+            incomingAudioChunks = activeCallAudioChunks,
+            onSendAudioChunk = { seq, sr, b64 ->
+                viewModel.sendCallAudioChunk(ongoingGlobalCall, seq, sr, b64)
+            },
+            onToggleMute = { viewModel.toggleCallMute(ongoingGlobalCall) },
+            onToggleCamera = { viewModel.toggleCallCamera(ongoingGlobalCall) },
+            onEndCall = { duration -> viewModel.endCall(ongoingGlobalCall, duration) }
+        )
     }
 
     newMatchPopup?.let { matchItem ->

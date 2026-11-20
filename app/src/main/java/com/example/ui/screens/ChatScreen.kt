@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Gif
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
@@ -106,6 +107,7 @@ import com.example.communication.VoiceNotePlayer
 import com.example.communication.VoiceNoteRecorder
 import com.example.communication.VoicePermissionHelper
 import com.example.data.KindredRepository
+import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.MatchRecord
@@ -178,6 +180,7 @@ fun ChatScreen(
     val partnerPresence by chatViewModel.partnerPresence.collectAsStateWithLifecycle()
     val partnerTyping by chatViewModel.partnerTyping.collectAsStateWithLifecycle()
     val activeCallSession by chatViewModel.activeCallSession.collectAsStateWithLifecycle()
+    val activeCallAudioChunks by chatViewModel.activeCallAudioChunks.collectAsStateWithLifecycle()
     val icebreakerAiState by chatViewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusError by chatViewModel.statusError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -215,6 +218,7 @@ fun ChatScreen(
             partnerPresence = partnerPresence,
             partnerTyping = partnerTyping,
             activeCallSession = activeCallSession,
+            activeCallAudioChunks = activeCallAudioChunks,
             icebreakerAiState = icebreakerAiState,
             showBackButton = showBackButton,
             onBack = onBack,
@@ -246,6 +250,9 @@ fun ChatScreen(
             onDeclineCall = { chatViewModel.declineCall(it) },
             onToggleCallMute = { chatViewModel.toggleCallMute(it) },
             onToggleCallCamera = { chatViewModel.toggleCallCamera(it) },
+            onSendCallAudioChunk = { session, seq, sr, b64 ->
+                chatViewModel.sendCallAudioChunk(session, seq, sr, b64)
+            },
             onEndCall = { session, duration -> chatViewModel.endCall(session, duration) },
             onUnmatch = { chatViewModel.unmatch(onComplete = onBack) },
             onBlockUser = onBlockUser,
@@ -268,6 +275,7 @@ fun ChatScreen(
     myProfile: PublicProfile? = null,
     partnerTyping: TypingStatus? = null,
     activeCallSession: CallSession? = null,
+    activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
     icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     showBackButton: Boolean = true,
     onBack: () -> Unit,
@@ -296,6 +304,7 @@ fun ChatScreen(
     onDeclineCall: (CallSession) -> Unit = {},
     onToggleCallMute: (CallSession) -> Unit = {},
     onToggleCallCamera: (CallSession) -> Unit = {},
+    onSendCallAudioChunk: (session: CallSession, seq: Long, sampleRateHz: Int, audioBase64: String) -> Unit = { _, _, _, _ -> },
     onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (matchId: String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
@@ -620,6 +629,20 @@ fun ChatScreen(
                     }
 
                     IconButton(
+                        onClick = { if (partner != null) showPartnerSheet = true },
+                        enabled = partner != null,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("chat_view_profile_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = stringResource(R.string.chat_view_profile_cd),
+                            tint = CoralRose
+                        )
+                    }
+
+                    IconButton(
                         onClick = {
                             if (participants.size == 2 && thread.partnerId.isNotBlank()) {
                                 onStartCall(matchId, thread.partnerId, participants, "VOICE")
@@ -667,7 +690,7 @@ fun ChatScreen(
                     }
                 }
 
-                // Compact utility strip for disappearing timer, icebreaker coach, and quick block
+                // Compact utility strip for profile/photos, disappearing timer, icebreaker coach, and quick block
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -676,6 +699,21 @@ fun ChatScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (partner != null) {
+                        AssistChip(
+                            onClick = { showPartnerSheet = true },
+                            modifier = Modifier.testTag("chat_header_profile_chip"),
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Filled.Person,
+                                    contentDescription = stringResource(R.string.chat_view_profile_cd),
+                                    tint = CoralRose,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            label = { Text("Profile & Photos", style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
                     AssistChip(
                         onClick = { showTimerSheet = true },
                         modifier = Modifier.testTag("chat_timer_button"),
@@ -1247,6 +1285,10 @@ fun ChatScreen(
             session = ongoingCall,
             currentUserId = currentUserId,
             partner = partner,
+            incomingAudioChunks = activeCallAudioChunks,
+            onSendAudioChunk = { seq, sampleRateHz, audioBase64 ->
+                onSendCallAudioChunk(ongoingCall, seq, sampleRateHz, audioBase64)
+            },
             onToggleMute = { onToggleCallMute(ongoingCall) },
             onToggleCamera = { onToggleCallCamera(ongoingCall) },
             onEndCall = { duration -> onEndCall(ongoingCall, duration) }

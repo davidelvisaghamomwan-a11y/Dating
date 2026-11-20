@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -60,6 +61,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -92,6 +94,7 @@ import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
+import com.example.util.ResolvedDeviceLocation
 import com.example.util.VerificationAnalyzer
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -105,6 +108,7 @@ fun ProfileScreen(
     myProfile: PublicProfile?,
     privateUser: PrivateUser?,
     isBusy: Boolean,
+    latestLocation: ResolvedDeviceLocation? = null,
     onSaveProfile: (
         displayName: String,
         age: Int,
@@ -173,6 +177,20 @@ fun ProfileScreen(
     }
     var longitude by remember(privateUser, myProfile) {
         mutableStateOf(privateUser?.exactLongitude ?: myProfile?.coarseLongitude ?: -122.4194)
+    }
+
+    LaunchedEffect(latestLocation) {
+        val loc = latestLocation ?: return@LaunchedEffect
+        if (loc.isLiveGps) {
+            latitude = loc.exactLatitude
+            longitude = loc.exactLongitude
+            if (loc.cityLabel.isNotBlank()) {
+                cityLabel = loc.cityLabel
+            }
+            if (loc.countryName.isNotBlank()) {
+                country = loc.countryName
+            }
+        }
     }
     var selectedInterests by remember(myProfile) {
         mutableStateOf(myProfile?.interests ?: listOf("Coffee", "Hiking"))
@@ -590,7 +608,40 @@ fun ProfileScreen(
                             .testTag("profile_bio_input")
                     )
 
-                    Text("Location (Country & City)", style = MaterialTheme.typography.titleSmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Location (Country & City)", style = MaterialTheme.typography.titleSmall)
+                        if (latestLocation?.isLiveGps == true) {
+                            Surface(
+                                shape = CircleShape,
+                                color = EmeraldMint.copy(alpha = 0.16f),
+                                border = BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.45f)),
+                                modifier = Modifier.testTag("profile_gps_verified_badge")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.VerifiedUser,
+                                        contentDescription = null,
+                                        tint = EmeraldMint,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = "GPS Verified",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = EmeraldMint,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
                     CountryAndCitySelector(
                         country = country,
                         cityLabel = cityLabel,
@@ -849,11 +900,7 @@ fun ProfileScreen(
                                                 fontWeight = FontWeight.SemiBold
                                             )
                                             Text(
-                                                text = if (blocked.isDemo) {
-                                                    "Excluded from discovery deck"
-                                                } else {
-                                                    "Blocked across matching & chat"
-                                                },
+                                                text = "Blocked across matching & chat",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )

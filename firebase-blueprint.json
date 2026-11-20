@@ -190,6 +190,22 @@
       },
       "required": ["matchId", "callerUid", "calleeUid", "participantUids", "callType", "status", "callerMuted", "calleeMuted", "callerCameraOn", "calleeCameraOn", "createdAt", "updatedAt"]
     },
+    "CallAudioChunk": {
+      "title": "CallAudioChunk",
+      "description": "Low-latency PCM audio frame streamed between call participants.",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string" },
+        "callId": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "seq": { "type": "integer" },
+        "sampleRateHz": { "type": "integer" },
+        "audioBase64": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["matchId", "callId", "senderUid", "participantUids", "seq", "sampleRateHz", "audioBase64", "createdAt"]
+    },
     "UserPresence": {
       "title": "UserPresence",
       "description": "Real-time user online and last-seen presence status.",
@@ -255,6 +271,14 @@
     "/matches/{matchId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/ChatMessage" },
       "description": "Real-time chat messages within a match."
+    },
+    "/matches/{matchId}/calls/{callId}": {
+      "schema": { "$ref": "#/entities/CallSession" },
+      "description": "In-app voice and video call signaling documents."
+    },
+    "/matches/{matchId}/calls/{callId}/audioChunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/CallAudioChunk" },
+      "description": "Real-time PCM voice audio chunks streamed during active calls."
     },
     "/presence/{userId}": {
       "schema": { "$ref": "#/entities/UserPresence" },
