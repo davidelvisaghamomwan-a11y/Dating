@@ -222,6 +222,25 @@ class KindredRepository(
         }
     }
 
+    suspend fun deleteFcmToken(token: String): Result<Unit> {
+        val cleanToken = token.trim()
+        if (cleanToken.length !in 10..512) {
+            return Result.success(Unit)
+        }
+        val uid = auth.currentUser?.uid ?: return Result.success(Unit)
+        val tokenId = KindredNotificationHelper.tokenDocumentId(cleanToken)
+        val docRef = db.collection("users").document(uid).collection("fcmTokens").document(tokenId)
+        return try {
+            docRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
     fun observeUsersIBlocked(userId: String): Flow<List<BlockRecord>> = flow {
         val path = "blocks"
         emitAll(

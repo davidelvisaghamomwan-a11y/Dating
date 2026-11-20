@@ -3,6 +3,7 @@ package com.example.notifications
 import android.util.Log
 import com.example.data.KindredRepository
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -20,9 +21,11 @@ class KindredMessagingService : FirebaseMessagingService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         Log.d(TAG, "Refreshed FCM token received")
+        if (FirebaseApp.getApps(applicationContext).isEmpty()) return
         val uid = Firebase.auth.currentUser?.uid
         if (!uid.isNullOrBlank() && token.isNotBlank()) {
             serviceScope.launch {
@@ -35,7 +38,11 @@ class KindredMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
         val data = message.data
-        val currentUid = Firebase.auth.currentUser?.uid
+        val currentUid = if (FirebaseApp.getApps(applicationContext).isNotEmpty()) {
+            Firebase.auth.currentUser?.uid
+        } else {
+            null
+        }
         val senderId = data["senderId"]
         if (!currentUid.isNullOrBlank() && senderId == currentUid) {
             return
@@ -58,16 +65,20 @@ class KindredMessagingService : FirebaseMessagingService() {
             }
 
             KindredNotificationHelper.TYPE_NEW_MESSAGE, "MESSAGE" -> {
-                KindredNotificationHelper.showMessageNotification(
-                    context = applicationContext,
-                    matchId = matchId,
-                    senderName = senderName,
-                    messageText = body ?: "Sent you a new message"
-                )
+                if (!KindredNotificationHelper.shouldSuppressForegroundMessageNotification(matchId)) {
+                    KindredNotificationHelper.showMessageNotification(
+                        context = applicationContext,
+                        matchId = matchId,
+                        senderName = senderName,
+                        messageText = body ?: "Sent you a new message"
+                    )
+                }
             }
 
             else -> {
-                if (!body.isNullOrBlank()) {
+                if (!body.isNullOrBlank() &&
+                    !KindredNotificationHelper.shouldSuppressForegroundMessageNotification(matchId)
+                ) {
                     KindredNotificationHelper.showMessageNotification(
                         context = applicationContext,
                         matchId = matchId,

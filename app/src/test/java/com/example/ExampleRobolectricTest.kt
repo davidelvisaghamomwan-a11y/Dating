@@ -1096,5 +1096,26 @@ class ExampleRobolectricTest {
         assertEquals(listOf("user_alpha" to "PASS", "user_alpha" to "LIKE"), recordedSwipes)
     }
 
+    @Test
+    fun `notification helper creates fcm channels and suppresses foreground active match notifications`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        KindredNotificationHelper.ensureChannels(context)
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val matchesChannel = manager.getNotificationChannel(KindredNotificationHelper.CHANNEL_MATCHES)
+        val messagesChannel = manager.getNotificationChannel(KindredNotificationHelper.CHANNEL_MESSAGES)
+
+        assertTrue(matchesChannel != null)
+        assertTrue(messagesChannel != null)
+        assertEquals(android.app.NotificationManager.IMPORTANCE_HIGH, matchesChannel.importance)
+        assertEquals(android.app.NotificationManager.IMPORTANCE_HIGH, messagesChannel.importance)
+
+        KindredNotificationHelper.activeMatchIdInForeground = "match_123"
+        assertTrue(KindredNotificationHelper.shouldSuppressForegroundMessageNotification("match_123"))
+        assertFalse(KindredNotificationHelper.shouldSuppressForegroundMessageNotification("match_999"))
+        KindredNotificationHelper.activeMatchIdInForeground = null
+        assertFalse(KindredNotificationHelper.shouldSuppressForegroundMessageNotification("match_123"))
+    }
+
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)
 }

@@ -25,6 +25,14 @@ object KindredNotificationHelper {
     const val EXTRA_MATCH_ID = "extra_match_id"
     const val EXTRA_NOTIFICATION_TYPE = "extra_notification_type"
 
+    @Volatile
+    var activeMatchIdInForeground: String? = null
+
+    fun shouldSuppressForegroundMessageNotification(matchId: String?): Boolean {
+        val active = activeMatchIdInForeground
+        return !matchId.isNullOrBlank() && !active.isNullOrBlank() && active == matchId
+    }
+
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager

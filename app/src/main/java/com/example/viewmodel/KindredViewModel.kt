@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 sealed interface KindredPushAlert {
@@ -498,20 +499,32 @@ class KindredViewModel(
     }
 
     fun syncFcmToken() {
-        runCatching {
-            FirebaseMessaging.getInstance().token
-                .addOnSuccessListener { token ->
-                    if (!token.isNullOrBlank()) {
-                        viewModelScope.launch {
-                            repository.saveFcmToken(token)
-                        }
-                    }
+        viewModelScope.launch {
+            try {
+                @Suppress("DEPRECATION")
+                val token = FirebaseMessaging.getInstance().token.await()
+                if (!token.isNullOrBlank()) {
+                    repository.saveFcmToken(token)
                 }
-                .addOnFailureListener { err ->
-                    Log.w(TAG, "FCM token retrieval skipped/failed", err)
-                }
-        }.onFailure { err ->
-            Log.w(TAG, "FirebaseMessaging unavailable in current runtime", err)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "FCM token retrieval skipped/failed", e)
+            }
+        }
+    }
+
+    suspend fun unregisterFcmTokenOnSignOut() {
+        try {
+            @Suppress("DEPRECATION")
+            val token = FirebaseMessaging.getInstance().token.await()
+            if (!token.isNullOrBlank()) {
+                repository.deleteFcmToken(token)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "FCM token cleanup skipped on sign-out", e)
         }
     }
 

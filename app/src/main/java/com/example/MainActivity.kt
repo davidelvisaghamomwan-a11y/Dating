@@ -355,6 +355,25 @@ private fun MainKindredApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: ROUTE_DISCOVER
 
+    DisposableEffect(lifecycleOwner, currentRoute, selectedMatchId) {
+        fun syncForegroundMatch() {
+            val isResumedOrStarted = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            KindredNotificationHelper.activeMatchIdInForeground =
+                if (isResumedOrStarted && currentRoute == ROUTE_MATCHES && !selectedMatchId.isNullOrBlank()) {
+                    selectedMatchId
+                } else {
+                    null
+                }
+        }
+        syncForegroundMatch()
+        val observer = LifecycleEventObserver { _, _ -> syncForegroundMatch() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            KindredNotificationHelper.activeMatchIdInForeground = null
+        }
+    }
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -693,6 +712,8 @@ private fun MainKindredApp(
                                             viewModel.syncFcmToken()
                                         },
                                         onBeforeSignOut = {
+                                            KindredNotificationHelper.activeMatchIdInForeground = null
+                                            viewModel.unregisterFcmTokenOnSignOut()
                                             viewModel.updatePresenceNow(false)
                                         },
                                         onStatusMessage = { msg ->
