@@ -53,6 +53,15 @@ jobs:
           if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
           fi
+          if [ ! -f app/google-services.json ]; then
+            echo "::warning::app/google-services.json and GOOGLE_SERVICES_JSON secret are missing. Using CI build fallback for R.string.default_web_client_id; add app/google-services.json or the GOOGLE_SERVICES_JSON secret for live Firebase sign-in."
+            mkdir -p app/src/debug/res/values
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="utf-8"?>' \
+              '<resources>' \
+              '    <string name="default_web_client_id" translatable="false"></string>' \
+              '</resources>' > app/src/debug/res/values/ci_google_services_fallback.xml
+          fi
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
           fi
@@ -63,7 +72,7 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --console=plain
+        run: gradle :app:assembleDebug --no-daemon --console=plain --stacktrace
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
