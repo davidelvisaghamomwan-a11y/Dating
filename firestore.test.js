@@ -542,3 +542,117 @@ test("User blocks enforce owner creation, block swipes/messages between users, a
     })
   );
 });
+
+test("Chat read receipts, typing indicators, disappearing timers, and call signaling enforce participant isolation", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    const created = pastDate(20000);
+    await adminDb.collection("publicProfiles").doc(ALICE_UID).set(makePublicProfile(ALICE_UID, created));
+    await adminDb.collection("publicProfiles").doc(BOB_UID).set(makePublicProfile(BOB_UID, created));
+    await adminDb.collection("swipes").doc(`${ALICE_UID}_${BOB_UID}`).set({
+      fromUserId: ALICE_UID,
+      toUserId: BOB_UID,
+      direction: "LIKE",
+      createdAt: created,
+    });
+    await adminDb.collection("swipes").doc(`${BOB_UID}_${ALICE_UID}`).set({
+      fromUserId: BOB_UID,
+      toUserId: ALICE_UID,
+      direction: "LIKE",
+      createdAt: created,
+    });
+    await adminDb.collection("matches").doc(`${ALICE_UID}_${BOB_UID}`).set({
+      participantUids: [ALICE_UID, BOB_UID],
+      createdBy: ALICE_UID,
+      createdAt: created,
+      updatedAt: created,
+    });
+  });
+
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const matchId = `${ALICE_UID}_${BOB_UID}`;
+
+  // Alice sends a disappearing photo message
+  const msgRef = aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_photo_1");
+  await assertSucceeds(
+    msgRef.set({
+      matchId,
+      senderId: ALICE_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      text: "Sunset coffee view",
+      messageType: "PHOTO",
+      mediaDataUrl: "data:image/jpeg;base64,SAMPLE_DATA",
+      readByUids: [ALICE_UID],
+      disappearingSeconds: 30,
+      viewOnce: true,
+      openedByRecipient: false,
+      createdAt: pastDate(1500),
+    })
+  );
+
+  // Bob marks the message read and opened
+  await assertSucceeds(
+    bobDb.collection("matches").doc(matchId).collection("messages").doc("msg_photo_1").update({
+      readByUids: [ALICE_UID, BOB_UID],
+      readAt: pastDate(500),
+      openedByRecipient: true,
+      expiresAtMs: Date.now() + 10000,
+    })
+  );
+
+  // Bob cannot rewrite the original message text when updating read receipt
+  await assertFails(
+    bobDb.collection("matches").doc(matchId).collection("messages").doc("msg_photo_1").update({
+      text: "Tampered text",
+      readByUids: [ALICE_UID, BOB_UID],
+    })
+  );
+
+  // Alice updates typing indicator; Charlie cannot spoof typing
+  await assertSucceeds(
+    aliceDb.collection("matches").doc(matchId).collection("typing").doc(ALICE_UID).set({
+      matchId,
+      userId: ALICE_UID,
+      isTyping: true,
+      updatedAt: pastDate(400),
+    })
+  );
+  await assertFails(
+    bobDb.collection("matches").doc(matchId).collection("typing").doc(ALICE_UID).set({
+      matchId,
+      userId: ALICE_UID,
+      isTyping: false,
+      updatedAt: pastDate(300),
+    })
+  );
+
+  // Alice initiates an in-app video call; Bob answers it; Charlie is denied
+  const callRef = aliceDb.collection("matches").doc(matchId).collection("calls").doc("call_001");
+  await assertSucceeds(
+    callRef.set({
+      matchId,
+      callerUid: ALICE_UID,
+      calleeUid: BOB_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      callType: "VIDEO",
+      status: "RINGING",
+      callerMuted: false,
+      calleeMuted: false,
+      callerCameraOn: true,
+      calleeCameraOn: true,
+      createdAt: pastDate(400),
+      updatedAt: pastDate(400),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("matches").doc(matchId).collection("calls").doc("call_001").update({
+      status: "ACTIVE",
+      updatedAt: pastDate(200),
+    })
+  );
+  await assertFails(
+    charlieDb.collection("matches").doc(matchId).collection("calls").doc("call_001").get()
+  );
+});

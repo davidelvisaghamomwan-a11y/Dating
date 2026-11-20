@@ -33,6 +33,7 @@ data class PublicProfile(
     val gender: String = "Woman",
     val bio: String = "",
     val cityLabel: String = "San Francisco",
+    val country: String = "United States",
     val coarseLatitude: Double = 37.77,
     val coarseLongitude: Double = -122.42,
     val geohash: String = "",
@@ -60,6 +61,18 @@ data class PublicProfile(
             .filter { it.isNotBlank() }
             .distinct()
             .take(4)
+
+    fun formattedLocation(): String {
+        val cleanCity = cityLabel.trim()
+        val cleanCountry = country.trim()
+        return when {
+            cleanCity.isNotBlank() && cleanCountry.isNotBlank() &&
+                !cleanCity.contains(cleanCountry, ignoreCase = true) -> "$cleanCity, $cleanCountry"
+            cleanCity.isNotBlank() -> cleanCity
+            cleanCountry.isNotBlank() -> cleanCountry
+            else -> "Nearby"
+        }
+    }
 }
 
 @Keep
@@ -98,12 +111,22 @@ data class MatchRecord(
     @DocumentId val id: String = "",
     val participantUids: List<String> = emptyList(),
     val createdBy: String = "",
+    val conversationType: String = "MATCH",
     val lastMessageText: String? = null,
     val lastMessageSenderId: String? = null,
     val lastMessageAt: Timestamp? = null,
+    val lastMessageReadByUids: List<String> = emptyList(),
+    val disappearingTtlSeconds: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    fun isUnreadFor(uid: String): Boolean {
+        if (uid.isBlank()) return false
+        val sender = lastMessageSenderId
+        if (lastMessageText.isNullOrBlank() || sender.isNullOrBlank() || sender == uid) return false
+        return uid !in lastMessageReadByUids
+    }
+}
 
 @Keep
 @IgnoreExtraProperties
@@ -114,7 +137,73 @@ data class ChatMessage(
     val participantUids: List<String> = emptyList(),
     val text: String = "",
     val messageType: String = "TEXT",
+    val mediaDataUrl: String? = null,
+    val mediaGifId: String? = null,
+    val mediaDurationSec: Long = 0L,
+    val readByUids: List<String> = emptyList(),
+    val readAt: Timestamp? = null,
+    val disappearingSeconds: Long = 0L,
+    val viewOnce: Boolean = false,
+    val openedByRecipient: Boolean = false,
+    val expiresAtMs: Long? = null,
     @ServerTimestamp val createdAt: Timestamp? = null
+) {
+    fun isReadBy(uid: String): Boolean = uid.isNotBlank() && uid in readByUids
+
+    fun isExpiredAt(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val exp = expiresAtMs
+        if (exp != null && exp > 0L && nowMs >= exp) return true
+        if (disappearingSeconds > 0L && createdAt != null) {
+            val computedExpiry = createdAt.toDate().time + disappearingSeconds * 1000L
+            if (nowMs >= computedExpiry) return true
+        }
+        return false
+    }
+
+    fun remainingSecondsAt(nowMs: Long = System.currentTimeMillis()): Long? {
+        val targetMs = when {
+            expiresAtMs != null && expiresAtMs > 0L -> expiresAtMs
+            disappearingSeconds > 0L && createdAt != null ->
+                createdAt.toDate().time + disappearingSeconds * 1000L
+            else -> null
+        } ?: return null
+        return ((targetMs - nowMs).coerceAtLeast(0L) + 999L) / 1000L
+    }
+}
+
+@Keep
+@IgnoreExtraProperties
+data class TypingStatus(
+    @DocumentId val id: String = "",
+    val matchId: String = "",
+    val userId: String = "",
+    val isTyping: Boolean = false,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class CallSession(
+    @DocumentId val id: String = "",
+    val matchId: String = "",
+    val callerUid: String = "",
+    val calleeUid: String = "",
+    val participantUids: List<String> = emptyList(),
+    val callType: String = "VIDEO",
+    val status: String = "RINGING",
+    val callerMuted: Boolean = false,
+    val calleeMuted: Boolean = false,
+    val callerCameraOn: Boolean = true,
+    val calleeCameraOn: Boolean = true,
+    val endedAtMs: Long? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+data class IcebreakerSuggestion(
+    val prompt: String,
+    val tone: String,
+    val reason: String
 )
 
 @Keep
@@ -238,6 +327,40 @@ object KindredConstants {
 
     val GENDER_OPTIONS = listOf("Woman", "Man", "Non-binary")
     val INTERESTED_IN_OPTIONS = listOf("Everyone", "Women", "Men", "Non-binary")
+
+    val COUNTRY_CITIES: LinkedHashMap<String, List<String>> = linkedMapOf(
+        "United States" to listOf("San Francisco", "New York", "Los Angeles", "Chicago", "Austin", "Seattle", "Miami"),
+        "United Kingdom" to listOf("London", "Manchester", "Edinburgh", "Bristol", "Birmingham", "Leeds"),
+        "Canada" to listOf("Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa", "Halifax"),
+        "Nigeria" to listOf("Lagos", "Abuja", "Port Harcourt", "Ibadan", "Enugu", "Kano"),
+        "France" to listOf("Paris", "Lyon", "Marseille", "Bordeaux", "Nice", "Toulouse"),
+        "Germany" to listOf("Berlin", "Munich", "Hamburg", "Frankfurt", "Cologne", "Stuttgart"),
+        "Spain" to listOf("Madrid", "Barcelona", "Valencia", "Seville", "Bilbao", "Malaga"),
+        "Italy" to listOf("Rome", "Milan", "Florence", "Naples", "Turin", "Bologna"),
+        "Netherlands" to listOf("Amsterdam", "Rotterdam", "Utrecht", "The Hague", "Eindhoven"),
+        "Australia" to listOf("Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide"),
+        "Japan" to listOf("Tokyo", "Osaka", "Kyoto", "Yokohama", "Fukuoka", "Sapporo"),
+        "South Korea" to listOf("Seoul", "Busan", "Incheon", "Daegu", "Jeju"),
+        "India" to listOf("Mumbai", "Bengaluru", "New Delhi", "Hyderabad", "Pune", "Chennai"),
+        "Brazil" to listOf("São Paulo", "Rio de Janeiro", "Belo Horizonte", "Curitiba", "Florianópolis"),
+        "Kenya" to listOf("Nairobi", "Mombasa", "Kisumu", "Nakuru", "Eldoret"),
+        "South Africa" to listOf("Cape Town", "Johannesburg", "Durban", "Pretoria", "Stellenbosch"),
+        "Ghana" to listOf("Accra", "Kumasi", "Tamale", "Takoradi", "Cape Coast"),
+        "United Arab Emirates" to listOf("Dubai", "Abu Dhabi", "Sharjah", "Ajman"),
+        "Singapore" to listOf("Central Singapore", "Marina Bay", "Orchard", "Tampines", "Jurong"),
+        "Mexico" to listOf("Mexico City", "Guadalajara", "Monterrey", "Playa del Carmen", "Oaxaca")
+    )
+
+    val COUNTRY_OPTIONS: List<String> = COUNTRY_CITIES.keys.toList()
+
+    fun citiesForCountry(country: String): List<String> {
+        val exact = COUNTRY_CITIES[country.trim()]
+        if (exact != null) return exact
+        return COUNTRY_CITIES.entries
+            .firstOrNull { it.key.equals(country.trim(), ignoreCase = true) }
+            ?.value
+            ?: emptyList()
+    }
 
     val VERIFICATION_CHALLENGES = listOf(
         VerificationChallenge(

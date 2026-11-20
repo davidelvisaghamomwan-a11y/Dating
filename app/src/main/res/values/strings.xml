@@ -4,11 +4,11 @@
     <string name="sign_in_with_google">Sign in with Google</string>
     <string name="signing_in">Signing in...</string>
     <string name="nav_discover">Discover</string>
-    <string name="nav_matches">Matches</string>
+    <string name="nav_matches">Inbox</string>
     <string name="nav_verify">Verify</string>
     <string name="nav_profile">Profile</string>
     <string name="discover_title">Discover</string>
-    <string name="matches_title">Matches &amp; Chat</string>
+    <string name="matches_title">Inbox</string>
     <string name="verify_title">Profile Verification</string>
     <string name="profile_title">Your Profile</string>
     <string name="btn_like">Like</string>
@@ -20,7 +20,7 @@
     <string name="btn_update_location">Refresh GPS</string>
     <string name="btn_start_verification">Start Camera Check</string>
     <string name="btn_save_profile">Save Profile</string>
-    <string name="btn_edit_profile">Edit Bio, Interests &amp; Photos</string>
+    <string name="btn_edit_profile">Edit Bio, Location, Interests &amp; Photos</string>
     <string name="edit_profile_title">Edit Profile</string>
     <string name="btn_save_changes">Save Changes</string>
     <string name="edit_profile_back_cd">Back to profile</string>
@@ -31,7 +31,7 @@
     <string name="cd_verify_shield">Security verification shield</string>
     <string name="cd_verified_badge">Verified profile badge</string>
     <string name="cd_profile_photo">Profile photo</string>
-    <string name="chat_back_cd">Back to matches</string>
+    <string name="chat_back_cd">Back to inbox</string>
     <string name="chat_unmatch_cd">Unmatch</string>
     <string name="chat_placeholder">Write a message...</string>
     <string name="chat_connecting">Connecting to live chat...</string>
@@ -41,6 +41,11 @@
     <string name="chat_view_profile">View match profile</string>
     <string name="chat_block_cd">Block user</string>
     <string name="discover_block_cd">Block profile</string>
+    <string name="discover_search_cd">Search profiles by name</string>
+    <string name="inbox_search_cd">Search profiles or start a conversation</string>
+    <string name="search_profiles_title">Search People</string>
+    <string name="search_profiles_placeholder">Search by name, city, or country...</string>
+    <string name="btn_message_directly">Message</string>
     <string name="fcm_default_channel_id">kindred_messages</string>
     <string name="fcm_matches_channel_name">New Matches</string>
     <string name="fcm_messages_channel_name">Messages</string>
@@ -50,8 +55,14 @@
     <string name="settings_cd">Dating preferences settings</string>
     <string name="settings_back_cd">Back from settings</string>
     <string name="btn_save_preferences">Save Preferences</string>
-    <string name="ai_studio_title">AI Photo Studio</string>
-    <string name="btn_open_ai_studio">AI Photo Studio</string>
-    <string name="btn_generate_ai_photo">Generate Portrait</string>
-    <string name="btn_use_ai_photo">Add to Profile Photos</string>
+    <string name="chat_voice_call_cd">Start voice call</string>
+    <string name="chat_video_call_cd">Start video call</string>
+    <string name="chat_more_actions_cd">Conversation safety and options</string>
+    <string name="chat_pick_photo_cd">Attach photo</string>
+    <string name="chat_pick_gif_cd">Send animated GIF</string>
+    <string name="chat_record_voice_cd">Record voice note</string>
+    <string name="chat_icebreakers_cd">Profile icebreakers and AI openers</string>
+    <string name="chat_timer_cd">Disappearing message timer</string>
+    <string name="chat_typing_label">typing…</string>
+    <string name="chat_end_call_cd">End call</string>
 </resources>

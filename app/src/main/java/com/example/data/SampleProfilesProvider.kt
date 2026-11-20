@@ -393,6 +393,7 @@ object SampleProfilesProvider {
                 gender = seed.gender,
                 bio = seed.bio,
                 cityLabel = seed.neighborhoodSuffix,
+                country = "United States",
                 coarseLatitude = coarseLat,
                 coarseLongitude = coarseLng,
                 geohash = geohash,

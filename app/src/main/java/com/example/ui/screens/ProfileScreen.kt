@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.Manifest
-import android.graphics.Bitmap
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -33,11 +32,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AddAPhoto
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
@@ -81,15 +78,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import com.example.R
-import com.example.ai.AiPhotoGenUiState
-import com.example.ai.AiPhotoStylePreset
 import com.example.auth.GoogleAuthHelper
 import com.example.model.BlockedUserItem
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.notifications.KindredNotificationHelper
-import com.example.ui.components.AiPhotoStudioSheet
+import com.example.ui.components.CountryAndCitySelector
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.theme.ChampagneGold
@@ -116,6 +111,7 @@ fun ProfileScreen(
         gender: String,
         bio: String,
         cityLabel: String,
+        country: String,
         latitude: Double,
         longitude: Double,
         interests: List<String>,
@@ -130,15 +126,6 @@ fun ProfileScreen(
     ) -> Unit,
     onEditProfile: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    aiPhotoGenState: AiPhotoGenUiState = AiPhotoGenUiState.Idle,
-    onGenerateAiPhoto: (
-        preset: AiPhotoStylePreset,
-        customDetails: String,
-        subjectGender: String?,
-        referenceBitmap: Bitmap?
-    ) -> Unit = { _, _, _, _ -> },
-    onResetAiPhotoState: () -> Unit = {},
-    onAddGeneratedPhoto: (String) -> Unit = {},
     blockedUsers: List<BlockedUserItem> = emptyList(),
     onUnblockUser: (String) -> Unit = {},
     onNotificationsGranted: () -> Unit = {},
@@ -175,8 +162,11 @@ fun ProfileScreen(
     var bio by remember(myProfile) {
         mutableStateOf(myProfile?.bio ?: "")
     }
+    var country by remember(myProfile) {
+        mutableStateOf(myProfile?.country?.ifBlank { "United States" } ?: "United States")
+    }
     var cityLabel by remember(myProfile) {
-        mutableStateOf(myProfile?.cityLabel ?: "San Francisco, CA")
+        mutableStateOf(myProfile?.cityLabel ?: "San Francisco")
     }
     var latitude by remember(privateUser, myProfile) {
         mutableStateOf(privateUser?.exactLatitude ?: myProfile?.coarseLatitude ?: 37.7749)
@@ -209,7 +199,6 @@ fun ProfileScreen(
     }
 
     var isFetchingGps by remember { mutableStateOf(false) }
-    var showAiPhotoStudio by remember { mutableStateOf(false) }
 
     // Zero-permission Android Photo Picker supporting up to 4 profile photos (Play Policy compliant)
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -239,9 +228,17 @@ fun ProfileScreen(
                 latitude = resolved.exactLatitude
                 longitude = resolved.exactLongitude
                 cityLabel = resolved.cityLabel
-                onStatusMessage("Detected ${resolved.cityLabel}")
+                if (resolved.countryName.isNotBlank()) {
+                    country = resolved.countryName
+                }
+                val locText = if (resolved.countryName.isNotBlank()) {
+                    "${resolved.cityLabel}, ${resolved.countryName}"
+                } else {
+                    resolved.cityLabel
+                }
+                onStatusMessage("Detected $locText")
             } else {
-                onStatusMessage("Could not acquire GPS fix; enter your city manually.")
+                onStatusMessage("Could not acquire GPS fix; select your country and city manually.")
             }
         }
     }
@@ -505,29 +502,6 @@ fun ProfileScreen(
                     }
 
                     FilledTonalButton(
-                        onClick = {
-                            onResetAiPhotoState()
-                            showAiPhotoStudio = true
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("profile_ai_photo_studio_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = null,
-                            tint = CoralRose,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.btn_open_ai_studio),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    FilledTonalButton(
                         onClick = onEditProfile,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -616,45 +590,28 @@ fun ProfileScreen(
                             .testTag("profile_bio_input")
                     )
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = cityLabel,
-                            onValueChange = { if (it.length <= 80) cityLabel = it },
-                            label = { Text("City / Neighborhood") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedButton(
-                            onClick = {
-                                if (LocationAndGeoHelper.hasLocationPermission(context)) {
-                                    fetchGps()
-                                } else {
-                                    locationLauncher.launch(
-                                        arrayOf(
-                                            Manifest.permission.ACCESS_COARSE_LOCATION,
-                                            Manifest.permission.ACCESS_FINE_LOCATION
-                                        )
-                                    )
-                                }
-                            },
-                            enabled = !isFetchingGps,
-                            modifier = Modifier
-                                .height(54.dp)
-                                .testTag("profile_gps_button")
-                        ) {
-                            if (isFetchingGps) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("Location (Country & City)", style = MaterialTheme.typography.titleSmall)
+                    CountryAndCitySelector(
+                        country = country,
+                        cityLabel = cityLabel,
+                        onCountryChange = { country = it },
+                        onCityChange = { cityLabel = it },
+                        showGpsButton = true,
+                        isFetchingGps = isFetchingGps,
+                        onRequestGps = {
+                            if (LocationAndGeoHelper.hasLocationPermission(context)) {
+                                fetchGps()
                             } else {
-                                Icon(Icons.Filled.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("GPS")
+                                locationLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                        Manifest.permission.ACCESS_FINE_LOCATION
+                                    )
+                                )
                             }
-                        }
-                    }
+                        },
+                        testTagPrefix = "profile"
+                    )
 
                     val coarseLatPreview = LocationAndGeoHelper.roundToCoarse(latitude)
                     val coarseLngPreview = LocationAndGeoHelper.roundToCoarse(longitude)
@@ -926,6 +883,7 @@ fun ProfileScreen(
                         gender,
                         bio,
                         cityLabel,
+                        country,
                         latitude,
                         longitude,
                         selectedInterests,
@@ -973,33 +931,5 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
-    }
-
-    if (showAiPhotoStudio) {
-        AiPhotoStudioSheet(
-            state = aiPhotoGenState,
-            subjectGender = gender,
-            existingProfilePhotos = profilePhotos,
-            onGenerate = onGenerateAiPhoto,
-            onApplyPhoto = { dataUrl ->
-                profilePhotos = if (profilePhotos.size < 4) {
-                    (profilePhotos + dataUrl).distinct().take(4)
-                } else {
-                    (profilePhotos.take(3) + dataUrl).distinct().take(4)
-                }
-                if (myProfile != null) {
-                    onAddGeneratedPhoto(dataUrl)
-                } else {
-                    onStatusMessage("AI portrait added — tap Save Profile to publish")
-                }
-                showAiPhotoStudio = false
-                onResetAiPhotoState()
-            },
-            onResetState = onResetAiPhotoState,
-            onDismiss = {
-                showAiPhotoStudio = false
-                onResetAiPhotoState()
-            }
-        )
     }
 }

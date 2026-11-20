@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -120,6 +121,7 @@ fun DiscoverScreen(
     onUpdateFilters: (String, Int, Int, Int, Boolean) -> Unit,
     onNavigateToProfile: () -> Unit,
     onNavigateToVerify: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     latestLocation: ResolvedDeviceLocation? = null,
     onLocationPermissionGranted: () -> Unit = {},
@@ -160,7 +162,13 @@ fun DiscoverScreen(
 
     val maxDistanceKm = (privateUser?.maxDistanceKm ?: 100L).toInt()
     val isLiveGps = latestLocation?.isLiveGps == true
-    val cityDisplay = latestLocation?.cityLabel ?: myProfile?.cityLabel ?: "Set location"
+    val cityDisplay = latestLocation?.let { loc ->
+        if (loc.countryName.isNotBlank() && !loc.cityLabel.contains(loc.countryName, ignoreCase = true)) {
+            "${loc.cityLabel}, ${loc.countryName}"
+        } else {
+            loc.cityLabel
+        }
+    } ?: myProfile?.formattedLocation() ?: "Set location"
 
     BoxWithConstraints(
         modifier = Modifier
@@ -176,13 +184,13 @@ fun DiscoverScreen(
                 .align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Top Header: Brand + Location Pill + Filter Action
+            // Top Header: Brand + Location Pill + Search / Filter / Settings Actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
                     Text(
                         text = stringResource(R.string.discover_title),
                         style = MaterialTheme.typography.displaySmall,
@@ -250,6 +258,25 @@ fun DiscoverScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        IconButton(
+                            onClick = onOpenSearch,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("discover_search_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Search,
+                                contentDescription = stringResource(R.string.discover_search_cd),
+                                tint = CoralRose
+                            )
+                        }
+                    }
+
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -624,7 +651,7 @@ private fun ProfileDeckCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     LocationDistancePill(
-                        cityLabel = profile.cityLabel,
+                        cityLabel = profile.formattedLocation(),
                         distanceKm = candidate.distanceKm,
                         modifier = Modifier.weight(1f, fill = false)
                     )

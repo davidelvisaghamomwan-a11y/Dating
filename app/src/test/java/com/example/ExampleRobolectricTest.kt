@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -33,15 +34,17 @@ import com.example.model.ProfilePhotoComparison
 import com.example.model.PublicProfile
 import com.example.model.UiState
 import com.example.model.UserPresence
-import com.example.ai.AiPhotoGenUiState
-import com.example.ai.AiPhotoStylePresets
-import com.example.ai.AiProfilePhotoService
+import com.example.ai.AiIcebreakerService
+import com.example.ai.IcebreakerAiUiState
+import com.example.model.CallSession
+import com.example.model.TypingStatus
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
-import com.example.ui.components.AiPhotoStudioContent
+import com.example.ui.components.ProfileSearchContent
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
+import com.example.ui.screens.MatchesAndChatScreen
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.VerificationScreen
@@ -479,16 +482,20 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `edit profile screen updates bio interests and photos and saves changes`() {
+    fun `edit profile screen updates bio interests country city and photos and saves changes`() {
         var savedBio = ""
         var savedInterests = emptyList<String>()
         var savedPhotos = emptyList<String>()
+        var savedCity = ""
+        var savedCountry = ""
 
         val initialProfile = PublicProfile(
             userId = "me",
             displayName = "Alex",
             age = 27,
             bio = "Original bio",
+            cityLabel = "San Francisco",
+            country = "United States",
             interests = listOf("Coffee", "Hiking"),
             photoDataUrl = "data:image/jpeg;base64,AAA",
             profilePhotos = listOf("data:image/jpeg;base64,AAA", "data:image/jpeg;base64,BBB"),
@@ -502,10 +509,12 @@ class ExampleRobolectricTest {
                     defaultDisplayName = "Alex",
                     isBusy = false,
                     onBack = {},
-                    onSaveChanges = { bio, interests, photos ->
+                    onSaveChanges = { bio, interests, photos, city, country ->
                         savedBio = bio
                         savedInterests = interests
                         savedPhotos = photos
+                        savedCity = city
+                        savedCountry = country
                     },
                     onStatusMessage = {}
                 )
@@ -519,6 +528,12 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithText(
             "Updating your profile photos will reset your Verified badge until you complete a quick selfie check."
         ).assertIsDisplayed()
+
+        // Update country and city
+        composeTestRule.onNodeWithTag("edit_country_input").performScrollTo()
+            .performTextReplacement("Canada")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("edit_city_chip_Vancouver").performScrollTo().performClick()
 
         // Update bio
         composeTestRule.onNodeWithTag("edit_bio_input").performScrollTo()
@@ -535,6 +550,8 @@ class ExampleRobolectricTest {
         assertEquals("Sunday pour-over fan and coastal hiker.", savedBio)
         assertEquals(listOf("Coffee", "Photography"), savedInterests)
         assertEquals(listOf("data:image/jpeg;base64,AAA"), savedPhotos)
+        assertEquals("Canada", savedCountry)
+        assertEquals("Vancouver", savedCity)
     }
 
     @Test
@@ -551,7 +568,7 @@ class ExampleRobolectricTest {
                     myProfile = profile,
                     privateUser = null,
                     isBusy = false,
-                    onSaveProfile = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
+                    onSaveProfile = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
                     onEditProfile = { openedEdit = true },
                     onStatusMessage = {}
                 )
@@ -790,7 +807,7 @@ class ExampleRobolectricTest {
                     myProfile = profile,
                     privateUser = null,
                     isBusy = false,
-                    onSaveProfile = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
+                    onSaveProfile = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> },
                     blockedUsers = blockedList,
                     onUnblockUser = { unblockedUid = it },
                     onStatusMessage = {}
@@ -806,70 +823,179 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `ai profile photo service builds tailored prompts for text and reference modes`() {
-        val preset = AiPhotoStylePresets.PRESETS.first()
-        val textOnlyPrompt = AiProfilePhotoService.buildPortraitPrompt(
-            preset = preset,
-            customDetails = "linen jacket",
-            subjectGender = "Woman",
-            hasReference = false
+    fun `profile screen saves selected country and city`() {
+        var savedCountry = ""
+        var savedCity = ""
+        val profile = PublicProfile(
+            userId = "me",
+            displayName = "Alex",
+            age = 27,
+            cityLabel = "San Francisco",
+            country = "United States"
         )
-        assertTrue(textOnlyPrompt.contains("adult woman"))
-        assertTrue(textOnlyPrompt.contains("linen jacket"))
-        assertTrue(textOnlyPrompt.contains(preset.promptGuidance))
-
-        val refPrompt = AiProfilePhotoService.buildPortraitPrompt(
-            preset = preset,
-            customDetails = "",
-            subjectGender = "Man",
-            hasReference = true
-        )
-        assertTrue(refPrompt.contains("strictly preserving their exact facial identity"))
-        assertTrue(refPrompt.contains(preset.promptGuidance))
-    }
-
-    @Test
-    fun `ai photo studio content handles error and success apply flows`() {
-        var appliedDataUrl = ""
-        val sampleBitmap = Bitmap.createBitmap(120, 140, Bitmap.Config.ARGB_8888)
 
         composeTestRule.setContent {
-            var uiState by remember {
-                mutableStateOf<AiPhotoGenUiState>(
-                    AiPhotoGenUiState.Error("Quota exceeded for preview")
-                )
-            }
             KindredTheme {
-                AiPhotoStudioContent(
-                    state = uiState,
-                    subjectGender = "Woman",
-                    existingProfilePhotos = emptyList(),
-                    onGenerate = { _, _, _, _ ->
-                        uiState = AiPhotoGenUiState.Success(
-                            bitmap = sampleBitmap,
-                            dataUrl = "data:image/jpeg;base64,GENERATED_OK",
-                            styleTitle = "Golden Hour Rooftop",
-                            usedReferencePhoto = false
-                        )
+                ProfileScreen(
+                    currentUserId = "me",
+                    userEmail = "alex@example.com",
+                    defaultDisplayName = "Alex",
+                    myProfile = profile,
+                    privateUser = null,
+                    isBusy = false,
+                    onSaveProfile = { _, _, _, _, city, country, _, _, _, _, _, _, _, _, _, _, _ ->
+                        savedCity = city
+                        savedCountry = country
                     },
-                    onApplyPhoto = { appliedDataUrl = it },
-                    onResetState = { uiState = AiPhotoGenUiState.Idle }
+                    onStatusMessage = {}
                 )
             }
         }
 
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("ai_error_banner").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithText("Quota exceeded for preview").assertIsDisplayed()
-
-        // Generate triggers transition to Success and clicking apply emits dataUrl
-        composeTestRule.onNodeWithTag("ai_generate_button").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("profile_country_input").performScrollTo()
+            .performTextReplacement("Japan")
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("ai_result_card").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("ai_use_photo_button").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("profile_city_chip_Kyoto").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("save_profile_button").performScrollTo().performClick()
         composeTestRule.waitForIdle()
 
-        assertEquals("data:image/jpeg;base64,GENERATED_OK", appliedDataUrl)
+        assertEquals("Japan", savedCountry)
+        assertEquals("Kyoto", savedCity)
+    }
+
+    @Test
+    fun `inbox screen renders unread indicator, direct filter, and triggers search action`() {
+        var openedSearch = false
+        var selectedId: String? = null
+        val unreadMatch = MatchThreadItem(
+            match = MatchRecord(
+                id = "m_unread",
+                participantUids = listOf("alice_1", "bob_2"),
+                conversationType = "DIRECT",
+                lastMessageText = "Coffee in Tokyo?",
+                lastMessageSenderId = "bob_2",
+                lastMessageReadByUids = listOf("bob_2"),
+                lastMessageAt = Timestamp.now()
+            ),
+            partnerId = "bob_2",
+            partnerProfile = PublicProfile(
+                userId = "bob_2",
+                displayName = "Elena",
+                age = 28,
+                cityLabel = "Tokyo",
+                country = "Japan"
+            ),
+            distanceKm = 2.0
+        )
+        val readMatch = MatchThreadItem(
+            match = MatchRecord(
+                id = "m_read",
+                participantUids = listOf("alice_1", "carol_3"),
+                conversationType = "MATCH",
+                lastMessageText = "See you tomorrow!",
+                lastMessageSenderId = "alice_1",
+                lastMessageReadByUids = listOf("alice_1", "carol_3"),
+                lastMessageAt = Timestamp.now()
+            ),
+            partnerId = "carol_3",
+            partnerProfile = PublicProfile(
+                userId = "carol_3",
+                displayName = "Lucas",
+                age = 30,
+                cityLabel = "Toronto",
+                country = "Canada"
+            ),
+            distanceKm = 5.0
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                MatchesAndChatScreen(
+                    currentUserId = "alice_1",
+                    matches = listOf(unreadMatch, readMatch),
+                    selectedMatchId = null,
+                    messagesState = UiState.Success(emptyList()),
+                    onSelectMatch = { selectedId = it },
+                    onOpenSearch = { openedSearch = true },
+                    onSendMessage = { _, _, _, _ -> },
+                    onUnmatch = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Inbox").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("unread_dot_m_unread", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Coffee in Tokyo?", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("You: See you tomorrow!", useUnmergedTree = true).assertIsDisplayed()
+
+        // Filter to Direct conversations only
+        composeTestRule.onNodeWithTag("inbox_filter_direct").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("match_card_m_unread").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("match_card_m_read").assertDoesNotExist()
+
+        // Clicking search button opens global profile search
+        composeTestRule.onNodeWithTag("inbox_search_button").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(openedSearch)
+
+        // Clicking unread thread opens conversation
+        composeTestRule.onNodeWithTag("match_card_m_unread").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("m_unread", selectedId)
+    }
+
+    @Test
+    fun `profile search sheet searches profiles by name and starts direct message`() {
+        var messagedProfileId = ""
+        val profiles = listOf(
+            DiscoveryCandidate(
+                profile = PublicProfile(
+                    userId = "u_kenji",
+                    displayName = "Kenji Sato",
+                    age = 29,
+                    cityLabel = "Osaka",
+                    country = "Japan",
+                    interests = listOf("Ramen", "Photography")
+                ),
+                distanceKm = 1.8,
+                proximityMatchScore = 92
+            ),
+            DiscoveryCandidate(
+                profile = PublicProfile(
+                    userId = "u_claire",
+                    displayName = "Claire Moreau",
+                    age = 27,
+                    cityLabel = "Paris",
+                    country = "France",
+                    interests = listOf("Cinema", "Art")
+                ),
+                distanceKm = 4.2,
+                proximityMatchScore = 85
+            )
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ProfileSearchContent(
+                    searchableProfiles = profiles,
+                    onMessageProfile = { messagedProfileId = it.userId }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("profile_search_input").performTextInput("Kenji")
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("search_result_card_u_kenji").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("search_result_card_u_claire").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("search_message_button_u_kenji").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("u_kenji", messagedProfileId)
     }
 
     @Test
@@ -1115,6 +1241,286 @@ class ExampleRobolectricTest {
         assertFalse(KindredNotificationHelper.shouldSuppressForegroundMessageNotification("match_999"))
         KindredNotificationHelper.activeMatchIdInForeground = null
         assertFalse(KindredNotificationHelper.shouldSuppressForegroundMessageNotification("match_123"))
+    }
+
+    @Test
+    fun `chat screen displays read receipts, typing indicator, media bubbles, and marks unread read`() {
+        val markedReadIds = mutableListOf<String>()
+        val now = System.currentTimeMillis()
+        val messages = listOf(
+            ChatMessage(
+                id = "msg_sent_only",
+                matchId = sampleThread.match.id,
+                senderId = "alice_1",
+                participantUids = listOf("alice_1", "bob_2"),
+                text = "Read receipt pending",
+                messageType = "TEXT",
+                readByUids = listOf("alice_1"),
+                createdAt = Timestamp(Date(now - 20_000L))
+            ),
+            ChatMessage(
+                id = "msg_read_by_partner",
+                matchId = sampleThread.match.id,
+                senderId = "alice_1",
+                participantUids = listOf("alice_1", "bob_2"),
+                text = "Partner saw this!",
+                messageType = "TEXT",
+                readByUids = listOf("alice_1", "bob_2"),
+                createdAt = Timestamp(Date(now - 10_000L))
+            ),
+            ChatMessage(
+                id = "msg_partner_voice",
+                matchId = sampleThread.match.id,
+                senderId = "bob_2",
+                participantUids = listOf("alice_1", "bob_2"),
+                text = "",
+                messageType = "VOICE",
+                mediaDurationSec = 7L,
+                readByUids = listOf("bob_2"),
+                createdAt = Timestamp(Date(now - 5_000L))
+            ),
+            ChatMessage(
+                id = "msg_partner_gif",
+                matchId = sampleThread.match.id,
+                senderId = "bob_2",
+                participantUids = listOf("alice_1", "bob_2"),
+                text = "",
+                messageType = "GIF",
+                mediaGifId = "gif_cheers_clink",
+                readByUids = listOf("alice_1", "bob_2"),
+                disappearingSeconds = 30L,
+                expiresAtMs = now + 28_000L,
+                createdAt = Timestamp(Date(now - 2_000L))
+            )
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = sampleThread,
+                    messagesState = UiState.Success(messages),
+                    partnerTyping = TypingStatus(
+                        matchId = sampleThread.match.id,
+                        userId = "bob_2",
+                        isTyping = true,
+                        updatedAt = Timestamp(Date(now))
+                    ),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onMarkMessagesRead = { _, ids -> markedReadIds.addAll(ids) },
+                    onUnmatch = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        // Auto-marks unread partner non-viewOnce message (msg_partner_voice) as read
+        assertTrue(markedReadIds.contains("msg_partner_voice"))
+        assertFalse(markedReadIds.contains("msg_partner_gif"))
+
+        // Partner typing bubble + header status + bottom-most media bubbles
+        composeTestRule.onNodeWithTag("partner_typing_indicator", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("typing…", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gif_bubble_msg_partner_gif", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("timer_badge_msg_partner_gif", useUnmergedTree = true).assertIsDisplayed()
+
+        // Scroll through message list to inspect voice bubble and sent/read receipts
+        composeTestRule.onNodeWithTag("chat_message_list").performScrollToIndex(2)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("voice_bubble_msg_partner_voice", useUnmergedTree = true).assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("chat_message_list").performScrollToIndex(1)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("read_receipt_read_msg_read_by_partner", useUnmergedTree = true).assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("chat_message_list").performScrollToIndex(0)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("read_receipt_sent_msg_sent_only", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `chat screen filters expired disappearing messages and picks GIF + icebreaker + disappearing timer`() {
+        val now = System.currentTimeMillis()
+        val deletedIds = mutableListOf<String>()
+        val sentMediaTypes = mutableListOf<String>()
+        var updatedTtl = -1L
+
+        val expiredMsg = ChatMessage(
+            id = "expired_1",
+            matchId = sampleThread.match.id,
+            senderId = "bob_2",
+            participantUids = listOf("alice_1", "bob_2"),
+            text = "Already gone!",
+            messageType = "TEXT",
+            disappearingSeconds = 30L,
+            expiresAtMs = now - 5_000L
+        )
+        val activeMsg = ChatMessage(
+            id = "active_1",
+            matchId = sampleThread.match.id,
+            senderId = "bob_2",
+            participantUids = listOf("alice_1", "bob_2"),
+            text = "Still visible",
+            messageType = "TEXT"
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = sampleThread,
+                    messagesState = UiState.Success(listOf(expiredMsg, activeMsg)),
+                    myProfile = PublicProfile(
+                        userId = "alice_1",
+                        displayName = "Alex",
+                        interests = listOf("Coffee", "Photography")
+                    ),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onSendMediaMessage = { _, _, type, _, _, _, _, _, _ ->
+                        sentMediaTypes.add(type)
+                    },
+                    onDeleteExpiredMessage = { _, msgId -> deletedIds.add(msgId) },
+                    onUpdateDisappearingTimer = { _, ttl -> updatedTtl = ttl },
+                    onUnmatch = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        assertEquals(listOf("expired_1"), deletedIds)
+        composeTestRule.onNodeWithText("Still visible").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Already gone!").assertDoesNotExist()
+
+        // Open Disappearing Timer sheet & choose 5 minutes (300s)
+        composeTestRule.onNodeWithTag("chat_timer_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("timer_option_300").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(300L, updatedTtl)
+
+        // Open GIF picker & send curated reaction
+        composeTestRule.onNodeWithTag("chat_gif_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gif_option_gif_coffee_cheers").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(listOf("GIF"), sentMediaTypes)
+    }
+
+    @Test
+    fun `chat screen unmatch dialog offers both unmatch only and unmatch plus block actions`() {
+        var unmatchedId = ""
+        var blockedPair: Pair<String, String>? = null
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = sampleThread,
+                    messagesState = UiState.Success(emptyList()),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onUnmatch = { unmatchedId = it },
+                    onBlockUser = { uid, name -> blockedPair = uid to name }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("unmatch_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("dialog_unmatch_and_block_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("bob_2" to "Elena", blockedPair)
+        assertEquals("", unmatchedId)
+    }
+
+    @Test
+    fun `chat screen shows incoming call banner and triggers voice and video call actions`() {
+        var startedCallType = ""
+        var acceptedCallId = ""
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = sampleThread,
+                    messagesState = UiState.Success(emptyList()),
+                    activeCallSession = CallSession(
+                        id = "call_99",
+                        matchId = sampleThread.match.id,
+                        callerUid = "bob_2",
+                        calleeUid = "alice_1",
+                        participantUids = listOf("alice_1", "bob_2"),
+                        callType = "VIDEO",
+                        status = "RINGING"
+                    ),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onStartCall = { _, _, _, type -> startedCallType = type },
+                    onAnswerCall = { acceptedCallId = it.id },
+                    onUnmatch = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("incoming_call_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("accept_call_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("call_99", acceptedCallId)
+
+        composeTestRule.onNodeWithTag("chat_voice_call_button").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("VOICE", startedCallType)
+    }
+
+    @Test
+    fun `ai icebreaker service builds shared-interest openers and parses Gemini JSON`() {
+        val myProfile = PublicProfile(
+            userId = "alice_1",
+            displayName = "Alex",
+            cityLabel = "San Francisco",
+            interests = listOf("Coffee", "Photography")
+        )
+        val partner = PublicProfile(
+            userId = "bob_2",
+            displayName = "Elena",
+            cityLabel = "San Francisco",
+            bio = "Love vintage film cameras and weekend espresso tastings.",
+            interests = listOf("Coffee", "Hiking")
+        )
+
+        val localOpeners = AiIcebreakerService.buildProfileBasedOpeners(myProfile, partner)
+        assertTrue(localOpeners.isNotEmpty())
+        assertTrue(localOpeners.any { it.prompt.contains("Coffee", ignoreCase = true) })
+
+        val structuredJson = """
+            {
+              "openers": [
+                {
+                  "prompt": "Since we both love Coffee, best pour-over spot in SF?",
+                  "tone": "Playful",
+                  "reason": "Shared interest + city"
+                },
+                {
+                  "prompt": "Film camera or digital for a weekend hike?",
+                  "tone": "Curious",
+                  "reason": "Connects your photos + bio"
+                }
+              ]
+            }
+        """.trimIndent()
+        val parsed = AiIcebreakerService.parseStructuredOpeners(structuredJson)
+        assertEquals(2, parsed.size)
+        assertEquals("Playful", parsed[0].tone)
+        assertTrue(parsed[1].prompt.contains("Film camera"))
     }
 
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)

@@ -52,6 +52,7 @@
         "gender": { "type": "string", "enum": ["Woman", "Man", "Non-binary"] },
         "bio": { "type": "string" },
         "cityLabel": { "type": "string" },
+        "country": { "type": "string", "description": "User-selected or geocoded country name." },
         "coarseLatitude": { "type": "number" },
         "coarseLongitude": { "type": "number" },
         "geohash": { "type": "string", "description": "Base-32 precision-7 GeoHash of coarse coordinates." },
@@ -85,6 +86,7 @@
         "gender": { "type": "string", "enum": ["Woman", "Man", "Non-binary"] },
         "bio": { "type": "string" },
         "cityLabel": { "type": "string" },
+        "country": { "type": "string" },
         "coarseLatitude": { "type": "number" },
         "coarseLongitude": { "type": "number" },
         "interests": { "type": "array" },
@@ -121,9 +123,12 @@
       "properties": {
         "participantUids": { "type": "array" },
         "createdBy": { "type": "string" },
+        "conversationType": { "type": "string", "enum": ["MATCH", "DIRECT"] },
         "lastMessageText": { "type": "string" },
         "lastMessageSenderId": { "type": "string" },
         "lastMessageAt": { "type": "string", "format": "date-time" },
+        "lastMessageReadByUids": { "type": "array" },
+        "disappearingTtlSeconds": { "type": "integer" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -131,17 +136,59 @@
     },
     "ChatMessage": {
       "title": "ChatMessage",
-      "description": "Real-time chat message inside a mutual match.",
+      "description": "Real-time chat message with media, read receipts, and disappearing options inside a mutual match.",
       "type": "object",
       "properties": {
         "matchId": { "type": "string" },
         "senderId": { "type": "string" },
         "participantUids": { "type": "array" },
         "text": { "type": "string" },
-        "messageType": { "type": "string", "enum": ["TEXT", "ICEBREAKER"] },
+        "messageType": { "type": "string", "enum": ["TEXT", "ICEBREAKER", "PHOTO", "VOICE", "GIF", "CALL"] },
+        "mediaDataUrl": { "type": "string" },
+        "mediaGifId": { "type": "string" },
+        "mediaDurationSec": { "type": "integer" },
+        "readByUids": { "type": "array" },
+        "readAt": { "type": "string", "format": "date-time" },
+        "disappearingSeconds": { "type": "integer" },
+        "viewOnce": { "type": "boolean" },
+        "openedByRecipient": { "type": "boolean" },
+        "expiresAtMs": { "type": "integer" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["matchId", "senderId", "participantUids", "text", "messageType", "createdAt"]
+    },
+    "TypingStatus": {
+      "title": "TypingStatus",
+      "description": "Real-time typing indicator scoped to a match participant.",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string" },
+        "userId": { "type": "string" },
+        "isTyping": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["matchId", "userId", "isTyping", "updatedAt"]
+    },
+    "CallSession": {
+      "title": "CallSession",
+      "description": "Real-time in-app voice and video call signaling record within a match.",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string" },
+        "callerUid": { "type": "string" },
+        "calleeUid": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "callType": { "type": "string", "enum": ["VOICE", "VIDEO"] },
+        "status": { "type": "string", "enum": ["RINGING", "ACTIVE", "DECLINED", "ENDED"] },
+        "callerMuted": { "type": "boolean" },
+        "calleeMuted": { "type": "boolean" },
+        "callerCameraOn": { "type": "boolean" },
+        "calleeCameraOn": { "type": "boolean" },
+        "endedAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["matchId", "callerUid", "calleeUid", "participantUids", "callType", "status", "callerMuted", "calleeMuted", "callerCameraOn", "calleeCameraOn", "createdAt", "updatedAt"]
     },
     "UserPresence": {
       "title": "UserPresence",

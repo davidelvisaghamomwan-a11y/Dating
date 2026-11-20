@@ -75,6 +75,7 @@ service cloud.firestore {
              data.gender in ['Woman', 'Man', 'Non-binary'] &&
              data.bio is string && data.bio.size() <= 400 &&
              data.cityLabel is string && data.cityLabel.size() >= 1 && data.cityLabel.size() <= 80 &&
+             (!('country' in data) || (data.country is string && data.country.size() <= 80)) &&
              data.coarseLatitude is number && data.coarseLatitude >= -90.0 && data.coarseLatitude <= 90.0 &&
              data.coarseLongitude is number && data.coarseLongitude >= -180.0 && data.coarseLongitude <= 180.0 &&
              data.interests is list && data.interests.size() <= 8 &&
@@ -127,9 +128,17 @@ service cloud.firestore {
              data.participantUids[0] < data.participantUids[1] &&
              data.createdBy is string && isValidId(data.createdBy) &&
              data.createdBy in data.participantUids &&
+             (!('conversationType' in data) || data.conversationType in ['MATCH', 'DIRECT']) &&
              (!('lastMessageText' in data) || (data.lastMessageText is string && data.lastMessageText.size() <= 300)) &&
              (!('lastMessageSenderId' in data) || (data.lastMessageSenderId is string && isValidId(data.lastMessageSenderId) && data.lastMessageSenderId in data.participantUids)) &&
-             (!('lastMessageAt' in data) || isValidTimestamp(data.lastMessageAt));
+             (!('lastMessageAt' in data) || isValidTimestamp(data.lastMessageAt)) &&
+             (!('lastMessageReadByUids' in data) || (data.lastMessageReadByUids is list && data.lastMessageReadByUids.size() <= 2)) &&
+             (!('disappearingTtlSeconds' in data) || (data.disappearingTtlSeconds is int && data.disappearingTtlSeconds in [0, 30, 300, 86400]));
+    }
+
+    function isMatchParticipant(matchId) {
+      return exists(/databases/$(database)/documents/matches/$(matchId)) &&
+             request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.participantUids;
     }
 
     function isValidChatMessage(data, matchId) {
@@ -139,8 +148,18 @@ service cloud.firestore {
              data.participantUids.size() == 2 &&
              data.participantUids[0] is string && isValidId(data.participantUids[0]) &&
              data.participantUids[1] is string && isValidId(data.participantUids[1]) &&
-             data.text is string && data.text.size() >= 1 && data.text.size() <= 1000 &&
-             data.messageType in ['TEXT', 'ICEBREAKER'];
+             data.text is string && data.text.size() <= 1000 &&
+             data.messageType in ['TEXT', 'ICEBREAKER', 'PHOTO', 'VOICE', 'GIF', 'CALL'] &&
+             (data.text.size() >= 1 || data.messageType in ['PHOTO', 'VOICE', 'GIF']) &&
+             (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 260000)) &&
+             (!('mediaGifId' in data) || (data.mediaGifId is string && data.mediaGifId.size() <= 300)) &&
+             (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0 && data.mediaDurationSec <= 120)) &&
+             (!('readByUids' in data) || (data.readByUids is list && data.readByUids.size() <= 2)) &&
+             (!('readAt' in data) || isValidTimestamp(data.readAt)) &&
+             (!('disappearingSeconds' in data) || (data.disappearingSeconds is int && data.disappearingSeconds >= 0 && data.disappearingSeconds <= 604800)) &&
+             (!('viewOnce' in data) || data.viewOnce is bool) &&
+             (!('openedByRecipient' in data) || data.openedByRecipient is bool) &&
+             (!('expiresAtMs' in data) || (data.expiresAtMs is int && data.expiresAtMs > 0));
     }
 
     function isValidUserPresence(data) {
@@ -236,7 +255,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationScore', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
                        isValidPublicProfile(incoming()) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt) &&
@@ -254,7 +273,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
                        (
                          incoming().verificationStatus == 'UNVERIFIED' ||
                          (
@@ -276,7 +295,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationScore', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
                        isValidGeoCellProfile(incoming(), cellId) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt) &&
@@ -295,7 +314,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
                        (
                          incoming().verificationStatus == 'UNVERIFIED' ||
                          (
@@ -339,14 +358,28 @@ service cloud.firestore {
                        incoming().createdBy == request.auth.uid &&
                        matchId == (incoming().participantUids[0] + '_' + incoming().participantUids[1]) &&
                        incoming().keys().hasAll(['participantUids', 'createdBy', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['participantUids', 'createdBy', 'lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['participantUids', 'createdBy', 'conversationType', 'lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'lastMessageReadByUids', 'disappearingTtlSeconds', 'createdAt', 'updatedAt']) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt) &&
                        isNotBlockedBetween(incoming().participantUids[0], incoming().participantUids[1]) &&
-                       existsAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[0] + '_' + incoming().participantUids[1])) &&
-                       existsAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[1] + '_' + incoming().participantUids[0])) &&
-                       getAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[0] + '_' + incoming().participantUids[1])).data.direction == 'LIKE' &&
-                       getAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[1] + '_' + incoming().participantUids[0])).data.direction == 'LIKE';
+                       (
+                         (
+                           existsAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[0] + '_' + incoming().participantUids[1])) &&
+                           existsAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[1] + '_' + incoming().participantUids[0])) &&
+                           getAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[0] + '_' + incoming().participantUids[1])).data.direction == 'LIKE' &&
+                           getAfter(/databases/$(database)/documents/swipes/$(incoming().participantUids[1] + '_' + incoming().participantUids[0])).data.direction == 'LIKE'
+                         ) ||
+                         (
+                           ('conversationType' in incoming()) &&
+                           incoming().conversationType == 'DIRECT' &&
+                           exists(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[0])) &&
+                           exists(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[1])) &&
+                           (
+                             (incoming().participantUids[0] == request.auth.uid && get(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[1])).data.discoverable == true) ||
+                             (incoming().participantUids[1] == request.auth.uid && get(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[0])).data.discoverable == true)
+                           )
+                         )
+                       );
 
       allow update: if isSignedIn() &&
                        isValidId(matchId) &&
@@ -356,7 +389,7 @@ service cloud.firestore {
                        incoming().createdBy == existing().createdBy &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageText', 'lastMessageSenderId', 'lastMessageAt', 'lastMessageReadByUids', 'disappearingTtlSeconds', 'updatedAt']);
 
       allow delete: if isSignedIn() && isValidId(matchId) && request.auth.uid in existing().participantUids;
 
@@ -372,13 +405,102 @@ service cloud.firestore {
                          incoming().senderId == request.auth.uid &&
                          request.auth.uid in incoming().participantUids &&
                          incoming().keys().hasAll(['matchId', 'senderId', 'participantUids', 'text', 'messageType', 'createdAt']) &&
-                         incoming().keys().hasOnly(['matchId', 'senderId', 'participantUids', 'text', 'messageType', 'createdAt']) &&
+                         incoming().keys().hasOnly(['matchId', 'senderId', 'participantUids', 'text', 'messageType', 'mediaDataUrl', 'mediaGifId', 'mediaDurationSec', 'readByUids', 'disappearingSeconds', 'viewOnce', 'openedByRecipient', 'expiresAtMs', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt) &&
                          isNotBlockedBetween(incoming().participantUids[0], incoming().participantUids[1]) &&
                          exists(/databases/$(database)/documents/matches/$(matchId)) &&
                          incoming().participantUids == get(/databases/$(database)/documents/matches/$(matchId)).data.participantUids;
 
-        allow update, delete: if false;
+        allow update: if isSignedIn() &&
+                         isValidId(matchId) &&
+                         isValidId(messageId) &&
+                         request.auth.uid in existing().participantUids &&
+                         isValidChatMessage(incoming(), matchId) &&
+                         incoming().matchId == existing().matchId &&
+                         incoming().senderId == existing().senderId &&
+                         incoming().participantUids == existing().participantUids &&
+                         incoming().text == existing().text &&
+                         incoming().messageType == existing().messageType &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['readByUids', 'readAt', 'openedByRecipient', 'expiresAtMs']) &&
+                         ('readByUids' in incoming()) &&
+                         request.auth.uid in incoming().readByUids &&
+                         existing().senderId in incoming().readByUids;
+
+        allow delete: if isSignedIn() &&
+                         isValidId(matchId) &&
+                         isValidId(messageId) &&
+                         request.auth.uid in existing().participantUids &&
+                         (
+                           existing().senderId == request.auth.uid ||
+                           (('expiresAtMs' in existing()) && existing().expiresAtMs is int) ||
+                           (('disappearingSeconds' in existing()) && existing().disappearingSeconds > 0)
+                         );
+      }
+
+      // 7b. Real-Time Typing Indicators (/matches/{matchId}/typing/{typingUserId})
+      match /typing/{typingUserId} {
+        allow get, list: if isSignedIn() && isValidId(matchId) && isMatchParticipant(matchId);
+
+        allow create, update: if isOwner(typingUserId) &&
+                                 isValidId(matchId) &&
+                                 isValidId(typingUserId) &&
+                                 isMatchParticipant(matchId) &&
+                                 incoming().matchId == matchId &&
+                                 incoming().userId == request.auth.uid &&
+                                 incoming().keys().hasAll(['matchId', 'userId', 'isTyping', 'updatedAt']) &&
+                                 incoming().keys().hasOnly(['matchId', 'userId', 'isTyping', 'updatedAt']) &&
+                                 incoming().isTyping is bool &&
+                                 isValidTimestamp(incoming().updatedAt);
+
+        allow delete: if isOwner(typingUserId) && isValidId(matchId);
+      }
+
+      // 7c. In-App Voice & Video Call Signaling (/matches/{matchId}/calls/{callId})
+      match /calls/{callId} {
+        allow get, list: if isSignedIn() && isValidId(matchId) && request.auth.uid in existing().participantUids;
+
+        allow create: if isSignedIn() &&
+                         isValidId(matchId) &&
+                         isValidId(callId) &&
+                         isMatchParticipant(matchId) &&
+                         incoming().matchId == matchId &&
+                         incoming().callerUid == request.auth.uid &&
+                         request.auth.uid in incoming().participantUids &&
+                         incoming().participantUids == get(/databases/$(database)/documents/matches/$(matchId)).data.participantUids &&
+                         incoming().calleeUid in incoming().participantUids &&
+                         incoming().callerUid != incoming().calleeUid &&
+                         incoming().callType in ['VOICE', 'VIDEO'] &&
+                         incoming().status == 'RINGING' &&
+                         incoming().callerMuted is bool &&
+                         incoming().calleeMuted is bool &&
+                         incoming().callerCameraOn is bool &&
+                         incoming().calleeCameraOn is bool &&
+                         incoming().keys().hasAll(['matchId', 'callerUid', 'calleeUid', 'participantUids', 'callType', 'status', 'callerMuted', 'calleeMuted', 'callerCameraOn', 'calleeCameraOn', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['matchId', 'callerUid', 'calleeUid', 'participantUids', 'callType', 'status', 'callerMuted', 'calleeMuted', 'callerCameraOn', 'calleeCameraOn', 'createdAt', 'updatedAt', 'endedAtMs']) &&
+                         isValidTimestamp(incoming().createdAt) &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         isNotBlockedBetween(incoming().participantUids[0], incoming().participantUids[1]);
+
+        allow update: if isSignedIn() &&
+                         isValidId(matchId) &&
+                         isValidId(callId) &&
+                         request.auth.uid in existing().participantUids &&
+                         incoming().matchId == existing().matchId &&
+                         incoming().callerUid == existing().callerUid &&
+                         incoming().calleeUid == existing().calleeUid &&
+                         incoming().participantUids == existing().participantUids &&
+                         incoming().callType == existing().callType &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().status in ['RINGING', 'ACTIVE', 'DECLINED', 'ENDED'] &&
+                         incoming().callerMuted is bool &&
+                         incoming().calleeMuted is bool &&
+                         incoming().callerCameraOn is bool &&
+                         incoming().calleeCameraOn is bool &&
+                         isValidTimestamp(incoming().updatedAt) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'callerMuted', 'calleeMuted', 'callerCameraOn', 'calleeCameraOn', 'updatedAt', 'endedAtMs']);
+
+        allow delete: if isSignedIn() && isValidId(matchId) && request.auth.uid in existing().participantUids;
       }
     }
 

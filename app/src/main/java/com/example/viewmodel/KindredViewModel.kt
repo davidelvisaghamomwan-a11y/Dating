@@ -1,16 +1,15 @@
 package com.example.viewmodel
 
-import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ai.AiPhotoGenUiState
-import com.example.ai.AiPhotoStylePreset
-import com.example.ai.AiProfilePhotoService
+import com.example.ai.AiIcebreakerService
+import com.example.ai.IcebreakerAiUiState
 import com.example.data.KindredRepository
 import com.example.data.SampleProfilesProvider
 import com.example.model.BlockRecord
 import com.example.model.BlockedUserItem
+import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.DiscoveryCandidate
 import com.example.model.KindredConstants
@@ -20,6 +19,7 @@ import com.example.model.MatchThreadItem
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.model.SwipeRecord
+import com.example.model.TypingStatus
 import com.example.model.UiState
 import com.example.model.UserPresence
 import com.example.model.VerificationChallenge
@@ -30,10 +30,10 @@ import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
 import com.example.util.ResolvedDeviceLocation
 import com.example.util.VerificationAnalyzer
+import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -52,7 +52,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
+import java.util.UUID
 
 sealed interface KindredPushAlert {
     data class NewMatch(val matchId: String, val partnerName: String) : KindredPushAlert
@@ -69,6 +69,7 @@ data class DashboardSnapshot(
     val privateUser: PrivateUser?,
     val myProfile: PublicProfile?,
     val discoveryCandidates: List<DiscoveryCandidate>,
+    val searchableProfiles: List<DiscoveryCandidate> = emptyList(),
     val matches: List<MatchThreadItem>,
     val verifications: List<VerificationRecord>,
     val geoHashMeta: GeoHashContextMeta?,
@@ -101,7 +102,7 @@ class KindredViewModel(
     val userEmail: String?,
     val defaultDisplayName: String?,
     val isEmailVerified: Boolean,
-    private val aiPhotoService: AiProfilePhotoService = AiProfilePhotoService()
+    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService()
 ) : ViewModel() {
 
     private fun <T> Flow<T>.asFirestoreUiState(label: String): StateFlow<UiState<T>> =
@@ -177,6 +178,8 @@ class KindredViewModel(
     private val _demoSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
     private val _pendingSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
     private val _demoBlockedUsers = MutableStateFlow<Map<String, BlockedUserItem>>(emptyMap())
+    private val _demoMatches = MutableStateFlow<List<MatchRecord>>(emptyList())
+    private val _demoMessages = MutableStateFlow<Map<String, List<ChatMessage>>>(emptyMap())
 
     private data class UndoableSwipe(
         val targetUserId: String,
@@ -213,12 +216,21 @@ class KindredViewModel(
         swipes.map { it.toUserId }.toSet() + demoSwipes.keys + pendingSwipes.keys
     }
 
+    private val mergedMatchesFlow: Flow<List<MatchRecord>> = combine(
+        matchesFlow,
+        _demoMatches
+    ) { remoteMatches, demoMatches ->
+        (remoteMatches + demoMatches)
+            .distinctBy { it.id }
+            .sortedByDescending { it.lastMessageAt ?: it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+    }
+
     val dashboardState: StateFlow<UiState<DashboardSnapshot>> = combine(
         effectiveLocationFlow,
         allProfilesFlow,
         spatialGeoCellsFlow,
         effectiveSwipedIdsFlow,
-        matchesFlow,
+        mergedMatchesFlow,
         verificationsFlow,
         _includeDemoProfiles,
         blockingStateFlow
@@ -301,7 +313,42 @@ class KindredViewModel(
             blockedUserIds = blockedIds
         )
 
-        val profileById = allProfiles.associateBy { it.userId }
+        val allSearchableMap = LinkedHashMap<String, PublicProfile>().apply {
+            allProfiles.forEach { put(it.userId, it) }
+            combinedProfiles.forEach { if (!containsKey(it.userId)) put(it.userId, it) }
+        }
+        val searchableCandidates = allSearchableMap.values
+            .filter { profile ->
+                profile.userId.isNotBlank() &&
+                    profile.userId != currentUserId &&
+                    profile.discoverable &&
+                    profile.userId !in blockedIds
+            }
+            .map { profile ->
+                val distKm = if (myLat != null && myLng != null) {
+                    LocationAndGeoHelper.calculateDistanceKm(
+                        myLat,
+                        myLng,
+                        profile.coarseLatitude,
+                        profile.coarseLongitude
+                    )
+                } else 0.0
+                val sharedInterests = profile.interests.filter { interest ->
+                    myInterests.any { mine -> mine.equals(interest, ignoreCase = true) }
+                }
+                DiscoveryCandidate(
+                    profile = profile,
+                    distanceKm = distKm,
+                    sharedInterests = sharedInterests
+                )
+            }
+            .sortedWith(
+                compareBy<DiscoveryCandidate> { SampleProfilesProvider.isDemoProfileId(it.profile.userId) }
+                    .thenByDescending { it.profile.isProfileVerified }
+                    .thenBy { it.distanceKm }
+            )
+
+        val profileById = allSearchableMap
         val matchItems = matches
             .filter { match ->
                 val partnerId = match.participantUids.firstOrNull { it != currentUserId } ?: ""
@@ -353,6 +400,7 @@ class KindredViewModel(
             privateUser = privateUser,
             myProfile = myProfile,
             discoveryCandidates = candidates,
+            searchableProfiles = searchableCandidates,
             matches = matchItems,
             verifications = verifications,
             geoHashMeta = geoMeta,
@@ -371,10 +419,10 @@ class KindredViewModel(
         _chatRetryNonce
     ) { matchId, _ -> matchId }
         .flatMapLatest { matchId ->
-            if (matchId.isNullOrBlank()) {
-                flowOf(emptyList())
-            } else {
-                repository.observeMessages(matchId, currentUserId)
+            when {
+                matchId.isNullOrBlank() -> flowOf(emptyList())
+                isDemoMatchId(matchId) -> _demoMessages.map { it[matchId].orEmpty() }
+                else -> repository.observeMessages(matchId, currentUserId)
             }
         }
         .asFirestoreUiState("chat messages")
@@ -408,6 +456,61 @@ class KindredViewModel(
             initialValue = null
         )
 
+    val activePartnerTyping: StateFlow<TypingStatus?> = combine(
+        _selectedMatchId,
+        matchesFlow
+    ) { selectedId, matches ->
+        val match = matches.firstOrNull { it.id == selectedId }
+        val partnerId = match?.participantUids?.firstOrNull { it != currentUserId }.orEmpty()
+        (selectedId ?: "") to partnerId
+    }
+        .distinctUntilChanged()
+        .flatMapLatest { (matchId, partnerId) ->
+            if (matchId.isBlank() || partnerId.isBlank()) {
+                flowOf(null)
+            } else {
+                repository.observePartnerTyping(matchId, partnerId, currentUserId)
+                    .catch { error ->
+                        val firestoreError = generateSequence(error) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (firestoreError == null && error is CancellationException) throw error
+                        Log.w(TAG, "Error observing typing for $partnerId", firestoreError ?: error)
+                        emit(null)
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = null
+        )
+
+    val activeMatchCallSession: StateFlow<CallSession?> = _selectedMatchId
+        .flatMapLatest { matchId ->
+            if (matchId.isNullOrBlank()) {
+                flowOf(null)
+            } else {
+                repository.observeMatchCalls(matchId, currentUserId)
+                    .map { calls ->
+                        calls.firstOrNull { it.status == "ACTIVE" || it.status == "RINGING" }
+                    }
+                    .catch { error ->
+                        val firestoreError = generateSequence(error) { it.cause }
+                            .filterIsInstance<FirebaseFirestoreException>()
+                            .firstOrNull()
+                        if (firestoreError == null && error is CancellationException) throw error
+                        Log.w(TAG, "Error observing calls for match=$matchId", firestoreError ?: error)
+                        emit(null)
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = null
+        )
+
     private val _actionStatusMessage = MutableStateFlow<String?>(null)
     val actionStatusMessage: StateFlow<String?> = _actionStatusMessage.asStateFlow()
 
@@ -420,8 +523,8 @@ class KindredViewModel(
     private val _activeChallenge = MutableStateFlow(KindredConstants.VERIFICATION_CHALLENGES.first())
     val activeChallenge: StateFlow<VerificationChallenge> = _activeChallenge.asStateFlow()
 
-    private val _aiPhotoGenState = MutableStateFlow<AiPhotoGenUiState>(AiPhotoGenUiState.Idle)
-    val aiPhotoGenState: StateFlow<AiPhotoGenUiState> = _aiPhotoGenState.asStateFlow()
+    private val _icebreakerAiState = MutableStateFlow<IcebreakerAiUiState>(IcebreakerAiUiState.Idle)
+    val icebreakerAiState: StateFlow<IcebreakerAiUiState> = _icebreakerAiState.asStateFlow()
 
     private val _pushAlerts = MutableSharedFlow<KindredPushAlert>(extraBufferCapacity = 16)
     val pushAlerts: SharedFlow<KindredPushAlert> = _pushAlerts.asSharedFlow()
@@ -583,7 +686,8 @@ class KindredViewModel(
                 repository.updateLocationCoordinates(
                     latitude = resolved.exactLatitude,
                     longitude = resolved.exactLongitude,
-                    cityLabel = resolved.cityLabel
+                    cityLabel = resolved.cityLabel,
+                    countryName = resolved.countryName
                 )
             }
         }
@@ -598,11 +702,17 @@ class KindredViewModel(
             val result = repository.updateLocationCoordinates(
                 latitude = resolved.exactLatitude,
                 longitude = resolved.exactLongitude,
-                cityLabel = resolved.cityLabel
+                cityLabel = resolved.cityLabel,
+                countryName = resolved.countryName
             )
             result.onSuccess {
                 val cell = GeoHashUtils.encode(resolved.coarseLatitude, resolved.coarseLongitude, 4)
-                _actionStatusMessage.value = "Location updated to ${resolved.cityLabel} (GeoHash $cell)"
+                val locLabel = if (resolved.countryName.isNotBlank()) {
+                    "${resolved.cityLabel}, ${resolved.countryName}"
+                } else {
+                    resolved.cityLabel
+                }
+                _actionStatusMessage.value = "Location updated to $locLabel (GeoHash $cell)"
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to update location"
             }
@@ -707,21 +817,291 @@ class KindredViewModel(
         }
     }
 
+    fun startDirectConversation(
+        targetProfile: PublicProfile,
+        onOpened: (matchId: String) -> Unit = {}
+    ) {
+        val targetId = targetProfile.userId
+        if (targetId.isBlank() || targetId == currentUserId) return
+
+        if (SampleProfilesProvider.isDemoProfileId(targetId)) {
+            val matchId = "${DEMO_MATCH_PREFIX}$targetId"
+            val nowTs = Timestamp.now()
+            val alreadyExists = _demoMatches.value.any { it.id == matchId }
+            if (!alreadyExists) {
+                val sorted = listOf(currentUserId, targetId).sorted()
+                val newThread = MatchRecord(
+                    id = matchId,
+                    participantUids = sorted,
+                    createdBy = currentUserId,
+                    conversationType = "DIRECT",
+                    lastMessageReadByUids = listOf(currentUserId),
+                    createdAt = nowTs,
+                    updatedAt = nowTs
+                )
+                _demoMatches.value = listOf(newThread) + _demoMatches.value
+            }
+            _selectedMatchId.value = matchId
+            onOpened(matchId)
+            return
+        }
+
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.createOrOpenDirectMatch(targetId)
+            _isBusy.value = false
+            result.onSuccess { matchId ->
+                _selectedMatchId.value = matchId
+                onOpened(matchId)
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Unable to start conversation"
+            }
+        }
+    }
+
     fun sendMessage(
         matchId: String,
         participantUids: List<String>,
         text: String,
-        messageType: String = "TEXT"
+        messageType: String = "TEXT",
+        mediaDataUrl: String? = null,
+        mediaGifId: String? = null,
+        mediaDurationSec: Long = 0L,
+        disappearingSeconds: Long = 0L,
+        viewOnce: Boolean = false
     ) {
+        if (isDemoMatchId(matchId)) {
+            val cleanText = text.trim().take(1000)
+            if (cleanText.isEmpty() && messageType !in setOf("PHOTO", "VOICE", "GIF")) return
+            val nowTs = Timestamp.now()
+            val newMessage = ChatMessage(
+                id = "demo_msg_${UUID.randomUUID().toString().take(8)}",
+                matchId = matchId,
+                senderId = currentUserId,
+                participantUids = participantUids,
+                text = cleanText,
+                messageType = messageType,
+                mediaDataUrl = mediaDataUrl,
+                mediaGifId = mediaGifId,
+                mediaDurationSec = mediaDurationSec,
+                readByUids = listOf(currentUserId),
+                disappearingSeconds = disappearingSeconds,
+                viewOnce = viewOnce,
+                createdAt = nowTs
+            )
+            val currentList = _demoMessages.value[matchId].orEmpty()
+            _demoMessages.value = _demoMessages.value + (matchId to (currentList + newMessage))
+            val preview = cleanText.ifBlank {
+                when (messageType) {
+                    "PHOTO" -> "📷 Photo"
+                    "VOICE" -> "🎙️ Voice note"
+                    "GIF" -> "🎞️ Sent a GIF"
+                    else -> "Sent a message"
+                }
+            }.take(300)
+            _demoMatches.value = _demoMatches.value.map { m ->
+                if (m.id == matchId) {
+                    m.copy(
+                        lastMessageText = preview,
+                        lastMessageSenderId = currentUserId,
+                        lastMessageAt = nowTs,
+                        lastMessageReadByUids = listOf(currentUserId),
+                        updatedAt = nowTs
+                    )
+                } else m
+            }
+            return
+        }
+
         viewModelScope.launch {
-            val result = repository.sendMessage(matchId, participantUids, text, messageType)
+            val result = repository.sendMessage(
+                matchId = matchId,
+                participantUids = participantUids,
+                text = text,
+                messageType = messageType,
+                mediaDataUrl = mediaDataUrl,
+                mediaGifId = mediaGifId,
+                mediaDurationSec = mediaDurationSec,
+                disappearingSeconds = disappearingSeconds,
+                viewOnce = viewOnce
+            )
             result.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to send message"
             }
         }
     }
 
+    fun markMessagesAsRead(matchId: String, messageIds: List<String>) {
+        if (matchId.isBlank() || messageIds.isEmpty()) return
+        if (isDemoMatchId(matchId)) {
+            _demoMessages.value = _demoMessages.value.toMutableMap().apply {
+                val updated = get(matchId).orEmpty().map { msg ->
+                    if (msg.id in messageIds && currentUserId !in msg.readByUids) {
+                        msg.copy(readByUids = msg.readByUids + currentUserId)
+                    } else msg
+                }
+                put(matchId, updated)
+            }
+            _demoMatches.value = _demoMatches.value.map { m ->
+                if (m.id == matchId && currentUserId !in m.lastMessageReadByUids) {
+                    m.copy(lastMessageReadByUids = m.lastMessageReadByUids + currentUserId)
+                } else m
+            }
+            return
+        }
+        viewModelScope.launch {
+            repository.markMessagesAsRead(matchId, messageIds)
+        }
+    }
+
+    fun markViewOnceOpened(matchId: String, messageId: String) {
+        if (isDemoMatchId(matchId)) return
+        viewModelScope.launch {
+            repository.markViewOnceOpened(matchId, messageId)
+        }
+    }
+
+    fun deleteExpiredMessage(matchId: String, messageId: String) {
+        viewModelScope.launch {
+            repository.deleteMessage(matchId, messageId)
+        }
+    }
+
+    fun updateDisappearingTimer(matchId: String, ttlSeconds: Long) {
+        viewModelScope.launch {
+            val result = repository.updateMatchDisappearingTimer(matchId, ttlSeconds)
+            result.onSuccess {
+                val label = when (ttlSeconds) {
+                    30L -> "30 seconds"
+                    300L -> "5 minutes"
+                    86400L -> "24 hours"
+                    else -> "Off"
+                }
+                _actionStatusMessage.value = "Disappearing messages: $label"
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to update disappearing timer"
+            }
+        }
+    }
+
+    fun setTypingStatus(matchId: String, isTyping: Boolean) {
+        if (matchId.isBlank()) return
+        viewModelScope.launch {
+            repository.setTypingStatus(matchId, isTyping)
+        }
+    }
+
+    fun generateAiIcebreakers(
+        myProfile: PublicProfile?,
+        partnerProfile: PublicProfile?,
+        tone: String = "Balanced"
+    ) {
+        if (_icebreakerAiState.value is IcebreakerAiUiState.Loading) return
+        _icebreakerAiState.value = IcebreakerAiUiState.Loading
+        viewModelScope.launch {
+            val result = aiIcebreakerService.generateAiOpeners(
+                myProfile = myProfile,
+                partnerProfile = partnerProfile,
+                tonePreference = tone
+            )
+            result.onSuccess { suggestions ->
+                _icebreakerAiState.value = IcebreakerAiUiState.Success(suggestions)
+            }.onFailure { err ->
+                _icebreakerAiState.value = IcebreakerAiUiState.Error(
+                    err.localizedMessage ?: "Failed to generate AI icebreakers"
+                )
+            }
+        }
+    }
+
+    fun resetIcebreakerAiState() {
+        _icebreakerAiState.value = IcebreakerAiUiState.Idle
+    }
+
+    fun startCall(
+        matchId: String,
+        calleeUid: String,
+        participantUids: List<String>,
+        callType: String
+    ) {
+        viewModelScope.launch {
+            val result = repository.startCall(matchId, calleeUid, participantUids, callType)
+            result.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Unable to start call"
+            }
+        }
+    }
+
+    fun answerCall(session: CallSession) {
+        viewModelScope.launch {
+            repository.updateCallSession(
+                matchId = session.matchId,
+                callId = session.id,
+                status = "ACTIVE"
+            )
+        }
+    }
+
+    fun declineCall(session: CallSession) {
+        viewModelScope.launch {
+            repository.endCallAndLogMessage(
+                matchId = session.matchId,
+                callId = session.id,
+                participantUids = session.participantUids,
+                callType = session.callType,
+                durationSeconds = 0L,
+                declined = true
+            )
+        }
+    }
+
+    fun toggleCallMute(session: CallSession) {
+        val isCaller = session.callerUid == currentUserId
+        viewModelScope.launch {
+            repository.updateCallSession(
+                matchId = session.matchId,
+                callId = session.id,
+                callerMuted = if (isCaller) !session.callerMuted else null,
+                calleeMuted = if (!isCaller) !session.calleeMuted else null
+            )
+        }
+    }
+
+    fun toggleCallCamera(session: CallSession) {
+        val isCaller = session.callerUid == currentUserId
+        viewModelScope.launch {
+            repository.updateCallSession(
+                matchId = session.matchId,
+                callId = session.id,
+                callerCameraOn = if (isCaller) !session.callerCameraOn else null,
+                calleeCameraOn = if (!isCaller) !session.calleeCameraOn else null
+            )
+        }
+    }
+
+    fun endCall(session: CallSession, durationSeconds: Long) {
+        viewModelScope.launch {
+            repository.endCallAndLogMessage(
+                matchId = session.matchId,
+                callId = session.id,
+                participantUids = session.participantUids,
+                callType = session.callType,
+                durationSeconds = durationSeconds,
+                declined = false
+            )
+        }
+    }
+
     fun unmatch(matchId: String) {
+        if (isDemoMatchId(matchId)) {
+            _demoMatches.value = _demoMatches.value.filterNot { it.id == matchId }
+            _demoMessages.value = _demoMessages.value - matchId
+            if (_selectedMatchId.value == matchId) {
+                _selectedMatchId.value = null
+            }
+            _actionStatusMessage.value = "Conversation removed"
+            return
+        }
         viewModelScope.launch {
             _isBusy.value = true
             val result = repository.unmatch(matchId)
@@ -744,6 +1124,12 @@ class KindredViewModel(
         onBlocked: () -> Unit = {}
     ) {
         if (SampleProfilesProvider.isDemoProfileId(targetUserId)) {
+            val demoMatchId = "${DEMO_MATCH_PREFIX}$targetUserId"
+            _demoMatches.value = _demoMatches.value.filterNot { it.id == demoMatchId }
+            _demoMessages.value = _demoMessages.value - demoMatchId
+            if (_selectedMatchId.value == demoMatchId) {
+                _selectedMatchId.value = null
+            }
             _demoBlockedUsers.value = _demoBlockedUsers.value + (
                 targetUserId to BlockedUserItem(
                     blockedUid = targetUserId,
@@ -800,6 +1186,7 @@ class KindredViewModel(
         gender: String,
         bio: String,
         cityLabel: String,
+        country: String = "United States",
         latitude: Double,
         longitude: Double,
         interests: List<String>,
@@ -822,6 +1209,7 @@ class KindredViewModel(
                 gender = gender,
                 bio = bio,
                 cityLabel = cityLabel,
+                country = country,
                 latitude = latitude,
                 longitude = longitude,
                 interests = interests,
@@ -848,6 +1236,8 @@ class KindredViewModel(
         bio: String,
         interests: List<String>,
         profilePhotos: List<String>,
+        cityLabel: String? = null,
+        country: String? = null,
         onComplete: () -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -857,7 +1247,9 @@ class KindredViewModel(
                 fallbackDisplayName = defaultDisplayName,
                 bio = bio,
                 interests = interests,
-                profilePhotos = profilePhotos
+                profilePhotos = profilePhotos,
+                cityLabel = cityLabel,
+                country = country
             )
             _isBusy.value = false
             result.onSuccess {
@@ -924,64 +1316,6 @@ class KindredViewModel(
         }
     }
 
-    fun generateAiProfilePhoto(
-        preset: AiPhotoStylePreset,
-        customDetails: String,
-        subjectGender: String?,
-        referenceBitmap: Bitmap? = null
-    ) {
-        if (_aiPhotoGenState.value is AiPhotoGenUiState.Loading) return
-        _aiPhotoGenState.value = AiPhotoGenUiState.Loading
-        viewModelScope.launch {
-            val result = aiPhotoService.generateProfilePortrait(
-                preset = preset,
-                customDetails = customDetails,
-                subjectGender = subjectGender,
-                referenceBitmap = referenceBitmap
-            )
-            result.onSuccess { bitmap ->
-                val dataUrl = withContext(Dispatchers.Default) {
-                    VerificationAnalyzer.compressBitmapToDataUrl(bitmap)
-                }
-                _aiPhotoGenState.value = AiPhotoGenUiState.Success(
-                    bitmap = bitmap,
-                    dataUrl = dataUrl,
-                    styleTitle = preset.title,
-                    usedReferencePhoto = referenceBitmap != null
-                )
-            }.onFailure { err ->
-                _aiPhotoGenState.value = AiPhotoGenUiState.Error(
-                    err.localizedMessage ?: "Could not generate AI profile photo."
-                )
-            }
-        }
-    }
-
-    fun resetAiPhotoGenState() {
-        _aiPhotoGenState.value = AiPhotoGenUiState.Idle
-    }
-
-    fun addGeneratedPhotoToProfile(
-        photoDataUrl: String,
-        onComplete: () -> Unit = {}
-    ) {
-        viewModelScope.launch {
-            _isBusy.value = true
-            val result = repository.appendProfilePhoto(
-                email = userEmail,
-                fallbackDisplayName = defaultDisplayName,
-                photoDataUrl = photoDataUrl
-            )
-            _isBusy.value = false
-            result.onSuccess {
-                _actionStatusMessage.value = "AI portrait added to your profile photos"
-                onComplete()
-            }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Failed to save AI portrait to profile"
-            }
-        }
-    }
-
     fun submitVerification(
         challenge: VerificationChallenge,
         analysis: LivenessAnalysisResult,
@@ -1007,5 +1341,8 @@ class KindredViewModel(
     private companion object {
         const val TAG = "KindredVM"
         const val STOP_TIMEOUT_MILLIS = 5000L
+        const val DEMO_MATCH_PREFIX = "demo_match_"
+
+        fun isDemoMatchId(matchId: String): Boolean = matchId.startsWith(DEMO_MATCH_PREFIX)
     }
 }

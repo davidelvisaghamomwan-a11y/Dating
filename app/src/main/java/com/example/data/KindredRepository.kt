@@ -3,12 +3,14 @@ package com.example.data
 import android.content.Context
 import com.example.R
 import com.example.model.BlockRecord
+import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.model.SwipeRecord
+import com.example.model.TypingStatus
 import com.example.model.UserPresence
 import com.example.model.VerificationChallenge
 import com.example.model.VerificationRecord
@@ -144,6 +146,44 @@ class KindredRepository(
         )
     }
 
+    fun observePartnerTyping(matchId: String, partnerUserId: String, viewerUserId: String): Flow<TypingStatus?> {
+        if (matchId.isBlank() || partnerUserId.isBlank() || viewerUserId.isBlank()) {
+            return flowOf(null)
+        }
+        val path = "matches/$matchId/typing/$partnerUserId"
+        return flow {
+            emitAll(
+                db.collection("matches").document(matchId).collection("typing").document(partnerUserId)
+                    .snapshots()
+                    .map { snap ->
+                        if (snap.exists()) {
+                            snap.toObject(TypingStatus::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        } else null
+                    }
+                    .catch { handleStreamError(it, OperationType.GET, path, viewerUserId) }
+            )
+        }
+    }
+
+    fun observeMatchCalls(matchId: String, viewerUserId: String): Flow<List<CallSession>> {
+        if (matchId.isBlank() || viewerUserId.isBlank()) {
+            return flowOf(emptyList())
+        }
+        val path = "matches/$matchId/calls"
+        return flow {
+            emitAll(
+                db.collection("matches").document(matchId).collection("calls")
+                    .whereArrayContains("participantUids", viewerUserId)
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(CallSession::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedByDescending { it.updatedAt ?: it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, path, viewerUserId) }
+            )
+        }
+    }
+
     fun observeVerifications(userId: String): Flow<List<VerificationRecord>> = flow {
         val path = "users/$userId/verifications"
         emitAll(
@@ -274,6 +314,7 @@ class KindredRepository(
         gender: String,
         bio: String,
         cityLabel: String,
+        country: String = "United States",
         latitude: Double,
         longitude: Double,
         interests: List<String>,
@@ -296,6 +337,7 @@ class KindredRepository(
         val safeDistance = maxDistanceKm.coerceIn(5, 500)
         val cleanBio = bio.trim().take(400)
         val cleanCity = cityLabel.trim().ifBlank { "Nearby" }.take(80)
+        val cleanCountry = country.trim().take(80)
         val cleanInterests = interests.map { it.trim().take(40) }.filter { it.isNotBlank() }.distinct().take(8)
         val cleanPhotos = (profilePhotos + listOfNotNull(photoDataUrl))
             .map { it.trim() }
@@ -370,6 +412,7 @@ class KindredRepository(
                     "gender" to gender,
                     "bio" to cleanBio,
                     "cityLabel" to cleanCity,
+                    "country" to cleanCountry,
                     "coarseLatitude" to coarseLat,
                     "coarseLongitude" to coarseLng,
                     "geohash" to geohash,
@@ -399,6 +442,7 @@ class KindredRepository(
                     "gender" to gender,
                     "bio" to cleanBio,
                     "cityLabel" to cleanCity,
+                    "country" to cleanCountry,
                     "coarseLatitude" to coarseLat,
                     "coarseLongitude" to coarseLng,
                     "geohash" to geohash,
@@ -427,6 +471,7 @@ class KindredRepository(
                 gender = gender,
                 bio = cleanBio,
                 cityLabel = cleanCity,
+                country = cleanCountry,
                 coarseLat = coarseLat,
                 coarseLng = coarseLng,
                 interests = cleanInterests,
@@ -468,7 +513,9 @@ class KindredRepository(
         fallbackDisplayName: String?,
         bio: String,
         interests: List<String>,
-        profilePhotos: List<String>
+        profilePhotos: List<String>,
+        cityLabel: String? = null,
+        country: String? = null
     ): Result<Unit> {
         val cleanBio = bio.trim().take(400)
         val cleanInterests = interests
@@ -510,7 +557,8 @@ class KindredRepository(
                     age = 26,
                     gender = "Woman",
                     bio = cleanBio,
-                    cityLabel = "San Francisco, CA",
+                    cityLabel = cityLabel?.trim()?.take(80).orEmpty().ifBlank { "San Francisco" },
+                    country = country?.trim()?.take(80).orEmpty().ifBlank { "United States" },
                     latitude = 37.7749,
                     longitude = -122.4194,
                     interests = cleanInterests,
@@ -525,11 +573,15 @@ class KindredRepository(
                 )
             }
 
+            val nextCity = cityLabel?.trim()?.take(80)?.ifBlank { existingPublic.cityLabel } ?: existingPublic.cityLabel
+            val nextCountry = country?.trim()?.take(80) ?: existingPublic.country
             val photosChanged = existingPublic.allProfilePhotos() != cleanPhotos
             val resetVerification = photosChanged && existingPublic.isProfileVerified
 
             val updatePublic = mutableMapOf<String, Any>(
                 "bio" to cleanBio,
+                "cityLabel" to nextCity,
+                "country" to nextCountry,
                 "interests" to cleanInterests,
                 "profilePhotos" to cleanPhotos,
                 "updatedAt" to FieldValue.serverTimestamp()
@@ -561,7 +613,8 @@ class KindredRepository(
                 age = existingPublic.age,
                 gender = existingPublic.gender,
                 bio = cleanBio,
-                cityLabel = existingPublic.cityLabel,
+                cityLabel = nextCity,
+                country = nextCountry,
                 coarseLat = existingPublic.coarseLatitude,
                 coarseLng = existingPublic.coarseLongitude,
                 interests = cleanInterests,
@@ -718,6 +771,7 @@ class KindredRepository(
                         gender = nextGender,
                         bio = existingPublic.bio,
                         cityLabel = existingPublic.cityLabel,
+                        country = existingPublic.country,
                         coarseLat = existingPublic.coarseLatitude,
                         coarseLng = existingPublic.coarseLongitude,
                         interests = existingPublic.interests,
@@ -750,54 +804,11 @@ class KindredRepository(
         }
     }
 
-    /**
-     * Appends an AI-generated or picked profile photo (up to 4) into the member's Firestore profile.
-     */
-    suspend fun appendProfilePhoto(
-        email: String?,
-        fallbackDisplayName: String?,
-        photoDataUrl: String
-    ): Result<Unit> {
-        val cleanPhoto = photoDataUrl.trim()
-        if (cleanPhoto.isBlank() || cleanPhoto.length > 180_000) {
-            return Result.failure(IllegalArgumentException("Generated image exceeds Firestore photo size limit."))
-        }
-        return try {
-            val uid = requireUserId()
-            val publicSnap = db.collection("publicProfiles").document(uid).get().await()
-            val existingPublic = if (publicSnap.exists()) {
-                publicSnap.toObject(
-                    PublicProfile::class.java,
-                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-            } else {
-                null
-            }
-            val currentPhotos = existingPublic?.allProfilePhotos().orEmpty()
-            val updatedPhotos = when {
-                cleanPhoto in currentPhotos -> currentPhotos
-                currentPhotos.size < 4 -> currentPhotos + cleanPhoto
-                else -> currentPhotos.take(3) + cleanPhoto
-            }
-            updateProfileContent(
-                email = email,
-                fallbackDisplayName = fallbackDisplayName,
-                bio = existingPublic?.bio.orEmpty(),
-                interests = existingPublic?.interests ?: listOf("Coffee", "Hiking"),
-                profilePhotos = updatedPhotos
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, "publicProfiles")
-            Result.failure(e)
-        }
-    }
-
     suspend fun updateLocationCoordinates(
         latitude: Double,
         longitude: Double,
-        cityLabel: String
+        cityLabel: String,
+        countryName: String = ""
     ): Result<Unit> {
         var docPath = "users"
         return try {
@@ -812,6 +823,7 @@ class KindredRepository(
             } else null
 
             val cleanCity = cityLabel.trim().ifBlank { "Nearby" }.take(80)
+            val cleanCountry = countryName.trim().take(80).ifBlank { existingPublic?.country.orEmpty() }
             val coarseLat = LocationAndGeoHelper.roundToCoarse(latitude.coerceIn(-90.0, 90.0))
             val coarseLng = LocationAndGeoHelper.roundToCoarse(longitude.coerceIn(-180.0, 180.0))
             val geohash = GeoHashUtils.encode(coarseLat, coarseLng, precision = 7)
@@ -836,6 +848,7 @@ class KindredRepository(
                     publicRef,
                     mapOf(
                         "cityLabel" to cleanCity,
+                        "country" to cleanCountry,
                         "coarseLatitude" to coarseLat,
                         "coarseLongitude" to coarseLng,
                         "geohash" to geohash,
@@ -852,6 +865,7 @@ class KindredRepository(
                     gender = existingPublic.gender,
                     bio = existingPublic.bio,
                     cityLabel = cleanCity,
+                    country = cleanCountry,
                     coarseLat = coarseLat,
                     coarseLng = coarseLng,
                     interests = existingPublic.interests,
@@ -1021,6 +1035,75 @@ class KindredRepository(
         }
     }
 
+    /**
+     * Opens an existing match/direct conversation with [targetUserId] or creates a new DIRECT
+     * conversation document in /matches/{minUid_maxUid}.
+     */
+    suspend fun createOrOpenDirectMatch(targetUserId: String): Result<String> {
+        var docPath = "matches"
+        return try {
+            val uid = requireUserId()
+            require(targetUserId.isNotBlank() && targetUserId != uid) {
+                "Invalid target profile."
+            }
+
+            val sortedParticipants = listOf(uid, targetUserId).sorted()
+            val matchId = "${sortedParticipants[0]}_${sortedParticipants[1]}"
+
+            val existingMatch = db.collection("matches")
+                .whereArrayContains("participantUids", uid)
+                .get()
+                .await()
+                .documents
+                .any { it.id == matchId }
+            if (existingMatch) {
+                return Result.success(matchId)
+            }
+
+            val blockedByMe = db.collection("blocks")
+                .whereEqualTo("blockerUid", uid)
+                .get()
+                .await()
+                .documents
+                .any { it.getString("blockedUid") == targetUserId }
+            val blockedMe = db.collection("blocks")
+                .whereEqualTo("blockedUid", uid)
+                .get()
+                .await()
+                .documents
+                .any { it.getString("blockerUid") == targetUserId }
+            if (blockedByMe || blockedMe) {
+                return Result.failure(IllegalStateException("Messaging is unavailable because a block is active."))
+            }
+
+            val myPublicSnap = db.collection("publicProfiles").document(uid).get().await()
+            if (!myPublicSnap.exists()) {
+                return Result.failure(
+                    IllegalStateException("Save your profile in the Profile tab before messaging members directly.")
+                )
+            }
+
+            val matchRef = db.collection("matches").document(matchId)
+            docPath = matchRef.path
+            matchRef.set(
+                mapOf(
+                    "participantUids" to sortedParticipants,
+                    "createdBy" to uid,
+                    "conversationType" to "DIRECT",
+                    "lastMessageReadByUids" to listOf(uid),
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(matchId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
     suspend fun deleteSwipe(targetUserId: String): Result<Unit> {
         var docPath = "swipes"
         return try {
@@ -1045,12 +1128,41 @@ class KindredRepository(
         matchId: String,
         participantUids: List<String>,
         text: String,
-        messageType: String = "TEXT"
+        messageType: String = "TEXT",
+        mediaDataUrl: String? = null,
+        mediaGifId: String? = null,
+        mediaDurationSec: Long = 0L,
+        disappearingSeconds: Long = 0L,
+        viewOnce: Boolean = false
     ): Result<Unit> {
-        val cleanText = text.trim()
-        if (cleanText.isEmpty() || cleanText.length > 1000) {
+        val allowedType = when (messageType) {
+            "ICEBREAKER", "PHOTO", "VOICE", "GIF", "CALL" -> messageType
+            else -> "TEXT"
+        }
+        val cleanText = text.trim().take(1000)
+        val cleanMedia = mediaDataUrl?.trim()?.takeIf { it.isNotBlank() }
+        val cleanGif = mediaGifId?.trim()?.take(300)?.takeIf { it.isNotBlank() }
+        if (cleanText.isEmpty() && allowedType !in setOf("PHOTO", "VOICE", "GIF")) {
             return Result.failure(IllegalArgumentException("Message must be between 1 and 1000 characters."))
         }
+        if (cleanMedia != null && cleanMedia.length > 260_000) {
+            return Result.failure(IllegalArgumentException("Media exceeds maximum sync size. Try a shorter clip or smaller photo."))
+        }
+        val safeDisappearSec = disappearingSeconds.coerceIn(0L, 604_800L)
+        val expiresAtMs = if (!viewOnce && safeDisappearSec > 0L) {
+            System.currentTimeMillis() + safeDisappearSec * 1000L
+        } else {
+            null
+        }
+        val previewText = when {
+            viewOnce && allowedType == "PHOTO" -> "⏱️ View-once photo"
+            viewOnce && allowedType == "VOICE" -> "⏱️ View-once voice note"
+            allowedType == "PHOTO" -> cleanText.ifBlank { "📷 Photo" }
+            allowedType == "VOICE" -> "🎙️ Voice note (${mediaDurationSec.coerceIn(1L, 120L)}s)"
+            allowedType == "GIF" -> cleanText.ifBlank { "🎞️ Sent a GIF" }
+            else -> cleanText
+        }.take(300)
+
         var docPath = "matches/$matchId/messages"
         return try {
             val uid = requireUserId()
@@ -1061,24 +1173,32 @@ class KindredRepository(
             val msgRef = matchRef.collection("messages").document()
             docPath = msgRef.path
 
-            val batch = db.batch()
-            batch.set(
-                msgRef,
-                mapOf(
-                    "matchId" to matchId,
-                    "senderId" to uid,
-                    "participantUids" to participantUids,
-                    "text" to cleanText,
-                    "messageType" to if (messageType == "ICEBREAKER") "ICEBREAKER" else "TEXT",
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
+            val payload = mutableMapOf<String, Any>(
+                "matchId" to matchId,
+                "senderId" to uid,
+                "participantUids" to participantUids,
+                "text" to cleanText,
+                "messageType" to allowedType,
+                "readByUids" to listOf(uid),
+                "disappearingSeconds" to safeDisappearSec,
+                "viewOnce" to viewOnce,
+                "openedByRecipient" to false,
+                "createdAt" to FieldValue.serverTimestamp()
             )
+            if (cleanMedia != null) payload["mediaDataUrl"] = cleanMedia
+            if (cleanGif != null) payload["mediaGifId"] = cleanGif
+            if (mediaDurationSec > 0L) payload["mediaDurationSec"] = mediaDurationSec.coerceIn(0L, 120L)
+            if (expiresAtMs != null) payload["expiresAtMs"] = expiresAtMs
+
+            val batch = db.batch()
+            batch.set(msgRef, payload)
             batch.update(
                 matchRef,
                 mapOf(
-                    "lastMessageText" to cleanText.take(300),
+                    "lastMessageText" to previewText,
                     "lastMessageSenderId" to uid,
                     "lastMessageAt" to FieldValue.serverTimestamp(),
+                    "lastMessageReadByUids" to listOf(uid),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             )
@@ -1090,6 +1210,238 @@ class KindredRepository(
             handleFirestoreError(e, OperationType.WRITE, docPath)
             Result.failure(e)
         }
+    }
+
+    suspend fun markMessagesAsRead(matchId: String, messageIds: List<String>): Result<Unit> {
+        if (matchId.isBlank() || messageIds.isEmpty()) return Result.success(Unit)
+        var docPath = "matches/$matchId/messages"
+        return try {
+            val uid = requireUserId()
+            val batch = db.batch()
+            messageIds.distinct().take(40).forEach { msgId ->
+                val ref = db.collection("matches").document(matchId).collection("messages").document(msgId)
+                docPath = ref.path
+                batch.update(
+                    ref,
+                    mapOf(
+                        "readByUids" to FieldValue.arrayUnion(uid),
+                        "readAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }
+            val matchRef = db.collection("matches").document(matchId)
+            batch.update(
+                matchRef,
+                mapOf(
+                    "lastMessageReadByUids" to FieldValue.arrayUnion(uid),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun markViewOnceOpened(
+        matchId: String,
+        messageId: String,
+        lingerSeconds: Long = 10L
+    ): Result<Unit> {
+        var docPath = "matches/$matchId/messages/$messageId"
+        return try {
+            val uid = requireUserId()
+            val ref = db.collection("matches").document(matchId).collection("messages").document(messageId)
+            docPath = ref.path
+            ref.update(
+                mapOf(
+                    "readByUids" to FieldValue.arrayUnion(uid),
+                    "readAt" to FieldValue.serverTimestamp(),
+                    "openedByRecipient" to true,
+                    "expiresAtMs" to (System.currentTimeMillis() + lingerSeconds.coerceIn(5L, 60L) * 1000L)
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteMessage(matchId: String, messageId: String): Result<Unit> {
+        var docPath = "matches/$matchId/messages/$messageId"
+        return try {
+            requireUserId()
+            val ref = db.collection("matches").document(matchId).collection("messages").document(messageId)
+            docPath = ref.path
+            ref.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateMatchDisappearingTimer(matchId: String, ttlSeconds: Long): Result<Unit> {
+        val allowedTtl = when (ttlSeconds) {
+            30L, 300L, 86400L -> ttlSeconds
+            else -> 0L
+        }
+        var docPath = "matches/$matchId"
+        return try {
+            requireUserId()
+            val ref = db.collection("matches").document(matchId)
+            docPath = ref.path
+            ref.update(
+                mapOf(
+                    "disappearingTtlSeconds" to allowedTtl,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun setTypingStatus(matchId: String, isTyping: Boolean): Result<Unit> {
+        if (matchId.isBlank()) return Result.success(Unit)
+        val uid = auth.currentUser?.uid ?: return Result.success(Unit)
+        val docRef = db.collection("matches").document(matchId).collection("typing").document(uid)
+        return try {
+            docRef.set(
+                mapOf(
+                    "matchId" to matchId,
+                    "userId" to uid,
+                    "isTyping" to isTyping,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun startCall(
+        matchId: String,
+        calleeUid: String,
+        participantUids: List<String>,
+        callType: String
+    ): Result<String> {
+        val safeCallType = if (callType == "VOICE") "VOICE" else "VIDEO"
+        var docPath = "matches/$matchId/calls"
+        return try {
+            val uid = requireUserId()
+            require(participantUids.size == 2 && uid in participantUids && calleeUid in participantUids && uid != calleeUid) {
+                "Invalid call participants."
+            }
+            val callRef = db.collection("matches").document(matchId).collection("calls").document()
+            docPath = callRef.path
+            callRef.set(
+                mapOf(
+                    "matchId" to matchId,
+                    "callerUid" to uid,
+                    "calleeUid" to calleeUid,
+                    "participantUids" to participantUids,
+                    "callType" to safeCallType,
+                    "status" to "RINGING",
+                    "callerMuted" to false,
+                    "calleeMuted" to false,
+                    "callerCameraOn" to (safeCallType == "VIDEO"),
+                    "calleeCameraOn" to (safeCallType == "VIDEO"),
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(callRef.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateCallSession(
+        matchId: String,
+        callId: String,
+        status: String? = null,
+        callerMuted: Boolean? = null,
+        calleeMuted: Boolean? = null,
+        callerCameraOn: Boolean? = null,
+        calleeCameraOn: Boolean? = null
+    ): Result<Unit> {
+        var docPath = "matches/$matchId/calls/$callId"
+        return try {
+            requireUserId()
+            val callRef = db.collection("matches").document(matchId).collection("calls").document(callId)
+            docPath = callRef.path
+            val updates = mutableMapOf<String, Any>(
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (status in setOf("RINGING", "ACTIVE", "DECLINED", "ENDED") && status != null) {
+                updates["status"] = status
+                if (status == "ENDED" || status == "DECLINED") {
+                    updates["endedAtMs"] = System.currentTimeMillis()
+                }
+            }
+            if (callerMuted != null) updates["callerMuted"] = callerMuted
+            if (calleeMuted != null) updates["calleeMuted"] = calleeMuted
+            if (callerCameraOn != null) updates["callerCameraOn"] = callerCameraOn
+            if (calleeCameraOn != null) updates["calleeCameraOn"] = calleeCameraOn
+            callRef.update(updates).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun endCallAndLogMessage(
+        matchId: String,
+        callId: String,
+        participantUids: List<String>,
+        callType: String,
+        durationSeconds: Long,
+        declined: Boolean
+    ): Result<Unit> {
+        val status = if (declined) "DECLINED" else "ENDED"
+        val updateResult = updateCallSession(matchId = matchId, callId = callId, status = status)
+        if (updateResult.isFailure) return updateResult
+        val label = when {
+            declined -> if (callType == "VIDEO") "Missed video call" else "Missed voice call"
+            durationSeconds > 0 -> {
+                val mins = durationSeconds / 60L
+                val secs = durationSeconds % 60L
+                val fmt = if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
+                if (callType == "VIDEO") "Video call • $fmt" else "Voice call • $fmt"
+            }
+            else -> if (callType == "VIDEO") "Video call ended" else "Voice call ended"
+        }
+        return sendMessage(
+            matchId = matchId,
+            participantUids = participantUids,
+            text = label,
+            messageType = "CALL",
+            mediaDurationSec = durationSeconds.coerceIn(0L, 120L)
+        )
     }
 
     suspend fun unmatch(matchId: String): Result<Unit> {
@@ -1292,6 +1644,7 @@ class KindredRepository(
         gender: String,
         bio: String,
         cityLabel: String,
+        country: String,
         coarseLat: Double,
         coarseLng: Double,
         interests: List<String>,
@@ -1314,6 +1667,7 @@ class KindredRepository(
             "gender" to gender,
             "bio" to bio,
             "cityLabel" to cityLabel,
+            "country" to country,
             "coarseLatitude" to coarseLat,
             "coarseLongitude" to coarseLng,
             "interests" to interests,

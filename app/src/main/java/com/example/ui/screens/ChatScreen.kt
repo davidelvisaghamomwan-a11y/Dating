@@ -1,9 +1,14 @@
 package com.example.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,12 +37,22 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Gif
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -59,11 +74,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,17 +100,32 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.R
+import com.example.ai.AiIcebreakerService
+import com.example.ai.IcebreakerAiUiState
+import com.example.communication.VoiceNotePlayer
+import com.example.communication.VoiceNoteRecorder
+import com.example.communication.VoicePermissionHelper
 import com.example.data.KindredRepository
+import com.example.model.CallSession
 import com.example.model.ChatMessage
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
 import com.example.model.PublicProfile
+import com.example.model.TypingStatus
 import com.example.model.UiState
 import com.example.model.UserPresence
 import com.example.ui.components.ChatBubble
 import com.example.ui.components.DayDividerPill
+import com.example.ui.components.DisappearingTimerSheetContent
+import com.example.ui.components.GifPickerSheetContent
+import com.example.ui.components.IcebreakerCoachSheetContent
+import com.example.ui.components.InAppCallOverlay
+import com.example.ui.components.IncomingCallBanner
+import com.example.ui.components.MediaViewerDialog
 import com.example.ui.components.PartnerProfileQuickSheet
+import com.example.ui.components.PartnerTypingBubble
 import com.example.ui.components.ProfileAvatarImage
+import com.example.ui.components.UnmatchOrBlockDialog
 import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.components.dayBucketLabel
 import com.example.ui.theme.ChampagneGold
@@ -101,18 +133,17 @@ import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
+import com.example.util.VerificationAnalyzer
 import com.example.viewmodel.ChatViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Locale
 
 private const val MAX_CHAT_MESSAGE_LENGTH = 1000
+private const val TYPING_STALE_WINDOW_MS = 10_000L
+private const val TYPING_IDLE_DEBOUNCE_MS = 4_500L
 
-/**
- * Self-contained Firestore-backed [ChatScreen] composable for a matched conversation.
- * Connects directly to Firebase Firestore via [KindredRepository] and [ChatViewModel]
- * to stream real-time messages and send new messages between matched users.
- */
 @Composable
 fun ChatScreen(
     matchId: String,
@@ -145,8 +176,12 @@ fun ChatScreen(
 
     val messagesState by chatViewModel.messagesState.collectAsStateWithLifecycle()
     val partnerPresence by chatViewModel.partnerPresence.collectAsStateWithLifecycle()
+    val partnerTyping by chatViewModel.partnerTyping.collectAsStateWithLifecycle()
+    val activeCallSession by chatViewModel.activeCallSession.collectAsStateWithLifecycle()
+    val icebreakerAiState by chatViewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusError by chatViewModel.statusError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(statusError) {
         val msg = statusError
@@ -178,16 +213,44 @@ fun ChatScreen(
             thread = thread,
             messagesState = messagesState,
             partnerPresence = partnerPresence,
+            partnerTyping = partnerTyping,
+            activeCallSession = activeCallSession,
+            icebreakerAiState = icebreakerAiState,
             showBackButton = showBackButton,
             onBack = onBack,
             onSendMessage = { _, participants, text, messageType ->
                 chatViewModel.sendMessage(participants, text, messageType)
             },
-            onUnmatch = {
-                chatViewModel.unmatch(onComplete = onBack)
+            onSendMediaMessage = { _, participants, type, text, mediaDataUrl, mediaGifId, durationSec, disappearingSec, viewOnce ->
+                chatViewModel.sendMessage(
+                    participantUids = participants,
+                    text = text,
+                    messageType = type,
+                    mediaDataUrl = mediaDataUrl,
+                    mediaGifId = mediaGifId,
+                    mediaDurationSec = durationSec,
+                    disappearingSeconds = disappearingSec,
+                    viewOnce = viewOnce
+                )
             },
+            onMarkMessagesRead = { _, ids -> chatViewModel.markMessagesAsRead(ids) },
+            onMarkViewOnceOpened = { _, msgId -> chatViewModel.markViewOnceOpened(msgId) },
+            onDeleteExpiredMessage = { _, msgId -> chatViewModel.deleteExpiredMessage(msgId) },
+            onTypingChanged = { _, isTyping -> chatViewModel.setTypingStatus(isTyping) },
+            onUpdateDisappearingTimer = { _, ttl -> chatViewModel.updateDisappearingTimer(ttl) },
+            onGenerateAiIcebreakers = { tone -> chatViewModel.generateAiIcebreakers(partnerProfile, tone) },
+            onStartCall = { _, calleeUid, participants, callType ->
+                chatViewModel.startCall(calleeUid, participants, callType)
+            },
+            onAnswerCall = { chatViewModel.answerCall(it) },
+            onDeclineCall = { chatViewModel.declineCall(it) },
+            onToggleCallMute = { chatViewModel.toggleCallMute(it) },
+            onToggleCallCamera = { chatViewModel.toggleCallCamera(it) },
+            onEndCall = { session, duration -> chatViewModel.endCall(session, duration) },
+            onUnmatch = { chatViewModel.unmatch(onComplete = onBack) },
             onBlockUser = onBlockUser,
             onRetry = { chatViewModel.retry() },
+            onStatusMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
@@ -195,10 +258,6 @@ fun ChatScreen(
     }
 }
 
-/**
- * Stateless, real-time Firestore chat thread composable displaying message bubbles,
- * calendar day dividers, icebreaker prompts, partner profile quick-view, and composer.
- */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -206,41 +265,230 @@ fun ChatScreen(
     thread: MatchThreadItem,
     messagesState: UiState<List<ChatMessage>>,
     partnerPresence: UserPresence? = null,
+    myProfile: PublicProfile? = null,
+    partnerTyping: TypingStatus? = null,
+    activeCallSession: CallSession? = null,
+    icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     showBackButton: Boolean = true,
     onBack: () -> Unit,
     onSendMessage: (matchId: String, participantUids: List<String>, text: String, messageType: String) -> Unit,
+    onSendMediaMessage: (
+        (
+            matchId: String,
+            participantUids: List<String>,
+            messageType: String,
+            text: String,
+            mediaDataUrl: String?,
+            mediaGifId: String?,
+            durationSec: Long,
+            disappearingSec: Long,
+            viewOnce: Boolean
+        ) -> Unit
+    )? = null,
+    onMarkMessagesRead: (matchId: String, messageIds: List<String>) -> Unit = { _, _ -> },
+    onMarkViewOnceOpened: (matchId: String, messageId: String) -> Unit = { _, _ -> },
+    onDeleteExpiredMessage: (matchId: String, messageId: String) -> Unit = { _, _ -> },
+    onTypingChanged: (matchId: String, isTyping: Boolean) -> Unit = { _, _ -> },
+    onUpdateDisappearingTimer: (matchId: String, ttlSeconds: Long) -> Unit = { _, _ -> },
+    onGenerateAiIcebreakers: (tone: String) -> Unit = {},
+    onStartCall: (matchId: String, calleeUid: String, participantUids: List<String>, callType: String) -> Unit = { _, _, _, _ -> },
+    onAnswerCall: (CallSession) -> Unit = {},
+    onDeclineCall: (CallSession) -> Unit = {},
+    onToggleCallMute: (CallSession) -> Unit = {},
+    onToggleCallCamera: (CallSession) -> Unit = {},
+    onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (matchId: String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
     onRetry: () -> Unit = {},
+    onStatusMessage: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var messageDraft by remember(thread.match.id) { mutableStateOf("") }
-    var showUnmatchConfirm by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val partner = thread.partnerProfile
+    val partnerName = partner?.displayName ?: "this user"
+    val matchId = thread.match.id
+    val participants = thread.match.participantUids
+    val disappearingTtl = thread.match.disappearingTtlSeconds
+
+    var messageDraft by remember(matchId) { mutableStateOf("") }
+    var showUnmatchDialog by remember { mutableStateOf(false) }
     var showBlockConfirm by remember { mutableStateOf(false) }
     var showPartnerSheet by remember { mutableStateOf(false) }
-    var nowMillis by remember(partnerPresence) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(partnerPresence) {
-        while (true) {
-            nowMillis = System.currentTimeMillis()
-            delay(PresenceUtils.UI_TICKER_INTERVAL_MS)
+    var showIcebreakerSheet by remember { mutableStateOf(false) }
+    var showGifSheet by remember { mutableStateOf(false) }
+    var showTimerSheet by remember { mutableStateOf(false) }
+    var viewOnceNextMedia by remember(matchId) { mutableStateOf(false) }
+    var viewingMediaMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var expiredCleanupsSent by remember(matchId) { mutableStateOf(emptySet<String>()) }
+
+    var isRecordingVoice by remember(matchId) { mutableStateOf(false) }
+    var recordingSeconds by remember(matchId) { mutableLongStateOf(0L) }
+    var playingVoiceId by remember(matchId) { mutableStateOf<String?>(null) }
+
+    val voiceRecorder = remember(context) { VoiceNoteRecorder(context.applicationContext) }
+    val voicePlayer = remember(context) { VoiceNotePlayer(context.applicationContext) }
+
+    DisposableEffect(matchId) {
+        onDispose {
+            voiceRecorder.stopSilently()
+            voicePlayer.stop()
+            onTypingChanged(matchId, false)
         }
     }
+
+    var nowMillis by remember(matchId) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(matchId) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            delay(1000L)
+        }
+    }
+
+    LaunchedEffect(isRecordingVoice) {
+        if (isRecordingVoice) {
+            recordingSeconds = 0L
+            while (isRecordingVoice) {
+                delay(1000L)
+                recordingSeconds += 1L
+                if (recordingSeconds >= 25L) {
+                    voiceRecorder.stopAndEncode().onSuccess { clip ->
+                        isRecordingVoice = false
+                        dispatchRichMessage(
+                            matchId = matchId,
+                            participants = participants,
+                            type = "VOICE",
+                            text = "",
+                            mediaDataUrl = clip.dataUrl,
+                            mediaGifId = null,
+                            durationSec = clip.durationSec,
+                            disappearingSec = disappearingTtl,
+                            viewOnce = false,
+                            onSendMediaMessage = onSendMediaMessage,
+                            onSendMessage = onSendMessage
+                        )
+                    }.onFailure { err ->
+                        isRecordingVoice = false
+                        onStatusMessage(err.localizedMessage ?: "Recording stopped")
+                    }
+                    break
+                }
+            }
+        }
+    }
+
+    // Broadcast typing status with automatic idle reset
+    LaunchedEffect(messageDraft, matchId) {
+        if (messageDraft.isNotBlank()) {
+            onTypingChanged(matchId, true)
+            delay(TYPING_IDLE_DEBOUNCE_MS)
+            onTypingChanged(matchId, false)
+        } else {
+            onTypingChanged(matchId, false)
+        }
+    }
+
     val presenceState = remember(partnerPresence, nowMillis) {
         PresenceUtils.resolvePresenceDisplay(partnerPresence, nowMillis)
     }
+    val partnerIsTyping = remember(partnerTyping, nowMillis) {
+        val status = partnerTyping ?: return@remember false
+        if (!status.isTyping) return@remember false
+        val updatedAtMs = status.updatedAt?.toDate()?.time ?: nowMillis
+        (nowMillis - updatedAtMs) <= TYPING_STALE_WINDOW_MS
+    }
+
+    // Mark unread messages as read automatically
+    val rawMessages = (messagesState as? UiState.Success)?.data.orEmpty()
+    val unreadIds = remember(rawMessages, currentUserId) {
+        rawMessages.filter { msg ->
+            msg.id.isNotBlank() &&
+                msg.senderId != currentUserId &&
+                !msg.isReadBy(currentUserId) &&
+                !msg.viewOnce
+        }.map { it.id }
+    }
+    LaunchedEffect(unreadIds) {
+        if (unreadIds.isNotEmpty()) {
+            onMarkMessagesRead(matchId, unreadIds)
+        }
+    }
+
+    // Purge & hide expired disappearing messages
+    val visibleMessages = remember(rawMessages, nowMillis) {
+        rawMessages.filter { !it.isExpiredAt(nowMillis) }
+    }
+    LaunchedEffect(rawMessages, nowMillis) {
+        rawMessages.filter { msg ->
+            msg.id.isNotBlank() && msg.isExpiredAt(nowMillis) && msg.id !in expiredCleanupsSent
+        }.forEach { expired ->
+            expiredCleanupsSent = expiredCleanupsSent + expired.id
+            onDeleteExpiredMessage(matchId, expired.id)
+        }
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null && participants.size == 2) {
+            scope.launch {
+                val dataUrl = VerificationAnalyzer.compressUriToDataUrl(context, uri)
+                if (dataUrl != null) {
+                    val caption = messageDraft.trim()
+                    dispatchRichMessage(
+                        matchId = matchId,
+                        participants = participants,
+                        type = "PHOTO",
+                        text = caption,
+                        mediaDataUrl = dataUrl,
+                        mediaGifId = null,
+                        durationSec = 0L,
+                        disappearingSec = disappearingTtl,
+                        viewOnce = viewOnceNextMedia,
+                        onSendMediaMessage = onSendMediaMessage,
+                        onSendMessage = onSendMessage
+                    )
+                    if (caption.isNotEmpty()) messageDraft = ""
+                    viewOnceNextMedia = false
+                } else {
+                    onStatusMessage("Could not load selected photo.")
+                }
+            }
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            voiceRecorder.startRecording()
+                .onSuccess { isRecordingVoice = true }
+                .onFailure { onStatusMessage(it.localizedMessage ?: "Unable to record audio") }
+        } else {
+            onStatusMessage("Microphone permission is needed for voice notes.")
+        }
+    }
+
     val listState = rememberLazyListState()
-    val partner = thread.partnerProfile
 
     fun submitDraft() {
         val clean = messageDraft.trim()
-        if (clean.isNotEmpty() && thread.match.participantUids.size == 2) {
-            onSendMessage(
-                thread.match.id,
-                thread.match.participantUids,
-                clean,
-                "TEXT"
+        if (clean.isNotEmpty() && participants.size == 2) {
+            dispatchRichMessage(
+                matchId = matchId,
+                participants = participants,
+                type = "TEXT",
+                text = clean,
+                mediaDataUrl = null,
+                mediaGifId = null,
+                durationSec = 0L,
+                disappearingSec = disappearingTtl,
+                viewOnce = false,
+                onSendMediaMessage = onSendMediaMessage,
+                onSendMessage = onSendMessage
             )
             messageDraft = ""
+            onTypingChanged(matchId, false)
         }
     }
 
@@ -250,152 +498,263 @@ fun ChatScreen(
             .imePadding()
             .testTag("chat_screen")
     ) {
-        // Real-time Chat Header
+        // Real-time Chat Header + Quick Safety/Timer Strip
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
             tonalElevation = 2.dp,
             border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (showBackButton) {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("chat_back_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.chat_back_cd)
-                        )
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable { if (partner != null) showPartnerSheet = true }
-                        .padding(horizontal = 6.dp, vertical = 4.dp)
-                        .testTag("chat_partner_header"),
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(modifier = Modifier.size(46.dp)) {
-                        ProfileAvatarImage(
-                            photoDataUrl = partner?.photoDataUrl,
-                            displayName = partner?.displayName ?: "Match",
-                            seed = partner?.avatarSeed ?: thread.partnerId,
-                            modifier = Modifier.size(44.dp),
-                            initialsFontSizeSp = 17
-                        )
-                        Box(
+                    if (showBackButton) {
+                        IconButton(
+                            onClick = onBack,
                             modifier = Modifier
-                                .size(13.dp)
-                                .align(Alignment.BottomEnd)
-                                .clip(CircleShape)
-                                .background(
-                                    if (presenceState.isOnline) EmeraldMint else MaterialTheme.colorScheme.outlineVariant,
-                                    CircleShape
-                                )
-                                .border(2.dp, MaterialTheme.colorScheme.surfaceContainer, CircleShape)
-                                .testTag("chat_presence_dot")
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                .minimumInteractiveComponentSize()
+                                .testTag("chat_back_button")
                         ) {
-                            Text(
-                                text = partner?.let { "${it.displayName}, ${it.age}" } ?: "Kindred Match",
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            VerifiedShieldBadge(
-                                isVerified = partner?.isProfileVerified == true,
-                                compact = true
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.chat_back_cd)
                             )
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                    } else {
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { if (partner != null) showPartnerSheet = true }
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .testTag("chat_partner_header"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.size(44.dp)) {
+                            ProfileAvatarImage(
+                                photoDataUrl = partner?.photoDataUrl,
+                                displayName = partner?.displayName ?: "Match",
+                                seed = partner?.avatarSeed ?: thread.partnerId,
+                                modifier = Modifier.size(42.dp),
+                                initialsFontSizeSp = 16
+                            )
                             Box(
                                 modifier = Modifier
-                                    .size(7.dp)
+                                    .size(12.dp)
+                                    .align(Alignment.BottomEnd)
+                                    .clip(CircleShape)
                                     .background(
-                                        color = if (presenceState.isOnline) {
-                                            EmeraldMint
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                        },
-                                        shape = CircleShape
+                                        if (presenceState.isOnline) EmeraldMint else MaterialTheme.colorScheme.outlineVariant,
+                                        CircleShape
                                     )
+                                    .border(2.dp, MaterialTheme.colorScheme.surfaceContainer, CircleShape)
+                                    .testTag("chat_presence_dot")
                             )
-                            Text(
-                                text = presenceState.label,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (presenceState.isOnline) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (presenceState.isOnline) {
-                                    EmeraldMint
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.testTag("chat_presence_status")
-                            )
-                            if (thread.distanceKm != null) {
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
                                 Text(
-                                    text = "• ${LocationAndGeoHelper.formatDistanceLabel(thread.distanceKm)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = partner?.let { "${it.displayName}, ${it.age}" } ?: "Kindred Match",
+                                    style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                VerifiedShieldBadge(
+                                    isVerified = partner?.isProfileVerified == true,
+                                    compact = true
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .background(
+                                            color = when {
+                                                partnerIsTyping -> CoralRose
+                                                presenceState.isOnline -> EmeraldMint
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                            },
+                                            shape = CircleShape
+                                        )
+                                )
+                                Text(
+                                    text = if (partnerIsTyping) stringResource(R.string.chat_typing_label) else presenceState.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (partnerIsTyping || presenceState.isOnline) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = when {
+                                        partnerIsTyping -> CoralRose
+                                        presenceState.isOnline -> EmeraldMint
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("chat_presence_status")
+                                )
+                                if (!partnerIsTyping && thread.distanceKm != null) {
+                                    Text(
+                                        text = "• ${LocationAndGeoHelper.formatDistanceLabel(thread.distanceKm)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
+
+                    IconButton(
+                        onClick = {
+                            if (participants.size == 2 && thread.partnerId.isNotBlank()) {
+                                onStartCall(matchId, thread.partnerId, participants, "VOICE")
+                            }
+                        },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("chat_voice_call_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Call,
+                            contentDescription = stringResource(R.string.chat_voice_call_cd),
+                            tint = EmeraldMint
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            if (participants.size == 2 && thread.partnerId.isNotBlank()) {
+                                onStartCall(matchId, thread.partnerId, participants, "VIDEO")
+                            }
+                        },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("chat_video_call_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Videocam,
+                            contentDescription = stringResource(R.string.chat_video_call_cd),
+                            tint = CoralRose
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { showUnmatchDialog = true },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("unmatch_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.DeleteOutline,
+                            contentDescription = stringResource(R.string.chat_unmatch_cd),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
-                IconButton(
-                    onClick = { showBlockConfirm = true },
+                // Compact utility strip for disappearing timer, icebreaker coach, and quick block
+                Row(
                     modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("chat_block_button")
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 14.dp, end = 14.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Block,
-                        contentDescription = stringResource(R.string.chat_block_cd),
-                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                    AssistChip(
+                        onClick = { showTimerSheet = true },
+                        modifier = Modifier.testTag("chat_timer_button"),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (viewOnceNextMedia) Icons.Filled.Lock else Icons.Filled.Timer,
+                                contentDescription = stringResource(R.string.chat_timer_cd),
+                                tint = if (disappearingTtl > 0L || viewOnceNextMedia) ChampagneGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = when {
+                                    viewOnceNextMedia && disappearingTtl > 0L -> "Timer ${formatTtlShort(disappearingTtl)} + View Once"
+                                    viewOnceNextMedia -> "View-Once Photo On"
+                                    disappearingTtl > 0L -> "Disappearing: ${formatTtlShort(disappearingTtl)}"
+                                    else -> "Timer: Off"
+                                },
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (disappearingTtl > 0L || viewOnceNextMedia) {
+                                ChampagneGold.copy(alpha = 0.14f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            }
+                        )
                     )
-                }
 
-                IconButton(
-                    onClick = { showUnmatchConfirm = true },
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("unmatch_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteOutline,
-                        contentDescription = stringResource(R.string.chat_unmatch_cd),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    AssistChip(
+                        onClick = { showIcebreakerSheet = true },
+                        modifier = Modifier.testTag("chat_header_icebreakers_chip"),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.AutoAwesome,
+                                contentDescription = stringResource(R.string.chat_icebreakers_cd),
+                                tint = ChampagneGold,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = { Text("Icebreakers", style = MaterialTheme.typography.labelSmall) }
+                    )
+
+                    AssistChip(
+                        onClick = { showBlockConfirm = true },
+                        modifier = Modifier.testTag("chat_block_button"),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Block,
+                                contentDescription = stringResource(R.string.chat_block_cd),
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "Block",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     )
                 }
             }
+        }
+
+        // Incoming Call Banner when partner is ringing this user
+        val incomingCall = activeCallSession?.takeIf {
+            it.status == "RINGING" && it.calleeUid == currentUserId
+        }
+        if (incomingCall != null) {
+            IncomingCallBanner(
+                session = incomingCall,
+                partner = partner,
+                onAccept = { onAnswerCall(incomingCall) },
+                onDecline = { onDeclineCall(incomingCall) }
+            )
         }
 
         // Firestore Messages Stream
@@ -421,60 +780,65 @@ fun ChatScreen(
                 }
 
                 is UiState.Error -> {
-                    Card(
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(24.dp)
-                            .widthIn(max = 400.dp),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
-                        )
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Column(
-                            modifier = Modifier.padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        Card(
+                            modifier = Modifier.widthIn(max = 400.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                            )
                         ) {
-                            Text(
-                                text = "Could not sync messages",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Text(
-                                text = messagesState.message,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-                            Button(
-                                onClick = onRetry,
-                                colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("chat_retry_button")
+                            Column(
+                                modifier = Modifier.padding(18.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Refresh,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
+                                Text(
+                                    text = "Could not sync messages",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.error
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(stringResource(R.string.chat_retry))
+                                Text(
+                                    text = messagesState.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                                Button(
+                                    onClick = onRetry,
+                                    colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("chat_retry_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Refresh,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(stringResource(R.string.chat_retry))
+                                }
                             }
                         }
                     }
                 }
 
                 is UiState.Success -> {
-                    val messages = messagesState.data
-                    LaunchedEffect(messages.size) {
-                        if (messages.isNotEmpty()) {
-                            listState.animateScrollToItem(messages.lastIndex)
+                    LaunchedEffect(visibleMessages.size, partnerIsTyping) {
+                        val lastIdx = visibleMessages.lastIndex + if (partnerIsTyping) 1 else 0
+                        if (lastIdx >= 0) {
+                            listState.animateScrollToItem(lastIdx)
                         }
                     }
 
-                    if (messages.isEmpty()) {
+                    if (visibleMessages.isEmpty() && !partnerIsTyping) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -501,32 +865,36 @@ fun ChatScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "You matched with ${partner?.displayName ?: "this member"}. Messages sync in real time with Firebase Firestore.",
+                                    text = "You matched with ${partner?.displayName ?: "this member"}. Send a tailored opener, GIF, photo, or voice note.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
                                 Spacer(modifier = Modifier.height(18.dp))
 
-                                val sharedInterest = partner?.interests?.firstOrNull()
-                                val icebreakers = listOfNotNull(
-                                    sharedInterest?.let { "I noticed you like $it — any favorite spot nearby?" },
-                                    "Coffee walk or weekend trail — which wins?",
-                                    "Hey ${partner?.displayName ?: "there"}! Great matching with you."
-                                )
+                                val tailoredOpeners = remember(myProfile, partner) {
+                                    AiIcebreakerService.buildProfileBasedOpeners(myProfile, partner).take(3)
+                                }
                                 FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    icebreakers.forEachIndexed { index, prompt ->
+                                    tailoredOpeners.forEachIndexed { index, suggestion ->
                                         AssistChip(
                                             onClick = {
-                                                if (thread.match.participantUids.size == 2) {
-                                                    onSendMessage(
-                                                        thread.match.id,
-                                                        thread.match.participantUids,
-                                                        prompt,
-                                                        "ICEBREAKER"
+                                                if (participants.size == 2) {
+                                                    dispatchRichMessage(
+                                                        matchId = matchId,
+                                                        participants = participants,
+                                                        type = "ICEBREAKER",
+                                                        text = suggestion.prompt,
+                                                        mediaDataUrl = null,
+                                                        mediaGifId = null,
+                                                        durationSec = 0L,
+                                                        disappearingSec = disappearingTtl,
+                                                        viewOnce = false,
+                                                        onSendMediaMessage = onSendMediaMessage,
+                                                        onSendMessage = onSendMessage
                                                     )
                                                 }
                                             },
@@ -541,7 +909,7 @@ fun ChatScreen(
                                             },
                                             label = {
                                                 Text(
-                                                    text = prompt,
+                                                    text = suggestion.prompt,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -561,18 +929,18 @@ fun ChatScreen(
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
                         ) {
                             itemsIndexed(
-                                items = messages,
+                                items = visibleMessages,
                                 key = { idx, msg -> msg.id.ifBlank { "msg_$idx" } }
                             ) { index, msg ->
-                                val prev = messages.getOrNull(index - 1)
-                                val next = messages.getOrNull(index + 1)
+                                val prev = visibleMessages.getOrNull(index - 1)
+                                val next = visibleMessages.getOrNull(index + 1)
 
                                 val msgDayKey = dayBucketLabel(msg.createdAt?.toDate(), dayFormatter)
                                 val prevDayKey = prev?.let { dayBucketLabel(it.createdAt?.toDate(), dayFormatter) }
                                 val showDayHeader = prev == null || msgDayKey != prevDayKey
 
                                 val isMine = msg.senderId == currentUserId
-                                val isSameSenderAsPrev = !showDayHeader && prev?.senderId == msg.senderId
+                                val isSameSenderAsPrev = !showDayHeader && prev.senderId == msg.senderId
                                 val isLastInCluster = next == null ||
                                     next.senderId != msg.senderId ||
                                     dayBucketLabel(next.createdAt?.toDate(), dayFormatter) != msgDayKey
@@ -594,8 +962,42 @@ fun ChatScreen(
                                     isMine = isMine,
                                     showPartnerAvatar = !isMine && isLastInCluster,
                                     partner = partner,
-                                    partnerId = thread.partnerId
+                                    partnerId = thread.partnerId,
+                                    nowMillis = nowMillis,
+                                    playingVoiceMessageId = playingVoiceId,
+                                    onOpenMedia = { mediaMsg ->
+                                        viewingMediaMessage = mediaMsg
+                                        if (mediaMsg.viewOnce && mediaMsg.senderId != currentUserId && !mediaMsg.openedByRecipient) {
+                                            onMarkViewOnceOpened(matchId, mediaMsg.id)
+                                        }
+                                    },
+                                    onToggleVoicePlayback = { voiceMsg ->
+                                        val dataUrl = voiceMsg.mediaDataUrl
+                                        if (dataUrl.isNullOrBlank()) {
+                                            onStatusMessage("Voice clip unavailable.")
+                                        } else {
+                                            val started = voicePlayer.playOrStop(
+                                                messageId = voiceMsg.id,
+                                                mediaDataUrl = dataUrl,
+                                                onCompleted = { playingVoiceId = null },
+                                                onError = { err ->
+                                                    playingVoiceId = null
+                                                    onStatusMessage(err)
+                                                }
+                                            )
+                                            playingVoiceId = if (started) voiceMsg.id else null
+                                        }
+                                    }
                                 )
+                            }
+
+                            if (partnerIsTyping) {
+                                item(key = "partner_typing") {
+                                    PartnerTypingBubble(
+                                        partner = partner,
+                                        partnerId = thread.partnerId
+                                    )
+                                }
                             }
                         }
                     }
@@ -603,7 +1005,7 @@ fun ChatScreen(
             }
         }
 
-        // Message Composer
+        // Message Composer + Rich Media Actions
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainer,
             tonalElevation = 4.dp,
@@ -612,8 +1014,163 @@ fun ChatScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
+                if (isRecordingVoice) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(CoralRose.copy(alpha = 0.14f))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("voice_recording_bar"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Filled.Mic, contentDescription = null, tint = CoralRose)
+                            Text(
+                                text = "Recording voice note • ${recordingSeconds}s / 25s",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = CoralRose
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            IconButton(
+                                onClick = {
+                                    voiceRecorder.stopSilently()
+                                    isRecordingVoice = false
+                                }
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Cancel voice note")
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = CoralRose,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        voiceRecorder.stopAndEncode().onSuccess { clip ->
+                                            isRecordingVoice = false
+                                            dispatchRichMessage(
+                                                matchId = matchId,
+                                                participants = participants,
+                                                type = "VOICE",
+                                                text = "",
+                                                mediaDataUrl = clip.dataUrl,
+                                                mediaGifId = null,
+                                                durationSec = clip.durationSec,
+                                                disappearingSec = disappearingTtl,
+                                                viewOnce = false,
+                                                onSendMediaMessage = onSendMediaMessage,
+                                                onSendMessage = onSendMessage
+                                            )
+                                        }.onFailure { err ->
+                                            isRecordingVoice = false
+                                            onStatusMessage(err.localizedMessage ?: "Failed to save voice note")
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("chat_voice_send_button")
+                                ) {
+                                    Icon(Icons.Filled.Stop, contentDescription = "Stop and send voice note", tint = Color.White)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(
+                            onClick = { showIcebreakerSheet = true },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("chat_icebreaker_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.AutoAwesome,
+                                contentDescription = stringResource(R.string.chat_icebreakers_cd),
+                                tint = ChampagneGold
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("chat_photo_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.AddPhotoAlternate,
+                                contentDescription = stringResource(R.string.chat_pick_photo_cd),
+                                tint = if (viewOnceNextMedia) ChampagneGold else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { showGifSheet = true },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("chat_gif_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Gif,
+                                contentDescription = stringResource(R.string.chat_pick_gif_cd),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                if (VoicePermissionHelper.hasAudioPermission(context)) {
+                                    voiceRecorder.startRecording()
+                                        .onSuccess { isRecordingVoice = true }
+                                        .onFailure { onStatusMessage(it.localizedMessage ?: "Unable to record audio") }
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("chat_voice_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Mic,
+                                contentDescription = stringResource(R.string.chat_record_voice_cd),
+                                tint = CoralRose
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        if (viewOnceNextMedia) {
+                            Surface(
+                                shape = CircleShape,
+                                color = ChampagneGold.copy(alpha = 0.2f),
+                                modifier = Modifier.clickable { viewOnceNextMedia = false }
+                            ) {
+                                Text(
+                                    text = "1x View-Once ×",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ChampagneGold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Bottom,
@@ -641,7 +1198,7 @@ fun ChatScreen(
                         )
                     )
 
-                    val canSend = messageDraft.isNotBlank() && thread.match.participantUids.size == 2
+                    val canSend = messageDraft.isNotBlank() && participants.size == 2
                     Surface(
                         shape = CircleShape,
                         color = if (canSend) CoralRose else MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -681,6 +1238,21 @@ fun ChatScreen(
         }
     }
 
+    // Active In-App Voice or Video Call Overlay
+    val ongoingCall = activeCallSession?.takeIf {
+        it.status == "ACTIVE" || (it.status == "RINGING" && it.callerUid == currentUserId)
+    }
+    if (ongoingCall != null) {
+        InAppCallOverlay(
+            session = ongoingCall,
+            currentUserId = currentUserId,
+            partner = partner,
+            onToggleMute = { onToggleCallMute(ongoingCall) },
+            onToggleCamera = { onToggleCallCamera(ongoingCall) },
+            onEndCall = { duration -> onEndCall(ongoingCall, duration) }
+        )
+    }
+
     if (showPartnerSheet && partner != null) {
         ModalBottomSheet(
             onDismissRequest = { showPartnerSheet = false },
@@ -690,6 +1262,10 @@ fun ChatScreen(
             PartnerProfileQuickSheet(
                 partner = partner,
                 distanceKm = thread.distanceKm,
+                onUnmatchClick = {
+                    showPartnerSheet = false
+                    showUnmatchDialog = true
+                },
                 onBlockClick = {
                     showPartnerSheet = false
                     showBlockConfirm = true
@@ -698,31 +1274,133 @@ fun ChatScreen(
         }
     }
 
-    if (showUnmatchConfirm) {
-        AlertDialog(
-            onDismissRequest = { showUnmatchConfirm = false },
-            title = { Text("Unmatch ${partner?.displayName ?: "member"}?") },
-            text = { Text("This removes the match and closes your conversation.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showUnmatchConfirm = false
-                        onUnmatch(thread.match.id)
+    if (showIcebreakerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showIcebreakerSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            IcebreakerCoachSheetContent(
+                myProfile = myProfile,
+                partnerProfile = partner,
+                aiState = icebreakerAiState,
+                onGenerateAi = { tone -> onGenerateAiIcebreakers(tone) },
+                onSendIcebreaker = { prompt ->
+                    showIcebreakerSheet = false
+                    if (participants.size == 2) {
+                        dispatchRichMessage(
+                            matchId = matchId,
+                            participants = participants,
+                            type = "ICEBREAKER",
+                            text = prompt,
+                            mediaDataUrl = null,
+                            mediaGifId = null,
+                            durationSec = 0L,
+                            disappearingSec = disappearingTtl,
+                            viewOnce = false,
+                            onSendMediaMessage = onSendMediaMessage,
+                            onSendMessage = onSendMessage
+                        )
                     }
-                ) {
-                    Text("Unmatch", color = MaterialTheme.colorScheme.error)
+                },
+                onInsertIntoDraft = { prompt ->
+                    messageDraft = prompt.take(MAX_CHAT_MESSAGE_LENGTH)
+                    showIcebreakerSheet = false
                 }
+            )
+        }
+    }
+
+    if (showGifSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showGifSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            GifPickerSheetContent(
+                onSelectReaction = { reaction ->
+                    showGifSheet = false
+                    if (participants.size == 2) {
+                        dispatchRichMessage(
+                            matchId = matchId,
+                            participants = participants,
+                            type = "GIF",
+                            text = "",
+                            mediaDataUrl = null,
+                            mediaGifId = reaction.id,
+                            durationSec = 0L,
+                            disappearingSec = disappearingTtl,
+                            viewOnce = false,
+                            onSendMediaMessage = onSendMediaMessage,
+                            onSendMessage = onSendMessage
+                        )
+                    }
+                },
+                onSendCustomGifUrl = { url ->
+                    showGifSheet = false
+                    if (participants.size == 2) {
+                        dispatchRichMessage(
+                            matchId = matchId,
+                            participants = participants,
+                            type = "GIF",
+                            text = "",
+                            mediaDataUrl = null,
+                            mediaGifId = url,
+                            durationSec = 0L,
+                            disappearingSec = disappearingTtl,
+                            viewOnce = false,
+                            onSendMediaMessage = onSendMediaMessage,
+                            onSendMessage = onSendMessage
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    if (showTimerSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showTimerSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            DisappearingTimerSheetContent(
+                currentMatchTtlSeconds = disappearingTtl,
+                viewOnceNextMedia = viewOnceNextMedia,
+                onSelectMatchTtl = { ttl ->
+                    onUpdateDisappearingTimer(matchId, ttl)
+                    showTimerSheet = false
+                },
+                onToggleViewOnce = { enabled ->
+                    viewOnceNextMedia = enabled
+                }
+            )
+        }
+    }
+
+    viewingMediaMessage?.let { mediaMsg ->
+        MediaViewerDialog(
+            message = mediaMsg,
+            onDismiss = { viewingMediaMessage = null }
+        )
+    }
+
+    if (showUnmatchDialog) {
+        UnmatchOrBlockDialog(
+            partnerName = partnerName,
+            onDismiss = { showUnmatchDialog = false },
+            onUnmatchOnly = {
+                showUnmatchDialog = false
+                onUnmatch(matchId)
             },
-            dismissButton = {
-                TextButton(onClick = { showUnmatchConfirm = false }) {
-                    Text("Cancel")
-                }
+            onUnmatchAndBlock = {
+                showUnmatchDialog = false
+                onBlockUser(thread.partnerId, partnerName)
             }
         )
     }
 
     if (showBlockConfirm) {
-        val partnerName = partner?.displayName ?: "this user"
         AlertDialog(
             onDismissRequest = { showBlockConfirm = false },
             title = { Text("Block $partnerName?") },
@@ -746,5 +1424,45 @@ fun ChatScreen(
                 }
             }
         )
+    }
+}
+
+private fun dispatchRichMessage(
+    matchId: String,
+    participants: List<String>,
+    type: String,
+    text: String,
+    mediaDataUrl: String?,
+    mediaGifId: String?,
+    durationSec: Long,
+    disappearingSec: Long,
+    viewOnce: Boolean,
+    onSendMediaMessage: (
+        (String, List<String>, String, String, String?, String?, Long, Long, Boolean) -> Unit
+    )?,
+    onSendMessage: (String, List<String>, String, String) -> Unit
+) {
+    if (onSendMediaMessage != null) {
+        onSendMediaMessage(
+            matchId,
+            participants,
+            type,
+            text,
+            mediaDataUrl,
+            mediaGifId,
+            durationSec,
+            disappearingSec,
+            viewOnce
+        )
+    } else {
+        onSendMessage(matchId, participants, text.ifBlank { type }, type)
+    }
+}
+
+private fun formatTtlShort(seconds: Long): String {
+    return when {
+        seconds >= 3600L -> "${seconds / 3600L}h"
+        seconds >= 60L -> "${seconds / 60L}m"
+        else -> "${seconds}s"
     }
 }

@@ -82,6 +82,7 @@ import com.example.notifications.KindredNotificationHelper
 import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
 import com.example.ui.components.NewMatchCelebrationDialog
+import com.example.ui.components.ProfileSearchSheet
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
@@ -284,13 +285,16 @@ private fun MainKindredApp(
     val selectedMatchId by viewModel.selectedMatchId.collectAsStateWithLifecycle()
     val activeMessagesState by viewModel.activeChatMessages.collectAsStateWithLifecycle()
     val activePartnerPresence by viewModel.activePartnerPresence.collectAsStateWithLifecycle()
+    val activePartnerTyping by viewModel.activePartnerTyping.collectAsStateWithLifecycle()
+    val activeMatchCallSession by viewModel.activeMatchCallSession.collectAsStateWithLifecycle()
+    val icebreakerAiState by viewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusMessage by viewModel.actionStatusMessage.collectAsStateWithLifecycle()
     val newMatchPopup by viewModel.newMatchPopup.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val activeChallenge by viewModel.activeChallenge.collectAsStateWithLifecycle()
-    val aiPhotoGenState by viewModel.aiPhotoGenState.collectAsStateWithLifecycle()
     val latestLocation by viewModel.latestLocation.collectAsStateWithLifecycle()
     val canUndoLastSwipe by viewModel.canUndoLastSwipe.collectAsStateWithLifecycle()
+    var showSearchSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -443,6 +447,8 @@ private fun MainKindredApp(
     }
 
     val matchCount = (dashboardState as? UiState.Success)?.data?.matches?.size ?: 0
+    val unreadInboxCount = (dashboardState as? UiState.Success)?.data?.matches
+        ?.count { it.match.isUnreadFor(viewModel.currentUserId) } ?: 0
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
@@ -472,6 +478,7 @@ private fun MainKindredApp(
                                     TabIconWithOptionalBadge(
                                         tab = tab,
                                         selected = selected,
+                                        unreadCount = unreadInboxCount,
                                         matchCount = matchCount
                                     )
                                 },
@@ -503,6 +510,7 @@ private fun MainKindredApp(
                                     TabIconWithOptionalBadge(
                                         tab = tab,
                                         selected = selected,
+                                        unreadCount = unreadInboxCount,
                                         matchCount = matchCount
                                     )
                                 },
@@ -596,6 +604,7 @@ private fun MainKindredApp(
                                         },
                                         onNavigateToProfile = { navigateToTab(ROUTE_PROFILE) },
                                         onNavigateToVerify = { navigateToTab(ROUTE_VERIFY) },
+                                        onOpenSearch = { showSearchSheet = true },
                                         onOpenSettings = {
                                             navController.navigate(ROUTE_SETTINGS) {
                                                 launchSingleTop = true
@@ -613,15 +622,73 @@ private fun MainKindredApp(
                                 composable(ROUTE_MATCHES) {
                                     MatchesAndChatScreen(
                                         currentUserId = viewModel.currentUserId,
+                                        myProfile = data.myProfile,
                                         matches = data.matches,
                                         selectedMatchId = selectedMatchId,
                                         messagesState = activeMessagesState,
                                         activePartnerPresence = activePartnerPresence,
+                                        activePartnerTyping = activePartnerTyping,
+                                        activeCallSession = activeMatchCallSession,
+                                        icebreakerAiState = icebreakerAiState,
                                         onSelectMatch = { matchId ->
+                                            selectedMatchId?.takeIf { it != matchId }?.let { prev ->
+                                                viewModel.setTypingStatus(prev, false)
+                                            }
+                                            viewModel.resetIcebreakerAiState()
                                             viewModel.selectMatch(matchId)
                                         },
+                                        onOpenSearch = { showSearchSheet = true },
                                         onSendMessage = { matchId, participants, text, type ->
                                             viewModel.sendMessage(matchId, participants, text, type)
+                                        },
+                                        onSendMediaMessage = { matchId, participants, type, text, mediaDataUrl, mediaGifId, durationSec, disappearingSec, viewOnce ->
+                                            viewModel.sendMessage(
+                                                matchId = matchId,
+                                                participantUids = participants,
+                                                text = text,
+                                                messageType = type,
+                                                mediaDataUrl = mediaDataUrl,
+                                                mediaGifId = mediaGifId,
+                                                mediaDurationSec = durationSec,
+                                                disappearingSeconds = disappearingSec,
+                                                viewOnce = viewOnce
+                                            )
+                                        },
+                                        onMarkMessagesRead = { matchId, messageIds ->
+                                            viewModel.markMessagesAsRead(matchId, messageIds)
+                                        },
+                                        onMarkViewOnceOpened = { matchId, messageId ->
+                                            viewModel.markViewOnceOpened(matchId, messageId)
+                                        },
+                                        onDeleteExpiredMessage = { matchId, messageId ->
+                                            viewModel.deleteExpiredMessage(matchId, messageId)
+                                        },
+                                        onTypingChanged = { matchId, isTyping ->
+                                            viewModel.setTypingStatus(matchId, isTyping)
+                                        },
+                                        onUpdateDisappearingTimer = { matchId, ttl ->
+                                            viewModel.updateDisappearingTimer(matchId, ttl)
+                                        },
+                                        onGenerateAiIcebreakers = { myProf, partnerProf, tone ->
+                                            viewModel.generateAiIcebreakers(myProf, partnerProf, tone)
+                                        },
+                                        onStartCall = { matchId, calleeUid, participants, callType ->
+                                            viewModel.startCall(matchId, calleeUid, participants, callType)
+                                        },
+                                        onAnswerCall = { session ->
+                                            viewModel.answerCall(session)
+                                        },
+                                        onDeclineCall = { session ->
+                                            viewModel.declineCall(session)
+                                        },
+                                        onToggleCallMute = { session ->
+                                            viewModel.toggleCallMute(session)
+                                        },
+                                        onToggleCallCamera = { session ->
+                                            viewModel.toggleCallCamera(session)
+                                        },
+                                        onEndCall = { session, duration ->
+                                            viewModel.endCall(session, duration)
                                         },
                                         onUnmatch = { matchId ->
                                             viewModel.unmatch(matchId)
@@ -634,6 +701,9 @@ private fun MainKindredApp(
                                         },
                                         onRetryChat = {
                                             viewModel.retryChatObservation()
+                                        },
+                                        onStatusMessage = { msg ->
+                                            viewModel.postStatusMessage(msg)
                                         }
                                     )
                                 }
@@ -661,13 +731,14 @@ private fun MainKindredApp(
                                         myProfile = data.myProfile,
                                         privateUser = data.privateUser,
                                         isBusy = isBusy,
-                                        onSaveProfile = { name, age, gender, bio, city, lat, lng, interests, photo, photos, discoverable, interestedIn, minAge, maxAge, maxDist, verifiedOnly ->
+                                        onSaveProfile = { name, age, gender, bio, city, country, lat, lng, interests, photo, photos, discoverable, interestedIn, minAge, maxAge, maxDist, verifiedOnly ->
                                             viewModel.saveProfile(
                                                 displayName = name,
                                                 age = age,
                                                 gender = gender,
                                                 bio = bio,
                                                 cityLabel = city,
+                                                country = country,
                                                 latitude = lat,
                                                 longitude = lng,
                                                 interests = interests,
@@ -691,19 +762,6 @@ private fun MainKindredApp(
                                                 launchSingleTop = true
                                             }
                                         },
-                                        aiPhotoGenState = aiPhotoGenState,
-                                        onGenerateAiPhoto = { preset, customDetails, subjectGender, referenceBitmap ->
-                                            viewModel.generateAiProfilePhoto(
-                                                preset = preset,
-                                                customDetails = customDetails,
-                                                subjectGender = subjectGender,
-                                                referenceBitmap = referenceBitmap
-                                            )
-                                        },
-                                        onResetAiPhotoState = { viewModel.resetAiPhotoGenState() },
-                                        onAddGeneratedPhoto = { dataUrl ->
-                                            viewModel.addGeneratedPhotoToProfile(dataUrl)
-                                        },
                                         blockedUsers = data.blockedUsers,
                                         onUnblockUser = { targetUid ->
                                             viewModel.unblockUser(targetUid)
@@ -713,6 +771,7 @@ private fun MainKindredApp(
                                         },
                                         onBeforeSignOut = {
                                             KindredNotificationHelper.activeMatchIdInForeground = null
+                                            selectedMatchId?.let { viewModel.setTypingStatus(it, false) }
                                             viewModel.unregisterFcmTokenOnSignOut()
                                             viewModel.updatePresenceNow(false)
                                         },
@@ -728,24 +787,16 @@ private fun MainKindredApp(
                                         defaultDisplayName = viewModel.defaultDisplayName,
                                         isBusy = isBusy,
                                         onBack = { navController.popBackStack() },
-                                        onSaveChanges = { bio, interests, photos ->
+                                        onSaveChanges = { bio, interests, photos, city, country ->
                                             viewModel.updateProfileContent(
                                                 bio = bio,
                                                 interests = interests,
                                                 profilePhotos = photos,
+                                                cityLabel = city,
+                                                country = country,
                                                 onComplete = { navController.popBackStack() }
                                             )
                                         },
-                                        aiPhotoGenState = aiPhotoGenState,
-                                        onGenerateAiPhoto = { preset, customDetails, subjectGender, referenceBitmap ->
-                                            viewModel.generateAiProfilePhoto(
-                                                preset = preset,
-                                                customDetails = customDetails,
-                                                subjectGender = subjectGender,
-                                                referenceBitmap = referenceBitmap
-                                            )
-                                        },
-                                        onResetAiPhotoState = { viewModel.resetAiPhotoGenState() },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         }
@@ -777,6 +828,18 @@ private fun MainKindredApp(
                                     )
                                 }
                             }
+                            if (showSearchSheet) {
+                                ProfileSearchSheet(
+                                    searchableProfiles = data.searchableProfiles,
+                                    onMessageProfile = { targetProfile ->
+                                        showSearchSheet = false
+                                        viewModel.startDirectConversation(targetProfile) {
+                                            navigateToTab(ROUTE_MATCHES)
+                                        }
+                                    },
+                                    onDismiss = { showSearchSheet = false }
+                                )
+                            }
                         }
                     }
                 }
@@ -803,20 +866,35 @@ private fun MainKindredApp(
 private fun TabIconWithOptionalBadge(
     tab: NavTabItem,
     selected: Boolean,
+    unreadCount: Int,
     matchCount: Int
 ) {
     val icon = if (selected) tab.selectedIcon else tab.unselectedIcon
-    if (tab.route == ROUTE_MATCHES && matchCount > 0) {
-        BadgedBox(
-            badge = {
-                Badge(containerColor = CoralRose) {
-                    Text(if (matchCount > 9) "9+" else "$matchCount")
+    when {
+        tab.route == ROUTE_MATCHES && unreadCount > 0 -> {
+            BadgedBox(
+                badge = {
+                    Badge(containerColor = CoralRose) {
+                        Text(if (unreadCount > 9) "9+" else "$unreadCount")
+                    }
                 }
+            ) {
+                Icon(imageVector = icon, contentDescription = stringResource(tab.labelRes))
             }
-        ) {
+        }
+        tab.route == ROUTE_MATCHES && matchCount > 0 -> {
+            BadgedBox(
+                badge = {
+                    Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                        Text(if (matchCount > 9) "9+" else "$matchCount")
+                    }
+                }
+            ) {
+                Icon(imageVector = icon, contentDescription = stringResource(tab.labelRes))
+            }
+        }
+        else -> {
             Icon(imageVector = icon, contentDescription = stringResource(tab.labelRes))
         }
-    } else {
-        Icon(imageVector = icon, contentDescription = stringResource(tab.labelRes))
     }
 }

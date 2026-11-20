@@ -40,6 +40,7 @@ data class ResolvedDeviceLocation(
     val coarseLatitude: Double,
     val coarseLongitude: Double,
     val cityLabel: String,
+    val countryName: String = "",
     val isLiveGps: Boolean
 )
 
@@ -135,6 +136,7 @@ object LocationAndGeoHelper {
         var lastGeocodedLat: Double? = null
         var lastGeocodedLng: Double? = null
         var cachedCityLabel: String? = null
+        var cachedCountryName: String = ""
 
         fun emitLocation(location: Location) {
             resolverScope.launch {
@@ -145,14 +147,15 @@ object LocationAndGeoHelper {
                         location.latitude,
                         location.longitude
                     ) >= 1.0
-                val city = if (movedFar || cachedCityLabel == null) {
-                    reverseGeocodeCity(appContext, location.latitude, location.longitude).also {
+                val (city, country) = if (movedFar || cachedCityLabel == null) {
+                    reverseGeocodeLocation(appContext, location.latitude, location.longitude).also { resolvedPair ->
                         lastGeocodedLat = location.latitude
                         lastGeocodedLng = location.longitude
-                        cachedCityLabel = it
+                        cachedCityLabel = resolvedPair.first
+                        cachedCountryName = resolvedPair.second
                     }
                 } else {
-                    cachedCityLabel!!
+                    cachedCityLabel!! to cachedCountryName
                 }
 
                 trySend(
@@ -162,6 +165,7 @@ object LocationAndGeoHelper {
                         coarseLatitude = roundToCoarse(location.latitude),
                         coarseLongitude = roundToCoarse(location.longitude),
                         cityLabel = city,
+                        countryName = country,
                         isLiveGps = true
                     )
                 )
@@ -229,25 +233,26 @@ object LocationAndGeoHelper {
         }
 
         val location = currentLocation ?: return null
-        val city = reverseGeocodeCity(context, location.latitude, location.longitude)
+        val (city, country) = reverseGeocodeLocation(context, location.latitude, location.longitude)
         return ResolvedDeviceLocation(
             exactLatitude = location.latitude,
             exactLongitude = location.longitude,
             coarseLatitude = roundToCoarse(location.latitude),
             coarseLongitude = roundToCoarse(location.longitude),
             cityLabel = city,
+            countryName = country,
             isLiveGps = true
         )
     }
 
     @Suppress("DEPRECATION")
-    private suspend fun reverseGeocodeCity(
+    private suspend fun reverseGeocodeLocation(
         context: Context,
         latitude: Double,
         longitude: Double
-    ): String = withContext(Dispatchers.IO) {
+    ): Pair<String, String> = withContext(Dispatchers.IO) {
         if (!Geocoder.isPresent()) {
-            return@withContext formatCoordFallback(latitude, longitude)
+            return@withContext formatCoordFallback(latitude, longitude) to ""
         }
         try {
             val geocoder = Geocoder(context.applicationContext, Locale.getDefault())
@@ -263,15 +268,17 @@ object LocationAndGeoHelper {
             val first = addresses?.firstOrNull()
             val locality = first?.locality ?: first?.subAdminArea ?: first?.adminArea
             val region = first?.adminArea ?: first?.countryCode
-            when {
+            val country = first?.countryName.orEmpty().trim()
+            val cityText = when {
                 !locality.isNullOrBlank() && !region.isNullOrBlank() && locality != region ->
                     "$locality, $region"
                 !locality.isNullOrBlank() -> locality
                 !region.isNullOrBlank() -> region
                 else -> formatCoordFallback(latitude, longitude)
             }
+            cityText to country
         } catch (_: Exception) {
-            formatCoordFallback(latitude, longitude)
+            formatCoordFallback(latitude, longitude) to ""
         }
     }
 
