@@ -19,7 +19,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
@@ -34,6 +37,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -48,10 +53,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -63,7 +70,10 @@ import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
+import com.example.update.AppUpdateChecker
+import com.example.update.UpdateCheckResult
 import com.example.util.GeoHashUtils
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -411,7 +421,201 @@ fun SettingsScreen(
                     }
                 }
 
+                AppUpdatesCard()
+
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppUpdatesCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var repoInput by remember { mutableStateOf(AppUpdateChecker.getConfiguredGitHubRepo(context)) }
+    var aiStudioInput by remember { mutableStateOf(AppUpdateChecker.getConfiguredAiStudioUrl(context)) }
+    var isChecking by remember { mutableStateOf(false) }
+    var checkResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
+
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier.testTag("settings_update_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SystemUpdate,
+                    contentDescription = null,
+                    tint = EmeraldMint
+                )
+                Column {
+                    Text("App Updates (GitHub & AI Studio)", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "Installed: ${AppUpdateChecker.currentVersionLabel()}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Text(
+                text = "Checks GitHub Releases for newer APK builds and keeps your AI Studio cloud link handy.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedTextField(
+                value = repoInput,
+                onValueChange = { repoInput = it },
+                label = { Text("GitHub Repo (owner/repo or URL)") },
+                placeholder = { Text("e.g. username/kindred") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_github_repo_input")
+            )
+
+            OutlinedTextField(
+                value = aiStudioInput,
+                onValueChange = { aiStudioInput = it },
+                label = { Text("AI Studio App Link (optional)") },
+                placeholder = { Text("https://ais-pre-...run.app") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_aistudio_url_input")
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = {
+                        val savedSlug = AppUpdateChecker.saveGitHubRepo(context, repoInput)
+                        if (savedSlug.isNotBlank()) repoInput = savedSlug
+                        AppUpdateChecker.saveAiStudioUrl(context, aiStudioInput)
+                        isChecking = true
+                        scope.launch {
+                            checkResult = AppUpdateChecker.checkGitHubLatestRelease(context)
+                            isChecking = false
+                        }
+                    },
+                    enabled = !isChecking,
+                    colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("check_updates_button")
+                ) {
+                    if (isChecking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.CloudDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text("Check Updates")
+                    }
+                }
+
+                if (aiStudioInput.trim().startsWith("http")) {
+                    OutlinedButton(
+                        onClick = {
+                            AppUpdateChecker.saveAiStudioUrl(context, aiStudioInput)
+                            AppUpdateChecker.openExternalUpdateUrl(context, aiStudioInput)
+                        },
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("open_aistudio_url_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.OpenInNew,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.size(6.dp))
+                        Text("AI Studio")
+                    }
+                }
+            }
+
+            when (val res = checkResult) {
+                is UpdateCheckResult.Success -> {
+                    val downloadUrl = res.release.apkDownloadUrl ?: res.release.releasePageUrl
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = EmeraldMint.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.45f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Update available: ${res.release.title} (${res.release.tagName})",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = EmeraldMint,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = res.release.releaseNotes,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Button(
+                                onClick = {
+                                    AppUpdateChecker.openExternalUpdateUrl(context, downloadUrl)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldMint, contentColor = Color.White),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("settings_download_update_button")
+                            ) {
+                                Text("Download New APK Release", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+                is UpdateCheckResult.UpToDate -> {
+                    Text(
+                        text = "Up to date • ${res.checkedSource}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = EmeraldMint
+                    )
+                }
+                is UpdateCheckResult.NotConfigured -> {
+                    Text(
+                        text = res.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ChampagneGold
+                    )
+                }
+                is UpdateCheckResult.Error -> {
+                    Text(
+                        text = res.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                null -> Unit
             }
         }
     }

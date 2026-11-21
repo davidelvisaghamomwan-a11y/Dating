@@ -1,7 +1,8 @@
 <resources>
     <string name="app_name">Kindred</string>
     <string name="tagline">Intentional connections, verified in real time.</string>
-    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="sign_in_with_google">Continue with Google</string>
+    <string name="create_account_with_google">Create Account with Google</string>
     <string name="signing_in">Signing in...</string>
     <string name="nav_discover">Discover</string>
     <string name="nav_matches">Inbox</string>

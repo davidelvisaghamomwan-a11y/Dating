@@ -19,6 +19,13 @@ android {
     versionCode = 1
     versionName = "1.0"
 
+    val ciRepo = (project.findProperty("KINDRED_GITHUB_REPO")?.toString() ?: "").replace("\"", "")
+    val ciBuild = project.findProperty("KINDRED_BUILD_NUMBER")?.toString()?.toIntOrNull() ?: 1
+    val aiStudioUrl = (project.findProperty("KINDRED_AISTUDIO_URL")?.toString() ?: "").replace("\"", "")
+    buildConfigField("String", "GITHUB_REPO", "\"$ciRepo\"")
+    buildConfigField("int", "CI_BUILD_NUMBER", "$ciBuild")
+    buildConfigField("String", "AISTUDIO_APP_URL", "\"$aiStudioUrl\"")
+
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 

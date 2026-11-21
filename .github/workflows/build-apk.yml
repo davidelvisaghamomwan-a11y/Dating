@@ -72,7 +72,10 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --console=plain --stacktrace
+        run: >
+          gradle :app:assembleDebug --no-daemon --console=plain --stacktrace
+          -PKINDRED_GITHUB_REPO="${{ github.repository }}"
+          -PKINDRED_BUILD_NUMBER="${{ github.run_number }}"
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
@@ -89,5 +92,6 @@ jobs:
           TAG="build-${{ github.run_number }}"
           cp app/build/outputs/apk/debug/app-debug.apk kindred-debug.apk
           gh release create "$TAG" kindred-debug.apk \
+            --latest \
             --title "Kindred APK #${{ github.run_number }}" \
-            --notes "Direct installable Android debug APK for Kindred."
+            --notes "Direct installable Android debug APK for Kindred (Build #${{ github.run_number }})."

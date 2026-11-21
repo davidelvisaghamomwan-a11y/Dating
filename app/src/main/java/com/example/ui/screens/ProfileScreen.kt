@@ -154,14 +154,27 @@ fun ProfileScreen(
         }
     }
 
-    var displayName by remember(myProfile, defaultDisplayName) {
-        mutableStateOf(myProfile?.displayName ?: defaultDisplayName.orEmpty().take(40))
+    val pendingRegistration = remember(myProfile) {
+        if (myProfile == null) {
+            com.example.auth.PendingRegistrationPrefs.get(context)
+        } else {
+            com.example.auth.PendingRegistrationPrefs.clear(context)
+            null
+        }
     }
-    var ageText by remember(myProfile) {
-        mutableStateOf((myProfile?.age ?: 26L).toString())
+
+    var displayName by remember(myProfile, defaultDisplayName, pendingRegistration) {
+        mutableStateOf(
+            myProfile?.displayName
+                ?: pendingRegistration?.displayName?.takeIf { it.isNotBlank() }
+                ?: defaultDisplayName.orEmpty().take(40)
+        )
     }
-    var gender by remember(myProfile) {
-        mutableStateOf(myProfile?.gender ?: "Woman")
+    var ageText by remember(myProfile, pendingRegistration) {
+        mutableStateOf((myProfile?.age ?: pendingRegistration?.age ?: 26L).toString())
+    }
+    var gender by remember(myProfile, pendingRegistration) {
+        mutableStateOf(myProfile?.gender ?: pendingRegistration?.gender ?: "Woman")
     }
     var bio by remember(myProfile) {
         mutableStateOf(myProfile?.bio ?: "")

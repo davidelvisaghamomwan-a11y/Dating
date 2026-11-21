@@ -40,7 +40,9 @@ import com.example.model.CallSession
 import com.example.model.TypingStatus
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
+import com.example.ui.components.LocationVerificationGate
 import com.example.ui.components.ProfileSearchContent
+import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
@@ -433,12 +435,12 @@ class ExampleRobolectricTest {
         val myProfile = PublicProfile(userId = "me", displayName = "Alex", age = 27)
         val candidates = listOf(
             DiscoveryCandidate(
-                profile = PublicProfile(userId = "demo_woman_01", displayName = "Maya", age = 26, gender = "Woman"),
+                profile = PublicProfile(userId = "real_woman_01", displayName = "Maya", age = 26, gender = "Woman"),
                 distanceKm = 2.0,
                 proximityMatchScore = 90
             ),
             DiscoveryCandidate(
-                profile = PublicProfile(userId = "demo_man_01", displayName = "Julian", age = 29, gender = "Man"),
+                profile = PublicProfile(userId = "real_man_01", displayName = "Julian", age = 29, gender = "Man"),
                 distanceKm = 4.0,
                 proximityMatchScore = 84
             )
@@ -471,14 +473,14 @@ class ExampleRobolectricTest {
         }
         composeTestRule.mainClock.advanceTimeBy(400)
         composeTestRule.waitForIdle()
-        assertEquals(listOf("demo_woman_01" to "LIKE"), recordedSwipes)
+        assertEquals(listOf("real_woman_01" to "LIKE"), recordedSwipes)
 
         composeTestRule.onNodeWithTag("swipe_deck_top_card").performTouchInput {
             swipeLeft()
         }
         composeTestRule.mainClock.advanceTimeBy(400)
         composeTestRule.waitForIdle()
-        assertEquals(listOf("demo_woman_01" to "LIKE", "demo_man_01" to "PASS"), recordedSwipes)
+        assertEquals(listOf("real_woman_01" to "LIKE", "real_man_01" to "PASS"), recordedSwipes)
     }
 
     @Test
@@ -793,8 +795,7 @@ class ExampleRobolectricTest {
             BlockedUserItem(
                 blockedUid = "blocked_user_1",
                 displayName = "Marcus",
-                reason = null,
-                isDemo = false
+                reason = null
             )
         )
 
@@ -1021,10 +1022,8 @@ class ExampleRobolectricTest {
                 SettingsScreen(
                     myProfile = profile,
                     privateUser = null,
-                    includeDemoProfiles = true,
                     isBusy = false,
                     onBack = {},
-                    onToggleDemoProfiles = {},
                     onSavePreferences = { interestedIn, minAge, maxAge, radius, verifiedOnly, myGender, discoverable ->
                         savedInterestedIn = interestedIn
                         savedMinAge = minAge
@@ -1521,6 +1520,174 @@ class ExampleRobolectricTest {
         assertEquals(2, parsed.size)
         assertEquals("Playful", parsed[0].tone)
         assertTrue(parsed[1].prompt.contains("Film camera"))
+    }
+
+    @Test
+    fun `auth screen toggles between sign in and create account registration modes`() {
+        composeTestRule.setContent {
+            KindredTheme {
+                AuthScreen(
+                    onAuthSuccess = {},
+                    enableAutoSignIn = false
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("auth_mode_sign_in").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("google_sign_in_button").assertIsDisplayed()
+
+        // Switch to Create Account tab
+        composeTestRule.onNodeWithTag("auth_mode_sign_up").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("auth_signup_name_input").performScrollTo().performTextInput("Jordan")
+        composeTestRule.onNodeWithTag("auth_signup_age_input").performScrollTo().performTextReplacement("27")
+        composeTestRule.onNodeWithTag("google_sign_up_button").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `discover empty state shows search people CTA instead of sample profiles`() {
+        var searchOpened = false
+        val myProfile = PublicProfile(userId = "me", displayName = "Alex", age = 27)
+
+        composeTestRule.setContent {
+            KindredTheme {
+                DiscoverScreen(
+                    myProfile = myProfile,
+                    privateUser = null,
+                    geoHashMeta = null,
+                    candidates = emptyList(),
+                    onSwipe = { _, _ -> },
+                    onRefreshLocation = {},
+                    onLocationError = {},
+                    onUpdateFilters = { _, _, _, _, _ -> },
+                    onNavigateToProfile = {},
+                    onNavigateToVerify = {},
+                    onOpenSearch = { searchOpened = true }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Replay 23 Sample Profiles").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("empty_discover_search_button").performScrollTo().assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(searchOpened)
+    }
+
+    @Test
+    fun `chat screen opens partner profile sheet and photo gallery dialog`() {
+        val threadWithPhotos = sampleThread.copy(
+            partnerProfile = sampleThread.partnerProfile!!.copy(
+                country = "United States",
+                photoDataUrl = "data:image/jpeg;base64,AAA",
+                profilePhotos = listOf("data:image/jpeg;base64,AAA", "data:image/jpeg;base64,BBB")
+            )
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = threadWithPhotos,
+                    messagesState = UiState.Success(emptyList()),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onUnmatch = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("chat_view_profile_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("partner_profile_quick_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sheet_view_photos_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("partner_photo_gallery_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gallery_counter_label", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Photo 1 of 2", useUnmergedTree = true).assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("gallery_next_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Photo 2 of 2", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun `location verification gate enforces permission and gps activation`() {
+        var permissionRequested = false
+        var appSettingsOpened = false
+        var locationSettingsOpened = false
+
+        composeTestRule.setContent {
+            KindredTheme {
+                LocationVerificationGate(
+                    hasPermission = false,
+                    isLocationEnabled = false,
+                    onRequestPermission = { permissionRequested = true },
+                    onOpenAppSettings = { appSettingsOpened = true },
+                    onOpenLocationSettings = { locationSettingsOpened = true }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("location_verification_gate").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("location_gate_grant_button").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("location_gate_app_settings_button").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("location_gate_settings_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(permissionRequested)
+        assertTrue(appSettingsOpened)
+        assertTrue(locationSettingsOpened)
+    }
+
+    @Test
+    fun `notification helper creates incoming calls channel and preserves call extras`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        KindredNotificationHelper.ensureChannels(context)
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val callsChannel = manager.getNotificationChannel(KindredNotificationHelper.CHANNEL_CALLS)
+        assertTrue(callsChannel != null)
+        assertEquals(android.app.NotificationManager.IMPORTANCE_HIGH, callsChannel.importance)
+
+        val intent = KindredNotificationHelper.buildLaunchIntent(
+            context = context,
+            matchId = "alice_bob",
+            notificationType = KindredNotificationHelper.TYPE_INCOMING_CALL,
+            callId = "call_77"
+        )
+        assertEquals("alice_bob", intent.getStringExtra(KindredNotificationHelper.EXTRA_MATCH_ID))
+        assertEquals("call_77", intent.getStringExtra(KindredNotificationHelper.EXTRA_CALL_ID))
+        assertEquals(
+            KindredNotificationHelper.TYPE_INCOMING_CALL,
+            intent.getStringExtra(KindredNotificationHelper.EXTRA_NOTIFICATION_TYPE)
+        )
+    }
+
+    @Test
+    fun `settings screen renders app update checker card`() {
+        val profile = PublicProfile(userId = "me", displayName = "Alex", age = 27)
+        composeTestRule.setContent {
+            KindredTheme {
+                SettingsScreen(
+                    myProfile = profile,
+                    privateUser = null,
+                    isBusy = false,
+                    onBack = {},
+                    onSavePreferences = { _, _, _, _, _, _, _ -> }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_update_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("check_updates_button").performScrollTo().assertIsDisplayed()
     }
 
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)

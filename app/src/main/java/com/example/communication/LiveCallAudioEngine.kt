@@ -91,6 +91,9 @@ class LiveCallAudioEngine(
         muted = isMuted
         if (isStarted) {
             updateAudioRouting(speakerOn = speakerOn, isMuted = isMuted)
+            if (captureJob == null && hasRecordAudioPermission()) {
+                startCaptureLoop(onAudioFrameReady)
+            }
             return
         }
         isStarted = true

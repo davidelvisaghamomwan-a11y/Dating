@@ -97,6 +97,9 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.VerificationScreen
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.KindredTheme
+import com.example.update.AppReleaseInfo
+import com.example.update.AppUpdateChecker
+import com.example.update.UpdateCheckResult
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
 import com.example.viewmodel.KindredPushAlert
@@ -419,6 +422,8 @@ private fun MainKindredApp(
         }
     }
 
+    var availableAppUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
+
     LaunchedEffect(user.uid) {
         KindredNotificationHelper.ensureChannels(context)
         viewModel.syncFcmToken()
@@ -426,6 +431,14 @@ private fun MainKindredApp(
             !KindredNotificationHelper.hasNotificationPermission(context)
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        when (val result = AppUpdateChecker.checkGitHubLatestRelease(context)) {
+            is UpdateCheckResult.Success -> {
+                if (!AppUpdateChecker.isTagDismissed(context, result.release.tagName)) {
+                    availableAppUpdate = result.release
+                }
+            }
+            else -> Unit
         }
     }
 
@@ -960,6 +973,56 @@ private fun MainKindredApp(
             onToggleMute = { viewModel.toggleCallMute(ongoingGlobalCall) },
             onToggleCamera = { viewModel.toggleCallCamera(ongoingGlobalCall) },
             onEndCall = { duration -> viewModel.endCall(ongoingGlobalCall, duration) }
+        )
+    }
+
+    availableAppUpdate?.let { release ->
+        val updateUrl = release.apkDownloadUrl ?: release.releasePageUrl
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                AppUpdateChecker.dismissTag(context, release.tagName)
+                availableAppUpdate = null
+            },
+            title = {
+                Text(
+                    text = "Update Available (${release.tagName})",
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "${release.title} is available from ${release.sourceLabel}. You are running ${AppUpdateChecker.currentVersionLabel()}."
+                    )
+                    Text(
+                        text = release.releaseNotes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.Button(
+                    onClick = {
+                        AppUpdateChecker.openExternalUpdateUrl(context, updateUrl)
+                        availableAppUpdate = null
+                    },
+                    modifier = Modifier.testTag("download_update_button")
+                ) {
+                    Text("Download Update")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        AppUpdateChecker.dismissTag(context, release.tagName)
+                        availableAppUpdate = null
+                    },
+                    modifier = Modifier.testTag("dismiss_update_button")
+                ) {
+                    Text("Later")
+                }
+            }
         )
     }
 

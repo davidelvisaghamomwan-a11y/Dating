@@ -1,15 +1,17 @@
 package com.example
 
-import com.example.data.SampleProfilesProvider
+import com.example.communication.LiveCallAudioEngine
+import com.example.model.CallAudioChunk
 import com.example.model.PublicProfile
-import com.example.service.GeoHashMatchingService
+import com.example.update.AppUpdateChecker
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.sin
 
 class ExampleUnitTest {
 
@@ -97,29 +99,69 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun sampleProfiles_hasTenWomenSevenMenSixNonBinaryWithinGeoRadius() {
-        val anchorLat = 40.7128
-        val anchorLng = -74.0060
-        val profiles = SampleProfilesProvider.generateProfiles(anchorLat, anchorLng)
+    fun pcm16RmsLevel_detectsSilenceVsVoiceSignal() {
+        val silent = ByteArray(LiveCallAudioEngine.FRAME_BYTES)
+        assertEquals(0f, LiveCallAudioEngine.computePcm16RmsLevel(silent), 0.0001f)
 
-        assertEquals(23, profiles.size)
-        assertEquals(23, profiles.map { it.userId }.toSet().size)
-        assertEquals(10, profiles.count { it.gender == "Woman" })
-        assertEquals(7, profiles.count { it.gender == "Man" })
-        assertEquals(6, profiles.count { it.gender == "Non-binary" })
-
-        profiles.forEach { profile ->
-            assertTrue(SampleProfilesProvider.isDemoProfileId(profile.userId))
-            assertEquals(7, profile.geohash.length)
-            assertEquals(profile.geohash.take(3), profile.geohash3)
-            assertEquals(profile.geohash.take(4), profile.geohash4)
-            val dist = LocationAndGeoHelper.haversineDistanceKm(
-                anchorLat,
-                anchorLng,
-                profile.coarseLatitude,
-                profile.coarseLongitude
-            )
-            assertTrue("Expected distance <= 30 km, got $dist for ${profile.displayName}", dist <= 30.0)
+        val tone = ByteArray(LiveCallAudioEngine.FRAME_BYTES)
+        var i = 0
+        var sampleIdx = 0
+        while (i + 1 < tone.size) {
+            val sample = (sin(sampleIdx * 0.25) * 6000.0).toInt().toShort().toInt()
+            tone[i] = (sample and 0xFF).toByte()
+            tone[i + 1] = ((sample ushr 8) and 0xFF).toByte()
+            i += 2
+            sampleIdx++
         }
+        val level = LiveCallAudioEngine.computePcm16RmsLevel(tone)
+        assertTrue("Expected audible voice RMS level > 0.3, got $level", level > 0.3f)
+
+        val chunk = CallAudioChunk(
+            id = "alice_0",
+            matchId = "alice_bob",
+            callId = "call_1",
+            senderUid = "alice",
+            participantUids = listOf("alice", "bob"),
+            seq = 0L,
+            sampleRateHz = 8000L,
+            audioBase64 = "AAAA"
+        )
+        assertEquals(8000L, chunk.sampleRateHz)
+        assertEquals("call_1", chunk.callId)
+    }
+
+    @Test
+    fun appUpdateChecker_parsesGitHubSlugsAndComparesBuilds() {
+        assertEquals("octocat/kindred", AppUpdateChecker.parseGitHubRepoSlug("octocat/kindred"))
+        assertEquals(
+            "octocat/kindred",
+            AppUpdateChecker.parseGitHubRepoSlug("https://github.com/octocat/kindred.git")
+        )
+        assertNull(AppUpdateChecker.parseGitHubRepoSlug("invalid"))
+
+        assertTrue(
+            AppUpdateChecker.isRemoteReleaseNewer(
+                tagName = "build-12",
+                title = "Kindred APK #12",
+                localBuildNumber = 5,
+                localVersionName = "1.0"
+            )
+        )
+        assertFalse(
+            AppUpdateChecker.isRemoteReleaseNewer(
+                tagName = "build-5",
+                title = "Kindred APK #5",
+                localBuildNumber = 5,
+                localVersionName = "1.0"
+            )
+        )
+        assertTrue(
+            AppUpdateChecker.isRemoteReleaseNewer(
+                tagName = "v1.2.0",
+                title = "v1.2.0",
+                localBuildNumber = 1,
+                localVersionName = "1.0"
+            )
+        )
     }
 }

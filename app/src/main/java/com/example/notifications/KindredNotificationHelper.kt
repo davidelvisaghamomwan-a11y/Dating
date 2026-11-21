@@ -185,6 +185,8 @@ object KindredNotificationHelper {
         }
     }
 
+    private val activeCallNotificationIds = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
+
     fun showIncomingCallNotification(
         context: Context,
         matchId: String?,
@@ -203,6 +205,7 @@ object KindredNotificationHelper {
             callId = callId
         )
         val notificationId = incomingCallNotificationId(callId)
+        activeCallNotificationIds.add(notificationId)
         val pendingIntent = PendingIntent.getActivity(
             context,
             notificationId,
@@ -230,10 +233,21 @@ object KindredNotificationHelper {
         }
     }
 
-    fun cancelIncomingCallNotification(context: Context, callId: String) {
-        if (callId.isBlank()) return
-        runCatching {
-            NotificationManagerCompat.from(context).cancel(incomingCallNotificationId(callId))
+    fun cancelIncomingCallNotification(context: Context, callId: String? = null) {
+        val mgr = NotificationManagerCompat.from(context)
+        if (!callId.isNullOrBlank()) {
+            val id = incomingCallNotificationId(callId)
+            activeCallNotificationIds.remove(id)
+            runCatching { mgr.cancel(id) }
+            return
+        }
+        val toCancel = synchronized(activeCallNotificationIds) {
+            val copy = activeCallNotificationIds.toList()
+            activeCallNotificationIds.clear()
+            copy
+        }
+        toCancel.forEach { id ->
+            runCatching { mgr.cancel(id) }
         }
     }
 
