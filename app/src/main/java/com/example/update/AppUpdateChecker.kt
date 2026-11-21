@@ -2,7 +2,11 @@ package com.example.update
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import com.example.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +14,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 data class AppReleaseInfo(
     val sourceLabel: String,
@@ -34,6 +39,8 @@ object AppUpdateChecker {
     private const val KEY_GITHUB_REPO = "github_repo_slug"
     private const val KEY_AISTUDIO_URL = "aistudio_app_url"
     private const val KEY_DISMISSED_TAG = "dismissed_tag"
+    private const val KEY_LAST_AUTO_CHECK_MS = "last_auto_check_ms"
+    private const val AUTO_CHECK_INTERVAL_MS = 5 * 60_000L
 
     fun currentBuildNumber(): Int {
         return maxOf(BuildConfig.VERSION_CODE, BuildConfig.CI_BUILD_NUMBER)
@@ -240,5 +247,52 @@ object AppUpdateChecker {
             context.startActivity(intent)
             true
         }.getOrDefault(false)
+    }
+
+    fun isNetworkConnected(context: Context): Boolean {
+        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    fun shouldAutoCheckNow(context: Context, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val lastMs = context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_AUTO_CHECK_MS, 0L)
+        return (nowMs - lastMs) >= AUTO_CHECK_INTERVAL_MS
+    }
+
+    fun recordAutoCheckTimestamp(context: Context, nowMs: Long = System.currentTimeMillis()) {
+        context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_LAST_AUTO_CHECK_MS, nowMs)
+            .apply()
+    }
+
+    fun getAppSigningSha256(context: Context): String {
+        return runCatching {
+            val pm = context.packageManager
+            val certBytes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val info = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                val signingInfo = info.signingInfo
+                val sigs = if (signingInfo?.hasMultipleSigners() == true) {
+                    signingInfo.apkContentsSigners
+                } else {
+                    signingInfo?.signingCertificateHistory
+                }
+                sigs?.firstOrNull()?.toByteArray()
+            } else {
+                @Suppress("DEPRECATION")
+                val info = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+                @Suppress("DEPRECATION")
+                info.signatures?.firstOrNull()?.toByteArray()
+            } ?: return@runCatching "Unavailable"
+
+            val digest = MessageDigest.getInstance("SHA-256").digest(certBytes)
+            digest.joinToString(":") { "%02X".format(it) }
+        }.getOrDefault("Unavailable")
     }
 }

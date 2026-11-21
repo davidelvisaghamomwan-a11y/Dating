@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -41,6 +43,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -67,6 +70,8 @@ import com.example.util.LocationAndGeoHelper
 fun ProfileSearchSheet(
     searchableProfiles: List<DiscoveryCandidate>,
     onMessageProfile: (PublicProfile) -> Unit,
+    onReportProfile: (profile: PublicProfile, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
+    onBlockProfile: (PublicProfile) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -78,20 +83,27 @@ fun ProfileSearchSheet(
         ProfileSearchContent(
             searchableProfiles = searchableProfiles,
             onMessageProfile = onMessageProfile,
+            onReportProfile = onReportProfile,
+            onBlockProfile = onBlockProfile,
             onClose = onDismiss
         )
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileSearchContent(
     searchableProfiles: List<DiscoveryCandidate>,
     onMessageProfile: (PublicProfile) -> Unit,
+    onReportProfile: (profile: PublicProfile, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
+    onBlockProfile: (PublicProfile) -> Unit = {},
     onClose: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedCountryFilter by remember { mutableStateOf<String?>(null) }
+    var inspectingCandidate by remember { mutableStateOf<DiscoveryCandidate?>(null) }
+    var reportTarget by remember { mutableStateOf<PublicProfile?>(null) }
+    var blockTarget by remember { mutableStateOf<PublicProfile?>(null) }
 
     val availableCountries = remember(searchableProfiles) {
         searchableProfiles
@@ -304,7 +316,10 @@ fun ProfileSearchContent(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { inspectingCandidate = candidate }
+                                    .testTag("search_open_profile_${profile.userId}"),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
@@ -433,5 +448,69 @@ fun ProfileSearchContent(
                 }
             }
         }
+    }
+
+    inspectingCandidate?.let { candidate ->
+        ModalBottomSheet(
+            onDismissRequest = { inspectingCandidate = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            Box(modifier = Modifier.testTag("search_profile_detail_sheet")) {
+                PartnerProfileQuickSheet(
+                    partner = candidate.profile,
+                    distanceKm = candidate.distanceKm.takeIf { it > 0.0 },
+                    onMessageClick = {
+                        inspectingCandidate = null
+                        onMessageProfile(candidate.profile)
+                    },
+                    onReportClick = {
+                        inspectingCandidate = null
+                        reportTarget = candidate.profile
+                    },
+                    onBlockClick = {
+                        inspectingCandidate = null
+                        blockTarget = candidate.profile
+                    }
+                )
+            }
+        }
+    }
+
+    reportTarget?.let { target ->
+        ReportUserDialog(
+            targetName = target.displayName,
+            onDismiss = { reportTarget = null },
+            onSubmitReport = { reason, details, alsoBlock ->
+                reportTarget = null
+                onReportProfile(target, reason, details, alsoBlock)
+            }
+        )
+    }
+
+    blockTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { blockTarget = null },
+            title = { Text("Block ${target.displayName}?") },
+            text = {
+                Text("They will be removed from search, discovery, and prevented from matching or messaging you.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        blockTarget = null
+                        onBlockProfile(target)
+                    },
+                    modifier = Modifier.testTag("confirm_search_block_button")
+                ) {
+                    Text("Block", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { blockTarget = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

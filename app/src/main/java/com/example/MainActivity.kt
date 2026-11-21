@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Explore
@@ -80,11 +79,12 @@ import androidx.navigation.compose.rememberNavController
 import com.example.communication.CallRingtoneController
 import com.example.data.KindredRepository
 import com.example.model.UiState
+import com.example.notifications.KindredBackgroundService
 import com.example.notifications.KindredNotificationHelper
 import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
+import com.example.ui.components.FullscreenIncomingCallDialog
 import com.example.ui.components.InAppCallOverlay
-import com.example.ui.components.IncomingCallBanner
 import com.example.ui.components.LocationVerificationGate
 import com.example.ui.components.NewMatchCelebrationDialog
 import com.example.ui.components.ProfileSearchSheet
@@ -333,6 +333,29 @@ private fun MainKindredApp(
         }
     }
 
+    var availableAppUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
+
+    suspend fun runAutoUpdateCheck(force: Boolean) {
+        if (!AppUpdateChecker.isNetworkConnected(context)) return
+        if (!force && !AppUpdateChecker.shouldAutoCheckNow(context)) return
+        AppUpdateChecker.recordAutoCheckTimestamp(context)
+        when (val result = AppUpdateChecker.checkGitHubLatestRelease(context)) {
+            is UpdateCheckResult.Success -> {
+                val release = result.release
+                if (!AppUpdateChecker.isTagDismissed(context, release.tagName)) {
+                    availableAppUpdate = release
+                    KindredNotificationHelper.showAppUpdateNotification(
+                        context = context,
+                        tagName = release.tagName,
+                        title = release.title,
+                        installUrl = release.apkDownloadUrl ?: release.releasePageUrl
+                    )
+                }
+            }
+            else -> Unit
+        }
+    }
+
     DisposableEffect(lifecycleOwner, user.uid) {
         var heartbeatJob: Job? = null
 
@@ -348,6 +371,7 @@ private fun MainKindredApp(
 
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             startForegroundHeartbeat()
+            KindredBackgroundService.startIfEnabled(context)
         }
 
         val observer = LifecycleEventObserver { _, event ->
@@ -356,10 +380,12 @@ private fun MainKindredApp(
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
                     isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
                     startForegroundHeartbeat()
+                    KindredBackgroundService.startIfEnabled(context)
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
                     isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
+                    presenceScope.launch { runAutoUpdateCheck(force = false) }
                 }
                 Lifecycle.Event.ON_STOP -> {
                     heartbeatJob?.cancel()
@@ -422,24 +448,16 @@ private fun MainKindredApp(
         }
     }
 
-    var availableAppUpdate by remember { mutableStateOf<AppReleaseInfo?>(null) }
-
     LaunchedEffect(user.uid) {
         KindredNotificationHelper.ensureChannels(context)
+        KindredBackgroundService.startIfEnabled(context)
         viewModel.syncFcmToken()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !KindredNotificationHelper.hasNotificationPermission(context)
         ) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        when (val result = AppUpdateChecker.checkGitHubLatestRelease(context)) {
-            is UpdateCheckResult.Success -> {
-                if (!AppUpdateChecker.isTagDismissed(context, result.release.tagName)) {
-                    availableAppUpdate = result.release
-                }
-            }
-            else -> Unit
-        }
+        runAutoUpdateCheck(force = true)
     }
 
     LaunchedEffect(user.uid) {
@@ -668,6 +686,16 @@ private fun MainKindredApp(
                                                 displayName = candidate.profile.displayName
                                             )
                                         },
+                                        onReportUser = { candidate, reason, details, alsoBlock ->
+                                            viewModel.reportUser(
+                                                reportedUid = candidate.profile.userId,
+                                                displayName = candidate.profile.displayName,
+                                                reason = reason,
+                                                details = details,
+                                                sourceSurface = "DISCOVER",
+                                                alsoBlock = alsoBlock
+                                            )
+                                        },
                                         onRefreshLocation = { resolved ->
                                             viewModel.applyResolvedLocation(resolved)
                                         },
@@ -784,6 +812,17 @@ private fun MainKindredApp(
                                                 displayName = partnerName
                                             )
                                         },
+                                        onReportUser = { partnerId, partnerName, reason, details, alsoBlock ->
+                                            viewModel.reportUser(
+                                                reportedUid = partnerId,
+                                                displayName = partnerName,
+                                                reason = reason,
+                                                details = details,
+                                                sourceSurface = "CHAT",
+                                                matchId = selectedMatchId,
+                                                alsoBlock = alsoBlock
+                                            )
+                                        },
                                         onRetryChat = {
                                             viewModel.retryChatObservation()
                                         },
@@ -857,6 +896,7 @@ private fun MainKindredApp(
                                         },
                                         onBeforeSignOut = {
                                             KindredNotificationHelper.activeMatchIdInForeground = null
+                                            KindredBackgroundService.stop(context)
                                             selectedMatchId?.let { viewModel.setTypingStatus(it, false) }
                                             viewModel.unregisterFcmTokenOnSignOut()
                                             viewModel.updatePresenceNow(false)
@@ -920,6 +960,23 @@ private fun MainKindredApp(
                                             navigateToTab(ROUTE_MATCHES)
                                         }
                                     },
+                                    onReportProfile = { targetProfile, reason, details, alsoBlock ->
+                                        if (alsoBlock) showSearchSheet = false
+                                        viewModel.reportUser(
+                                            reportedUid = targetProfile.userId,
+                                            displayName = targetProfile.displayName,
+                                            reason = reason,
+                                            details = details,
+                                            sourceSurface = "SEARCH",
+                                            alsoBlock = alsoBlock
+                                        )
+                                    },
+                                    onBlockProfile = { targetProfile ->
+                                        viewModel.blockUser(
+                                            targetUserId = targetProfile.userId,
+                                            displayName = targetProfile.displayName
+                                        )
+                                    },
                                     onDismiss = { showSearchSheet = false }
                                 )
                             }
@@ -929,25 +986,28 @@ private fun MainKindredApp(
             }
         }
 
-        // Global incoming call banner when ringing outside the active ChatScreen
+        // Instant WhatsApp-style incoming call UI when ringing anywhere in the app outside active ChatScreen
+        var handledGlobalCallIds by remember { mutableStateOf(emptySet<String>()) }
         val incomingAlert = globalIncomingCallAlert
         if (incomingAlert != null &&
+            incomingAlert.session.id !in handledGlobalCallIds &&
             !(currentRoute == ROUTE_MATCHES && selectedMatchId == incomingAlert.session.matchId)
         ) {
-            IncomingCallBanner(
+            FullscreenIncomingCallDialog(
                 session = incomingAlert.session,
                 partner = incomingAlert.thread.partnerProfile,
                 onAccept = {
+                    handledGlobalCallIds = handledGlobalCallIds + incomingAlert.session.id
+                    KindredNotificationHelper.cancelIncomingCallNotification(context, incomingAlert.session.id)
                     viewModel.answerCall(incomingAlert.session)
                     viewModel.selectMatch(incomingAlert.session.matchId)
                     navigateToTab(ROUTE_MATCHES)
                 },
                 onDecline = {
+                    handledGlobalCallIds = handledGlobalCallIds + incomingAlert.session.id
+                    KindredNotificationHelper.cancelIncomingCallNotification(context, incomingAlert.session.id)
                     viewModel.declineCall(incomingAlert.session)
-                },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
+                }
             )
         }
     }
@@ -1004,12 +1064,13 @@ private fun MainKindredApp(
             confirmButton = {
                 androidx.compose.material3.Button(
                     onClick = {
+                        KindredNotificationHelper.cancelAppUpdateNotification(context)
                         AppUpdateChecker.openExternalUpdateUrl(context, updateUrl)
                         availableAppUpdate = null
                     },
                     modifier = Modifier.testTag("download_update_button")
                 ) {
-                    Text("Download Update")
+                    Text("Install Update")
                 }
             },
             dismissButton = {

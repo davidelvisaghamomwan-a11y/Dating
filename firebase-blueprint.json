@@ -143,7 +143,7 @@
         "senderId": { "type": "string" },
         "participantUids": { "type": "array" },
         "text": { "type": "string" },
-        "messageType": { "type": "string", "enum": ["TEXT", "ICEBREAKER", "PHOTO", "VOICE", "GIF", "CALL"] },
+        "messageType": { "type": "string", "enum": ["TEXT", "ICEBREAKER", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL"] },
         "mediaDataUrl": { "type": "string" },
         "mediaGifId": { "type": "string" },
         "mediaDurationSec": { "type": "integer" },
@@ -241,6 +241,21 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["blockerUid", "blockedUid", "createdAt"]
+    },
+    "ReportRecord": {
+      "title": "ReportRecord",
+      "description": "Immutable safety/moderation report flagging a profile or chat behavior.",
+      "type": "object",
+      "properties": {
+        "reporterUid": { "type": "string" },
+        "reportedUid": { "type": "string" },
+        "reason": { "type": "string" },
+        "details": { "type": "string" },
+        "sourceSurface": { "type": "string", "enum": ["DISCOVER", "SEARCH", "CHAT", "PROFILE"] },
+        "matchId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reporterUid", "reportedUid", "reason", "sourceSurface", "createdAt"]
     }
   },
   "firestore": {
@@ -291,6 +306,10 @@
     "/blocks/{blockId}": {
       "schema": { "$ref": "#/entities/BlockRecord" },
       "description": "User blocking records keyed by {blockerUid}_{blockedUid}."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/ReportRecord" },
+      "description": "User moderation reports keyed by report ID."
     }
   }
 }

@@ -10,8 +10,14 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -148,6 +154,199 @@ internal fun IncomingCallBanner(
                         imageVector = if (isVideo) Icons.Filled.Videocam else Icons.Filled.Call,
                         contentDescription = "Accept call",
                         tint = Color.Black
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun FullscreenIncomingCallDialog(
+    session: CallSession,
+    partner: PublicProfile?,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    val isVideo = session.callType == "VIDEO"
+    val callerName = partner?.displayName ?: "Kindred Match"
+    val locationLabel = partner?.formattedLocation()?.takeIf { it.isNotBlank() }
+
+    val pulseTransition = rememberInfiniteTransition(label = "incomingRingPulse")
+    val ringScale by pulseTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 1.18f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ringScale"
+    )
+    val ringAlpha by pulseTransition.animateFloat(
+        initialValue = 0.65f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ringAlpha"
+    )
+
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF14111D), Color(0xFF28162C), Color(0xFF12101A))
+                    )
+                )
+                .padding(horizontal = 24.dp, vertical = 36.dp)
+                .testTag("incoming_call_banner")
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = EmeraldMint.copy(alpha = 0.18f),
+                    border = BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.45f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isVideo) Icons.Filled.Videocam else Icons.Filled.Call,
+                            contentDescription = null,
+                            tint = EmeraldMint,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (isVideo) "Incoming Kindred Video Call" else "Incoming Kindred Voice Call",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = EmeraldMint,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(28.dp))
+
+                Text(
+                    text = callerName,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                if (locationLabel != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = locationLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.72f)
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier.align(Alignment.Center),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size((156 * ringScale).dp)
+                        .clip(CircleShape)
+                        .border(2.dp, EmeraldMint.copy(alpha = ringAlpha), CircleShape)
+                )
+                Box(
+                    modifier = Modifier
+                        .size(144.dp)
+                        .clip(CircleShape)
+                        .border(3.dp, CoralRose.copy(alpha = 0.65f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ProfileAvatarImage(
+                        photoDataUrl = partner?.photoDataUrl,
+                        displayName = callerName,
+                        seed = partner?.avatarSeed ?: session.callerUid,
+                        modifier = Modifier.size(134.dp),
+                        initialsFontSizeSp = 44
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = 28.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.error,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.size(68.dp)
+                    ) {
+                        IconButton(
+                            onClick = onDecline,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("decline_call_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CallEnd,
+                                contentDescription = "Decline call",
+                                tint = Color.White,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Decline",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        shape = CircleShape,
+                        color = EmeraldMint,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.size(68.dp)
+                    ) {
+                        IconButton(
+                            onClick = onAccept,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("accept_call_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isVideo) Icons.Filled.Videocam else Icons.Filled.Call,
+                                contentDescription = "Accept call",
+                                tint = Color.Black,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Accept",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White
                     )
                 }
             }

@@ -131,6 +131,7 @@ fun MatchesAndChatScreen(
     onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
+    onReportUser: (partnerId: String, partnerName: String, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _, _ -> },
     onRetryChat: () -> Unit = {},
     onStatusMessage: (String) -> Unit = {}
 ) {
@@ -195,6 +196,7 @@ fun MatchesAndChatScreen(
                             onEndCall = onEndCall,
                             onUnmatch = onUnmatch,
                             onBlockUser = onBlockUser,
+                            onReportUser = onReportUser,
                             onRetry = onRetryChat,
                             onStatusMessage = onStatusMessage
                         )
@@ -239,6 +241,7 @@ fun MatchesAndChatScreen(
                     onEndCall = onEndCall,
                     onUnmatch = onUnmatch,
                     onBlockUser = onBlockUser,
+                    onReportUser = onReportUser,
                     onRetry = onRetryChat,
                     onStatusMessage = onStatusMessage
                 )

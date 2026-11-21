@@ -1,4 +1,4 @@
-name: Build Kindred Debug APK
+name: Build Kindred APK
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Assemble Debug APK
+    name: Assemble Release & Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -38,9 +38,12 @@ jobs:
           "$SDKMANAGER" --update || true
           "$SDKMANAGER" "platform-tools" "platforms;android-36.1" "build-tools;36.0.0"
 
-      - name: Prepare debug keystore and env properties
+      - name: Prepare signing keystores, Firebase config, and env properties
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           if [ ! -f debug.keystore ] && [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
@@ -50,18 +53,43 @@ jobs:
               -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
               -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
-          if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$RELEASE_STORE_PASSWORD" ]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+            echo "STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${RELEASE_KEY_PASSWORD:-$RELEASE_STORE_PASSWORD}" >> "$GITHUB_ENV"
+          else
+            rm -f my-upload-key.jks
+            keytool -importkeystore \
+              -srckeystore debug.keystore -srcstorepass android -srcalias androiddebugkey -srckeypass android \
+              -destkeystore my-upload-key.jks -deststorepass android -destalias upload -destkeypass android -noprompt
+            echo "STORE_PASSWORD=android" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=android" >> "$GITHUB_ENV"
           fi
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> "$GITHUB_ENV"
+
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > /tmp/candidate-google-services.json
+            if python3 -m json.tool /tmp/candidate-google-services.json >/dev/null 2>&1; then
+              cp /tmp/candidate-google-services.json app/google-services.json
+            else
+              echo "::warning::GOOGLE_SERVICES_JSON secret is not valid JSON; keeping repository app/google-services.json if present."
+            fi
+            rm -f /tmp/candidate-google-services.json
+          fi
+
           if [ ! -f app/google-services.json ]; then
-            echo "::warning::app/google-services.json and GOOGLE_SERVICES_JSON secret are missing. Using CI build fallback for R.string.default_web_client_id; add app/google-services.json or the GOOGLE_SERVICES_JSON secret for live Firebase sign-in."
-            mkdir -p app/src/debug/res/values
-            printf '%s\n' \
-              '<?xml version="1.0" encoding="utf-8"?>' \
-              '<resources>' \
-              '    <string name="default_web_client_id" translatable="false"></string>' \
-              '</resources>' > app/src/debug/res/values/ci_google_services_fallback.xml
+            echo "::warning::app/google-services.json is missing. Using CI fallback for R.string.default_web_client_id."
+            mkdir -p app/src/debug/res/values app/src/release/res/values
+            for target_dir in app/src/debug/res/values app/src/release/res/values; do
+              printf '%s\n' \
+                '<?xml version="1.0" encoding="utf-8"?>' \
+                '<resources>' \
+                '    <string name="default_web_client_id" translatable="false"></string>' \
+                '</resources>' > "$target_dir/ci_google_services_fallback.xml"
+            done
           fi
+
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
           fi
@@ -71,17 +99,23 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Build Debug APK
+      - name: Build Release & Debug APKs
         run: >
-          gradle :app:assembleDebug --no-daemon --console=plain --stacktrace
+          gradle :app:assembleRelease :app:assembleDebug
+          --no-daemon --no-configuration-cache
+          -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
+          -Dorg.gradle.workers.max=2
+          --console=plain --stacktrace
           -PKINDRED_GITHUB_REPO="${{ github.repository }}"
           -PKINDRED_BUILD_NUMBER="${{ github.run_number }}"
 
-      - name: Upload APK build artifact
+      - name: Upload APK build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kindred-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: kindred-apks
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Publish Direct APK Release
@@ -90,8 +124,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="build-${{ github.run_number }}"
+          cp app/build/outputs/apk/release/app-release.apk kindred-release.apk
           cp app/build/outputs/apk/debug/app-debug.apk kindred-debug.apk
-          gh release create "$TAG" kindred-debug.apk \
+          gh release create "$TAG" kindred-release.apk kindred-debug.apk \
             --latest \
             --title "Kindred APK #${{ github.run_number }}" \
-            --notes "Direct installable Android debug APK for Kindred (Build #${{ github.run_number }})."
+            --notes "Consistently signed release APK (kindred-release.apk) and debug APK for Kindred Build #${{ github.run_number }}."

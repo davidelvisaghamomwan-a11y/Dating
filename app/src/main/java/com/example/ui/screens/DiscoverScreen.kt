@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
@@ -90,6 +91,7 @@ import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.ui.components.LocationDistancePill
 import com.example.ui.components.ProfileAvatarImage
+import com.example.ui.components.ReportUserDialog
 import com.example.ui.components.SwipeCardController
 import com.example.ui.components.SwipeCardDeck
 import com.example.ui.components.SwipeDirection
@@ -112,6 +114,7 @@ fun DiscoverScreen(
     candidates: List<DiscoveryCandidate>,
     onSwipe: (DiscoveryCandidate, String) -> Unit,
     onBlockUser: (DiscoveryCandidate) -> Unit = {},
+    onReportUser: (candidate: DiscoveryCandidate, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
     onRefreshLocation: (ResolvedDeviceLocation) -> Unit,
     onLocationError: (String) -> Unit,
     onUpdateFilters: (String, Int, Int, Int, Boolean) -> Unit,
@@ -128,6 +131,7 @@ fun DiscoverScreen(
     val scope = rememberCoroutineScope()
     var showFilterSheet by remember { mutableStateOf(false) }
     var blockConfirmCandidate by remember { mutableStateOf<DiscoveryCandidate?>(null) }
+    var reportConfirmCandidate by remember { mutableStateOf<DiscoveryCandidate?>(null) }
     var isLocating by remember { mutableStateOf(false) }
 
     fun fetchAndApplyGps() {
@@ -368,6 +372,7 @@ fun DiscoverScreen(
                 ) { item, _ ->
                     ProfileDeckCard(
                         candidate = item,
+                        onReportClick = { reportConfirmCandidate = item },
                         onBlockClick = { blockConfirmCandidate = item },
                         modifier = Modifier.fillMaxSize()
                     )
@@ -537,12 +542,25 @@ fun DiscoverScreen(
             }
         )
     }
+
+    reportConfirmCandidate?.let { candidateToReport ->
+        ReportUserDialog(
+            targetName = candidateToReport.profile.displayName,
+            onDismiss = { reportConfirmCandidate = null },
+            onSubmitReport = { reason, details, alsoBlock ->
+                val target = candidateToReport
+                reportConfirmCandidate = null
+                onReportUser(target, reason, details, alsoBlock)
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileDeckCard(
     candidate: DiscoveryCandidate,
+    onReportClick: () -> Unit = {},
     onBlockClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -657,6 +675,28 @@ private fun ProfileDeckCard(
                             isVerified = profile.isProfileVerified,
                             score = profile.verificationScore.toInt()
                         )
+                        IconButton(
+                            onClick = onReportClick,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("discover_report_button")
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.55f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Flag,
+                                        contentDescription = stringResource(R.string.discover_report_cd),
+                                        tint = ChampagneGold,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
                         IconButton(
                             onClick = onBlockClick,
                             modifier = Modifier

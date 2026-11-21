@@ -1182,16 +1182,16 @@ class KindredRepository(
         viewOnce: Boolean = false
     ): Result<Unit> {
         val allowedType = when (messageType) {
-            "ICEBREAKER", "PHOTO", "VOICE", "GIF", "CALL" -> messageType
+            "ICEBREAKER", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL" -> messageType
             else -> "TEXT"
         }
         val cleanText = text.trim().take(1000)
         val cleanMedia = mediaDataUrl?.trim()?.takeIf { it.isNotBlank() }
         val cleanGif = mediaGifId?.trim()?.take(300)?.takeIf { it.isNotBlank() }
-        if (cleanText.isEmpty() && allowedType !in setOf("PHOTO", "VOICE", "GIF")) {
+        if (cleanText.isEmpty() && allowedType !in setOf("PHOTO", "VIDEO", "VOICE", "GIF")) {
             return Result.failure(IllegalArgumentException("Message must be between 1 and 1000 characters."))
         }
-        if (cleanMedia != null && cleanMedia.length > 260_000) {
+        if (cleanMedia != null && cleanMedia.length > 920_000) {
             return Result.failure(IllegalArgumentException("Media exceeds maximum sync size. Try a shorter clip or smaller photo."))
         }
         val safeDisappearSec = disappearingSeconds.coerceIn(0L, 604_800L)
@@ -1204,6 +1204,7 @@ class KindredRepository(
             viewOnce && allowedType == "PHOTO" -> "⏱️ View-once photo"
             viewOnce && allowedType == "VOICE" -> "⏱️ View-once voice note"
             allowedType == "PHOTO" -> cleanText.ifBlank { "📷 Photo" }
+            allowedType == "VIDEO" -> cleanText.ifBlank { "🎥 Short video (${mediaDurationSec.coerceIn(1L, 20L)}s)" }
             allowedType == "VOICE" -> "🎙️ Voice note (${mediaDurationSec.coerceIn(1L, 120L)}s)"
             allowedType == "GIF" -> cleanText.ifBlank { "🎞️ Sent a GIF" }
             else -> cleanText
@@ -1624,6 +1625,51 @@ class KindredRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun submitReport(
+        reportedUid: String,
+        reason: String,
+        details: String = "",
+        sourceSurface: String = "PROFILE",
+        matchId: String? = null
+    ): Result<Unit> {
+        var docPath = "reports"
+        return try {
+            val uid = requireUserId()
+            require(reportedUid.isNotBlank() && reportedUid != uid) {
+                "Invalid profile to report."
+            }
+            val cleanReason = reason.trim().take(100)
+            require(cleanReason.length >= 2) { "Please choose a reason for reporting." }
+            val safeSurface = when (sourceSurface.uppercase()) {
+                "DISCOVER", "SEARCH", "CHAT", "PROFILE" -> sourceSurface.uppercase()
+                else -> "PROFILE"
+            }
+            val reportRef = db.collection("reports").document()
+            docPath = reportRef.path
+            val payload = mutableMapOf<String, Any>(
+                "reporterUid" to uid,
+                "reportedUid" to reportedUid,
+                "reason" to cleanReason,
+                "sourceSurface" to safeSurface,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            val cleanDetails = details.trim().take(500)
+            if (cleanDetails.isNotBlank()) {
+                payload["details"] = cleanDetails
+            }
+            if (!matchId.isNullOrBlank()) {
+                payload["matchId"] = matchId
+            }
+            reportRef.set(payload).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
             Result.failure(e)
         }
     }

@@ -676,4 +676,73 @@ test("Chat read receipts, typing indicators, disappearing timers, and call signa
   await assertFails(
     charlieDb.collection("matches").doc(matchId).collection("calls").doc("call_001").collection("audioChunks").doc("chunk_alice_0").get()
   );
+
+  // Alice can attach a short video clip (<=20s); >920KB base64 is rejected
+  await assertSucceeds(
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_1").set({
+      matchId,
+      senderId: ALICE_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      text: "Quick cafe clip",
+      messageType: "VIDEO",
+      mediaDataUrl: "data:video/mp4;base64,AAAAIGZ0eXBpc29t",
+      mediaDurationSec: 12,
+      readByUids: [ALICE_UID],
+      createdAt: pastDate(50),
+    })
+  );
+  await assertFails(
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_too_big").set({
+      matchId,
+      senderId: ALICE_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      text: "Too large",
+      messageType: "VIDEO",
+      mediaDataUrl: "x".repeat(930000),
+      mediaDurationSec: 15,
+      readByUids: [ALICE_UID],
+      createdAt: pastDate(40),
+    })
+  );
+});
+
+test("Moderation reports enforce reporter identity, disallow self-reporting, and remain immutable", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    const created = pastDate(20000);
+    await adminDb.collection("publicProfiles").doc(ALICE_UID).set(makePublicProfile(ALICE_UID, created));
+    await adminDb.collection("publicProfiles").doc(BOB_UID).set(makePublicProfile(BOB_UID, created));
+  });
+
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const reportId = "rep_001";
+  await assertSucceeds(
+    aliceDb.collection("reports").doc(reportId).set({
+      reporterUid: ALICE_UID,
+      reportedUid: BOB_UID,
+      reason: "Harassment or abusive messages",
+      details: "Sent unsolicited inappropriate message.",
+      sourceSurface: "CHAT",
+      matchId: `${ALICE_UID}_${BOB_UID}`,
+      createdAt: pastDate(500),
+    })
+  );
+
+  // Self-report fails
+  await assertFails(
+    aliceDb.collection("reports").doc("rep_self").set({
+      reporterUid: ALICE_UID,
+      reportedUid: ALICE_UID,
+      reason: "Fake profile",
+      sourceSurface: "PROFILE",
+      createdAt: pastDate(400),
+    })
+  );
+
+  // Reporter can view own report; reported user cannot read or alter it
+  await assertSucceeds(aliceDb.collection("reports").where("reporterUid", "==", ALICE_UID).get());
+  await assertFails(bobDb.collection("reports").doc(reportId).get());
+  await assertFails(aliceDb.collection("reports").doc(reportId).delete());
 });

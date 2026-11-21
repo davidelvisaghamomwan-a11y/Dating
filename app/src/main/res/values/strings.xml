@@ -51,6 +51,8 @@
     <string name="fcm_matches_channel_name">New Matches</string>
     <string name="fcm_messages_channel_name">Messages</string>
     <string name="fcm_calls_channel_name">Incoming Calls</string>
+    <string name="fcm_background_channel_name">Background Live Calls</string>
+    <string name="fcm_updates_channel_name">App Updates</string>
     <string name="btn_enable_notifications">Enable Push Alerts</string>
     <string name="btn_unblock">Unblock</string>
     <string name="settings_title">Dating Preferences</string>
@@ -62,12 +64,15 @@
     <string name="chat_view_profile_cd">View profile and photos</string>
     <string name="chat_more_actions_cd">Conversation safety and options</string>
     <string name="chat_pick_photo_cd">Attach photo</string>
+    <string name="chat_pick_video_cd">Attach short video up to 20 seconds</string>
     <string name="chat_pick_gif_cd">Send animated GIF</string>
     <string name="chat_record_voice_cd">Record voice note</string>
     <string name="chat_icebreakers_cd">Profile icebreakers and AI openers</string>
     <string name="chat_timer_cd">Disappearing message timer</string>
     <string name="chat_typing_label">typing…</string>
     <string name="chat_end_call_cd">End call</string>
+    <string name="report_user_cd">Report profile</string>
+    <string name="discover_report_cd">Report profile</string>
     <string name="location_gate_title">Verify Your Location</string>
     <string name="location_gate_subtitle">Kindred automatically verifies your city and country via GPS so everyone knows where matches are messaging from.</string>
 </resources>

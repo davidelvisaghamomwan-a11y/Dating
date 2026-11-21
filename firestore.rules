@@ -149,9 +149,9 @@ service cloud.firestore {
              data.participantUids[0] is string && isValidId(data.participantUids[0]) &&
              data.participantUids[1] is string && isValidId(data.participantUids[1]) &&
              data.text is string && data.text.size() <= 1000 &&
-             data.messageType in ['TEXT', 'ICEBREAKER', 'PHOTO', 'VOICE', 'GIF', 'CALL'] &&
-             (data.text.size() >= 1 || data.messageType in ['PHOTO', 'VOICE', 'GIF']) &&
-             (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 260000)) &&
+             data.messageType in ['TEXT', 'ICEBREAKER', 'PHOTO', 'VIDEO', 'VOICE', 'GIF', 'CALL'] &&
+             (data.text.size() >= 1 || data.messageType in ['PHOTO', 'VIDEO', 'VOICE', 'GIF']) &&
+             (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
              (!('mediaGifId' in data) || (data.mediaGifId is string && data.mediaGifId.size() <= 300)) &&
              (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0 && data.mediaDurationSec <= 120)) &&
              (!('readByUids' in data) || (data.readByUids is list && data.readByUids.size() <= 2)) &&
@@ -187,6 +187,17 @@ service cloud.firestore {
     function isNotBlockedBetween(uidA, uidB) {
       return !exists(/databases/$(database)/documents/blocks/$(uidA + '_' + uidB)) &&
              !exists(/databases/$(database)/documents/blocks/$(uidB + '_' + uidA));
+    }
+
+    function isValidReportRecord(data) {
+      return data.reporterUid is string && isValidId(data.reporterUid) &&
+             data.reportedUid is string && isValidId(data.reportedUid) &&
+             data.reporterUid != data.reportedUid &&
+             data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 100 &&
+             (!('details' in data) || (data.details is string && data.details.size() <= 500)) &&
+             data.sourceSurface in ['DISCOVER', 'SEARCH', 'CHAT', 'PROFILE'] &&
+             (!('matchId' in data) || isValidId(data.matchId)) &&
+             isValidTimestamp(data.createdAt);
     }
 
     // --- Collection Rules ---
@@ -575,6 +586,21 @@ service cloud.firestore {
 
       allow update: if false;
       allow delete: if isSignedIn() && isValidId(blockId) && existing().blockerUid == request.auth.uid;
+    }
+
+    // 10. User Moderation Reports (/reports/{reportId})
+    match /reports/{reportId} {
+      allow get, list: if isSignedIn() && existing().reporterUid == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(reportId) &&
+                       incoming().reporterUid == request.auth.uid &&
+                       incoming().keys().hasAll(['reporterUid', 'reportedUid', 'reason', 'sourceSurface', 'createdAt']) &&
+                       incoming().keys().hasOnly(['reporterUid', 'reportedUid', 'reason', 'details', 'sourceSurface', 'matchId', 'createdAt']) &&
+                       isValidReportRecord(incoming()) &&
+                       exists(/databases/$(database)/documents/publicProfiles/$(incoming().reportedUid));
+
+      allow update, delete: if false;
     }
   }
 }

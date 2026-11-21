@@ -1,6 +1,11 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,13 +48,16 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Gif
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -60,10 +68,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -96,6 +106,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -119,14 +130,15 @@ import com.example.model.UserPresence
 import com.example.ui.components.ChatBubble
 import com.example.ui.components.DayDividerPill
 import com.example.ui.components.DisappearingTimerSheetContent
+import com.example.ui.components.FullscreenIncomingCallDialog
 import com.example.ui.components.GifPickerSheetContent
 import com.example.ui.components.IcebreakerCoachSheetContent
 import com.example.ui.components.InAppCallOverlay
-import com.example.ui.components.IncomingCallBanner
 import com.example.ui.components.MediaViewerDialog
 import com.example.ui.components.PartnerProfileQuickSheet
 import com.example.ui.components.PartnerTypingBubble
 import com.example.ui.components.ProfileAvatarImage
+import com.example.ui.components.ReportUserDialog
 import com.example.ui.components.UnmatchOrBlockDialog
 import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.components.dayBucketLabel
@@ -136,6 +148,7 @@ import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
 import com.example.util.VerificationAnalyzer
+import com.example.util.VideoClipHelper
 import com.example.viewmodel.ChatViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -145,6 +158,15 @@ import java.util.Locale
 private const val MAX_CHAT_MESSAGE_LENGTH = 1000
 private const val TYPING_STALE_WINDOW_MS = 10_000L
 private const val TYPING_IDLE_DEBOUNCE_MS = 4_500L
+
+private class CaptureShortVideoContract : ActivityResultContracts.CaptureVideo() {
+    override fun createIntent(context: Context, input: Uri): Intent {
+        return super.createIntent(context, input).apply {
+            putExtra(MediaStore.EXTRA_DURATION_LIMIT, VideoClipHelper.MAX_VIDEO_DURATION_SEC.toInt())
+            putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 0)
+        }
+    }
+}
 
 @Composable
 fun ChatScreen(
@@ -156,6 +178,7 @@ fun ChatScreen(
     showBackButton: Boolean = true,
     onBack: () -> Unit = {},
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
+    onReportUser: (partnerId: String, partnerName: String, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -256,6 +279,7 @@ fun ChatScreen(
             onEndCall = { session, duration -> chatViewModel.endCall(session, duration) },
             onUnmatch = { chatViewModel.unmatch(onComplete = onBack) },
             onBlockUser = onBlockUser,
+            onReportUser = onReportUser,
             onRetry = { chatViewModel.retry() },
             onStatusMessage = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
             modifier = Modifier
@@ -308,6 +332,7 @@ fun ChatScreen(
     onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (matchId: String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
+    onReportUser: (partnerId: String, partnerName: String, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _, _ -> },
     onRetry: () -> Unit = {},
     onStatusMessage: (String) -> Unit = {},
     modifier: Modifier = Modifier
@@ -323,10 +348,15 @@ fun ChatScreen(
     var messageDraft by remember(matchId) { mutableStateOf("") }
     var showUnmatchDialog by remember { mutableStateOf(false) }
     var showBlockConfirm by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
     var showPartnerSheet by remember { mutableStateOf(false) }
     var showIcebreakerSheet by remember { mutableStateOf(false) }
     var showGifSheet by remember { mutableStateOf(false) }
     var showTimerSheet by remember { mutableStateOf(false) }
+    var showVideoOptionsSheet by remember { mutableStateOf(false) }
+    var pendingCaptureVideoUri by remember { mutableStateOf<Uri?>(null) }
+    var isProcessingVideo by remember { mutableStateOf(false) }
+    var handledCallIds by remember(matchId) { mutableStateOf(emptySet<String>()) }
     var viewOnceNextMedia by remember(matchId) { mutableStateOf(false) }
     var viewingMediaMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var expiredCleanupsSent by remember(matchId) { mutableStateOf(emptySet<String>()) }
@@ -463,6 +493,72 @@ fun ChatScreen(
                     onStatusMessage("Could not load selected photo.")
                 }
             }
+        }
+    }
+
+    fun processAndSendShortVideo(uri: Uri) {
+        if (participants.size != 2 || isProcessingVideo) return
+        isProcessingVideo = true
+        scope.launch {
+            val result = VideoClipHelper.prepareVideoForChat(context, uri)
+            isProcessingVideo = false
+            result.onSuccess { clip ->
+                val caption = messageDraft.trim()
+                dispatchRichMessage(
+                    matchId = matchId,
+                    participants = participants,
+                    type = "VIDEO",
+                    text = caption,
+                    mediaDataUrl = clip.dataUrl,
+                    mediaGifId = null,
+                    durationSec = clip.durationSec,
+                    disappearingSec = disappearingTtl,
+                    viewOnce = false,
+                    onSendMediaMessage = onSendMediaMessage,
+                    onSendMessage = onSendMessage
+                )
+                if (caption.isNotEmpty()) messageDraft = ""
+            }.onFailure { err ->
+                onStatusMessage(err.localizedMessage ?: "Unable to attach short video.")
+            }
+        }
+    }
+
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            processAndSendShortVideo(uri)
+        }
+    }
+
+    val captureShortVideoLauncher = rememberLauncherForActivityResult(
+        contract = CaptureShortVideoContract()
+    ) { saved ->
+        val uri = pendingCaptureVideoUri
+        pendingCaptureVideoUri = null
+        if (saved && uri != null) {
+            processAndSendShortVideo(uri)
+        }
+    }
+
+    fun launchShortVideoCapture() {
+        runCatching {
+            val (_, uri) = VideoClipHelper.createCaptureVideoUri(context)
+            pendingCaptureVideoUri = uri
+            captureShortVideoLauncher.launch(uri)
+        }.onFailure { err ->
+            onStatusMessage(err.localizedMessage ?: "Camera video capture unavailable on this device.")
+        }
+    }
+
+    val cameraVideoPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            launchShortVideoCapture()
+        } else {
+            onStatusMessage("Camera permission is needed to record a short video.")
         }
     }
 
@@ -760,6 +856,26 @@ fun ChatScreen(
                     )
 
                     AssistChip(
+                        onClick = { showReportDialog = true },
+                        modifier = Modifier.testTag("chat_report_button"),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Flag,
+                                contentDescription = stringResource(R.string.report_user_cd),
+                                tint = ChampagneGold,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "Report",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = ChampagneGold
+                            )
+                        }
+                    )
+
+                    AssistChip(
                         onClick = { showBlockConfirm = true },
                         modifier = Modifier.testTag("chat_block_button"),
                         leadingIcon = {
@@ -782,16 +898,22 @@ fun ChatScreen(
             }
         }
 
-        // Incoming Call Banner when partner is ringing this user
+        // Instant WhatsApp-style incoming call dialog when partner is ringing this user
         val incomingCall = activeCallSession?.takeIf {
-            it.status == "RINGING" && it.calleeUid == currentUserId
+            it.status == "RINGING" && it.calleeUid == currentUserId && it.id !in handledCallIds
         }
         if (incomingCall != null) {
-            IncomingCallBanner(
+            FullscreenIncomingCallDialog(
                 session = incomingCall,
                 partner = partner,
-                onAccept = { onAnswerCall(incomingCall) },
-                onDecline = { onDeclineCall(incomingCall) }
+                onAccept = {
+                    handledCallIds = handledCallIds + incomingCall.id
+                    onAnswerCall(incomingCall)
+                },
+                onDecline = {
+                    handledCallIds = handledCallIds + incomingCall.id
+                    onDeclineCall(incomingCall)
+                }
             )
         }
 
@@ -1157,6 +1279,28 @@ fun ChatScreen(
                         }
 
                         IconButton(
+                            onClick = { showVideoOptionsSheet = true },
+                            enabled = !isProcessingVideo,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("chat_video_button")
+                        ) {
+                            if (isProcessingVideo) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = CoralRose
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.VideoLibrary,
+                                    contentDescription = stringResource(R.string.chat_pick_video_cd),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        IconButton(
                             onClick = { showGifSheet = true },
                             modifier = Modifier
                                 .minimumInteractiveComponentSize()
@@ -1308,6 +1452,10 @@ fun ChatScreen(
                     showPartnerSheet = false
                     showUnmatchDialog = true
                 },
+                onReportClick = {
+                    showPartnerSheet = false
+                    showReportDialog = true
+                },
                 onBlockClick = {
                     showPartnerSheet = false
                     showBlockConfirm = true
@@ -1438,6 +1586,85 @@ fun ChatScreen(
             onUnmatchAndBlock = {
                 showUnmatchDialog = false
                 onBlockUser(thread.partnerId, partnerName)
+            }
+        )
+    }
+
+    if (showVideoOptionsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showVideoOptionsSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 28.dp)
+                    .testTag("short_video_options_sheet"),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Filled.VideoLibrary, contentDescription = null, tint = CoralRose)
+                    Text("Attach Short Video (Up to 20s)", style = MaterialTheme.typography.titleLarge)
+                }
+                Text(
+                    text = "Share a short clip up to 20 seconds directly inside chat.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FilledTonalButton(
+                    onClick = {
+                        showVideoOptionsSheet = false
+                        videoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("pick_short_video_option")
+                ) {
+                    Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Pick Video Clip (≤ 20s)")
+                }
+                OutlinedButton(
+                    onClick = {
+                        showVideoOptionsSheet = false
+                        val hasCam = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasCam) {
+                            launchShortVideoCapture()
+                        } else {
+                            cameraVideoPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("record_short_video_option")
+                ) {
+                    Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Record Short Video (≤ 20s)")
+                }
+            }
+        }
+    }
+
+    if (showReportDialog) {
+        ReportUserDialog(
+            targetName = partnerName,
+            onDismiss = { showReportDialog = false },
+            onSubmitReport = { reason, details, alsoBlock ->
+                showReportDialog = false
+                onReportUser(thread.partnerId, partnerName, reason, details, alsoBlock)
             }
         )
     }

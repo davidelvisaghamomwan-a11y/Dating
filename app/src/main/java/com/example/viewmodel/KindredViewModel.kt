@@ -521,12 +521,27 @@ class KindredViewModel(
 
     val globalIncomingCallAlert: StateFlow<IncomingCallAlert?> = combine(
         allMatchCallSessionsFlow,
-        dashboardState
-    ) { sessions, dash ->
+        matchesFlow,
+        allProfilesFlow
+    ) { sessions, matches, profiles ->
         val ringing = sessions.firstOrNull { it.status == "RINGING" && it.calleeUid == currentUserId }
             ?: return@combine null
-        val thread = (dash as? UiState.Success)?.data?.matches?.firstOrNull { it.match.id == ringing.matchId }
-            ?: return@combine null
+        val match = matches.firstOrNull { it.id == ringing.matchId }
+            ?: MatchRecord(
+                id = ringing.matchId,
+                participantUids = ringing.participantUids,
+                createdBy = ringing.callerUid
+            )
+        val partnerId = ringing.callerUid.takeIf { it.isNotBlank() }
+            ?: match.participantUids.firstOrNull { it != currentUserId }
+            ?: ""
+        val partnerProfile = profiles.firstOrNull { it.userId == partnerId }
+        val thread = MatchThreadItem(
+            match = match,
+            partnerId = partnerId,
+            partnerProfile = partnerProfile,
+            distanceKm = null
+        )
         IncomingCallAlert(session = ringing, thread = thread)
     }.stateIn(
         scope = viewModelScope,
@@ -1131,6 +1146,47 @@ class KindredViewModel(
                 _actionStatusMessage.value = "User unblocked"
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to unblock user"
+            }
+        }
+    }
+
+    fun reportUser(
+        reportedUid: String,
+        displayName: String,
+        reason: String,
+        details: String = "",
+        sourceSurface: String = "PROFILE",
+        matchId: String? = null,
+        alsoBlock: Boolean = false,
+        onReported: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.submitReport(
+                reportedUid = reportedUid,
+                reason = reason,
+                details = details,
+                sourceSurface = sourceSurface,
+                matchId = matchId
+            )
+            if (result.isSuccess && alsoBlock) {
+                repository.blockUser(reportedUid, "Reported: $reason")
+                val sorted = listOf(currentUserId, reportedUid).sorted()
+                val potentialMatchId = "${sorted[0]}_${sorted[1]}"
+                if (_selectedMatchId.value == potentialMatchId) {
+                    _selectedMatchId.value = null
+                }
+            }
+            _isBusy.value = false
+            result.onSuccess {
+                _actionStatusMessage.value = if (alsoBlock) {
+                    "Reported and blocked $displayName. Thank you for keeping Kindred safe."
+                } else {
+                    "Report submitted for $displayName. Our safety team will review it."
+                }
+                onReported()
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to submit report"
             }
         }
     }

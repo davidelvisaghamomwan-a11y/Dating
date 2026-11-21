@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -34,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Gif
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LocationOn
@@ -49,7 +52,9 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -60,6 +65,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +79,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -86,6 +93,7 @@ import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
+import com.example.util.VideoClipHelper
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -318,6 +326,11 @@ internal fun ChatBubble(
                         onOpenMedia = onOpenMedia
                     )
 
+                    "VIDEO" -> VideoMessageBody(
+                        message = message,
+                        onOpenMedia = onOpenMedia
+                    )
+
                     "VOICE" -> VoiceMessageBody(
                         message = message,
                         isMine = isMine,
@@ -332,7 +345,7 @@ internal fun ChatBubble(
                 }
 
                 if (message.text.isNotBlank()) {
-                    if (message.messageType in setOf("PHOTO", "VOICE", "GIF")) {
+                    if (message.messageType in setOf("PHOTO", "VIDEO", "VOICE", "GIF")) {
                         Spacer(modifier = Modifier.height(6.dp))
                     }
                     Text(
@@ -461,6 +474,114 @@ private fun PhotoMessageBody(
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (isMine) Color.White else MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(12.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoMessageBody(
+    message: ChatMessage,
+    onOpenMedia: (ChatMessage) -> Unit
+) {
+    val context = LocalContext.current
+    var thumbnailBitmap by remember(message.id, message.mediaDataUrl) { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(message.id, message.mediaDataUrl) {
+        if (!message.mediaDataUrl.isNullOrBlank()) {
+            thumbnailBitmap = VideoClipHelper.extractVideoThumbnail(
+                context = context,
+                messageId = message.id.ifBlank { "video_msg" },
+                mediaDataUrl = message.mediaDataUrl
+            )
+        }
+    }
+
+    val durationLabel = remember(message.mediaDurationSec) {
+        VideoClipHelper.formatDurationLabel(message.mediaDurationSec)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(185.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF1A1423))
+            .clickable { onOpenMedia(message) }
+            .testTag("video_bubble_${message.id}")
+    ) {
+        val thumb = thumbnailBitmap
+        if (thumb != null) {
+            Image(
+                bitmap = thumb.asImageBitmap(),
+                contentDescription = "Short video thumbnail",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f))
+            )
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.68f),
+            border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.85f)),
+            modifier = Modifier
+                .size(54.dp)
+                .align(Alignment.Center)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = "Play short video",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.65f),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.VideoLibrary,
+                    contentDescription = null,
+                    tint = CoralRose,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = "Short Video",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White
+                )
+            }
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.65f),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(8.dp)
+        ) {
+            Text(
+                text = durationLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
             )
         }
     }
@@ -617,7 +738,9 @@ private fun formatCountdownShort(seconds: Long): String {
 internal fun PartnerProfileQuickSheet(
     partner: PublicProfile,
     distanceKm: Double?,
+    onMessageClick: (() -> Unit)? = null,
     onUnmatchClick: (() -> Unit)? = null,
+    onReportClick: (() -> Unit)? = null,
     onBlockClick: (() -> Unit)? = null
 ) {
     val photos = remember(partner.userId, partner.photoDataUrl, partner.profilePhotos) {
@@ -781,7 +904,30 @@ internal fun PartnerProfileQuickSheet(
             }
         }
 
-        if (onUnmatchClick != null || onBlockClick != null) {
+        if (onMessageClick != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Button(
+                onClick = onMessageClick,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CoralRose,
+                    contentColor = Color.White
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("sheet_message_user_button")
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Message ${partner.displayName}", fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        if (onUnmatchClick != null || onReportClick != null || onBlockClick != null) {
             Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -802,6 +948,25 @@ internal fun PartnerProfileQuickSheet(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Unmatch")
+                    }
+                }
+                if (onReportClick != null) {
+                    OutlinedButton(
+                        onClick = onReportClick,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ChampagneGold),
+                        border = BorderStroke(1.dp, ChampagneGold.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("sheet_report_user_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Flag,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Report")
                     }
                 }
                 if (onBlockClick != null) {

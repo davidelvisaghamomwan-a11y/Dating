@@ -1,7 +1,11 @@
 package com.example.ui.components
 
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Base64
+import android.view.ViewGroup
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -63,9 +67,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.ai.AiIcebreakerService
@@ -77,6 +83,7 @@ import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
+import com.example.util.VideoClipHelper
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -465,7 +472,10 @@ internal fun MediaViewerDialog(
     message: ChatMessage,
     onDismiss: () -> Unit
 ) {
-    val bitmap = remember(message.mediaDataUrl) {
+    val context = LocalContext.current
+    val isVideo = message.messageType == "VIDEO"
+    val bitmap = remember(message.mediaDataUrl, isVideo) {
+        if (isVideo) return@remember null
         val raw = message.mediaDataUrl ?: return@remember null
         runCatching {
             val base64 = raw.substringAfter("base64,", raw)
@@ -473,6 +483,15 @@ internal fun MediaViewerDialog(
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
     }
+    val videoFile = remember(message.id, message.mediaDataUrl, isVideo) {
+        if (!isVideo) null
+        else VideoClipHelper.materializeVideoFile(
+            context = context,
+            messageId = message.id.ifBlank { "video_preview" },
+            mediaDataUrl = message.mediaDataUrl
+        )
+    }
+
     var remainingSec by remember(message.id) { mutableLongStateOf(if (message.viewOnce) 10L else 0L) }
     if (message.viewOnce) {
         LaunchedEffect(message.id) {
@@ -490,7 +509,9 @@ internal fun MediaViewerDialog(
     ) {
         Surface(
             color = Color.Black.copy(alpha = 0.94f),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (isVideo) Modifier.testTag("video_player_dialog") else Modifier)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -501,23 +522,61 @@ internal fun MediaViewerDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (message.viewOnce) {
-                        Surface(shape = CircleShape, color = ChampagneGold.copy(alpha = 0.25f)) {
-                            Text(
-                                text = "View once • ${remainingSec}s",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = ChampagneGold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
+                    when {
+                        message.viewOnce -> {
+                            Surface(shape = CircleShape, color = ChampagneGold.copy(alpha = 0.25f)) {
+                                Text(
+                                    text = "View once • ${remainingSec}s",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = ChampagneGold,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
                         }
-                    } else {
-                        Spacer(modifier = Modifier.width(1.dp))
+                        isVideo -> {
+                            Surface(shape = CircleShape, color = CoralRose.copy(alpha = 0.25f)) {
+                                Text(
+                                    text = "Short Video • ${VideoClipHelper.formatDurationLabel(message.mediaDurationSec)}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                        else -> Spacer(modifier = Modifier.width(1.dp))
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Filled.Close, contentDescription = "Close preview", tint = Color.White)
                     }
                 }
-                if (bitmap != null) {
+                if (isVideo && videoFile != null) {
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                val controller = MediaController(ctx).apply {
+                                    setAnchorView(this@apply)
+                                }
+                                setMediaController(controller)
+                                setVideoURI(Uri.fromFile(videoFile))
+                                setOnPreparedListener { mp ->
+                                    mp.isLooping = true
+                                    start()
+                                }
+                            }
+                        },
+                        onRelease = { view ->
+                            runCatching { view.stopPlayback() }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(420.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                    )
+                } else if (bitmap != null) {
                     Image(
                         bitmap = bitmap,
                         contentDescription = "Fullscreen chat photo",
@@ -526,6 +585,13 @@ internal fun MediaViewerDialog(
                             .fillMaxWidth()
                             .height(440.dp)
                             .clip(RoundedCornerShape(16.dp))
+                    )
+                } else if (isVideo) {
+                    Text(
+                        text = "Unable to decode short video clip.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(vertical = 32.dp)
                     )
                 }
                 if (message.text.isNotBlank()) {

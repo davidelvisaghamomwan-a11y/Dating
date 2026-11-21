@@ -38,6 +38,7 @@ import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
 import com.example.model.CallSession
 import com.example.model.TypingStatus
+import com.example.notifications.KindredBackgroundService
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
 import com.example.ui.components.LocationVerificationGate
@@ -51,12 +52,14 @@ import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.VerificationScreen
 import com.example.ui.theme.KindredTheme
+import com.example.update.AppUpdateChecker
 import com.example.util.FaceComparisonEngine
 import com.example.util.FaceDescriptor
 import com.example.util.FacePoint
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
 import com.example.util.ResolvedDeviceLocation
+import com.example.util.VideoClipHelper
 import com.google.firebase.Timestamp
 import java.util.Date
 import org.junit.Assert.assertEquals
@@ -1688,6 +1691,204 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("settings_update_card").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("check_updates_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_background_service_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_background_service_switch").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("settings_signing_sha256_text", useUnmergedTree = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `chat screen opens report dialog and submits reason and block toggle`() {
+        var reportedUid = ""
+        var reportedReason = ""
+        var reportedDetails = ""
+        var reportedAlsoBlock = false
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = sampleThread,
+                    messagesState = UiState.Success(emptyList()),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onUnmatch = {},
+                    onReportUser = { uid, _, reason, details, alsoBlock ->
+                        reportedUid = uid
+                        reportedReason = reason
+                        reportedDetails = details
+                        reportedAlsoBlock = alsoBlock
+                    }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("chat_report_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("report_user_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("report_reason_1").performClick()
+        composeTestRule.onNodeWithTag("report_details_input").performScrollTo().performTextInput("Spam links in chat")
+        composeTestRule.onNodeWithTag("report_also_block_switch").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("submit_report_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("bob_2", reportedUid)
+        assertEquals(KindredConstants.REPORT_REASONS[1], reportedReason)
+        assertEquals("Spam links in chat", reportedDetails)
+        assertTrue(reportedAlsoBlock)
+    }
+
+    @Test
+    fun `discover card report button opens report dialog and submits report`() {
+        var reportedUid = ""
+        var reportedReason = ""
+
+        val myProfile = PublicProfile(userId = "me", displayName = "Alex", age = 27)
+        val candidate = DiscoveryCandidate(
+            profile = PublicProfile(
+                userId = "bob_2",
+                displayName = "Elena",
+                age = 28,
+                cityLabel = "San Francisco",
+                country = "United States"
+            ),
+            distanceKm = 4.0
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                DiscoverScreen(
+                    myProfile = myProfile,
+                    privateUser = null,
+                    geoHashMeta = null,
+                    candidates = listOf(candidate),
+                    onSwipe = { _, _ -> },
+                    onReportUser = { c, reason, _, _ ->
+                        reportedUid = c.profile.userId
+                        reportedReason = reason
+                    },
+                    onRefreshLocation = {},
+                    onLocationError = {},
+                    onUpdateFilters = { _, _, _, _, _ -> },
+                    onNavigateToProfile = {},
+                    onNavigateToVerify = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("discover_report_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("report_user_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("submit_report_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("bob_2", reportedUid)
+        assertEquals(KindredConstants.REPORT_REASONS.first(), reportedReason)
+    }
+
+    @Test
+    fun `search profile tap opens full profile sheet with message action`() {
+        var messagedUserId = ""
+        val candidate = DiscoveryCandidate(
+            profile = PublicProfile(
+                userId = "u_maya",
+                displayName = "Maya",
+                age = 26,
+                cityLabel = "Toronto",
+                country = "Canada",
+                bio = "Architectural photographer & coffee enthusiast",
+                interests = listOf("Photography", "Coffee")
+            ),
+            distanceKm = 8.4
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ProfileSearchContent(
+                    searchableProfiles = listOf(candidate),
+                    onMessageProfile = { messagedUserId = it.userId }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("search_open_profile_u_maya").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("search_profile_detail_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("partner_profile_quick_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("sheet_message_user_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("u_maya", messagedUserId)
+    }
+
+    @Test
+    fun `video clip helper enforces 20s limit and chat renders VIDEO message and picker sheet`() {
+        assertTrue(VideoClipHelper.isDurationAllowed(1_000L))
+        assertTrue(VideoClipHelper.isDurationAllowed(20_000L))
+        assertFalse(VideoClipHelper.isDurationAllowed(0L))
+        assertFalse(VideoClipHelper.isDurationAllowed(20_001L))
+        assertEquals("0:15", VideoClipHelper.formatDurationLabel(15L))
+        assertEquals("0:20", VideoClipHelper.formatDurationLabel(25L))
+
+        val videoMsg = ChatMessage(
+            id = "v1",
+            matchId = sampleThread.match.id,
+            senderId = "alice_1",
+            participantUids = listOf("alice_1", "bob_2"),
+            messageType = "VIDEO",
+            mediaDataUrl = "",
+            mediaDurationSec = 14L,
+            text = "Sunset clip",
+            createdAt = Timestamp(Date())
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ChatScreen(
+                    currentUserId = "alice_1",
+                    thread = sampleThread,
+                    messagesState = UiState.Success(listOf(videoMsg)),
+                    showBackButton = false,
+                    onBack = {},
+                    onSendMessage = { _, _, _, _ -> },
+                    onUnmatch = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("video_bubble_v1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("chat_video_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("short_video_options_sheet").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pick_short_video_option").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("record_short_video_option").assertIsDisplayed()
+    }
+
+    @Test
+    fun `background service preferences and update auto-check throttling behave consistently`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        KindredNotificationHelper.ensureChannels(context)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        assertTrue(manager.getNotificationChannel(KindredNotificationHelper.CHANNEL_BACKGROUND_SERVICE) != null)
+        assertTrue(manager.getNotificationChannel(KindredNotificationHelper.CHANNEL_APP_UPDATES) != null)
+
+        KindredBackgroundService.setEnabled(context, false)
+        assertFalse(KindredBackgroundService.isEnabled(context))
+        KindredBackgroundService.setEnabled(context, true)
+        assertTrue(KindredBackgroundService.isEnabled(context))
+
+        val now = 1_700_000_000_000L
+        AppUpdateChecker.recordAutoCheckTimestamp(context, now)
+        assertFalse(AppUpdateChecker.shouldAutoCheckNow(context, now + 60_000L))
+        assertTrue(AppUpdateChecker.shouldAutoCheckNow(context, now + 5 * 60_000L + 1L))
     }
 
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)

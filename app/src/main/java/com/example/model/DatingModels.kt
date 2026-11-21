@@ -250,6 +250,19 @@ data class FcmTokenRecord(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
+@IgnoreExtraProperties
+data class ReportRecord(
+    @DocumentId val id: String = "",
+    val reporterUid: String = "",
+    val reportedUid: String = "",
+    val reason: String = "",
+    val details: String? = null,
+    val sourceSurface: String = "PROFILE",
+    val matchId: String? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
 sealed interface UiState<out T> {
     data object Loading : UiState<Nothing>
     data class Success<T>(val data: T) : UiState<T>
@@ -391,5 +404,13 @@ object KindredConstants {
             prompt = "Frame your face clearly and hold steady for liveness capture",
             hint = "Ensure only your face is in the frame during capture."
         )
+    )
+
+    val REPORT_REASONS = listOf(
+        "Harassment or abusive behavior",
+        "Spam, scam, or fake profile",
+        "Inappropriate photos or explicit content",
+        "Underage or misleading age",
+        "Safety concern outside Kindred"
     )
 }

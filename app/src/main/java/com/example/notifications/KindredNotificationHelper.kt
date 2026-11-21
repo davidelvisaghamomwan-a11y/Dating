@@ -21,14 +21,20 @@ object KindredNotificationHelper {
     const val CHANNEL_MATCHES = "kindred_matches"
     const val CHANNEL_MESSAGES = "kindred_messages"
     const val CHANNEL_CALLS = "kindred_calls"
+    const val CHANNEL_BACKGROUND_SERVICE = "kindred_background_sync"
+    const val CHANNEL_APP_UPDATES = "kindred_app_updates"
 
     const val TYPE_NEW_MATCH = "NEW_MATCH"
     const val TYPE_NEW_MESSAGE = "NEW_MESSAGE"
     const val TYPE_INCOMING_CALL = "INCOMING_CALL"
+    const val TYPE_APP_UPDATE = "APP_UPDATE"
 
     const val EXTRA_MATCH_ID = "extra_match_id"
     const val EXTRA_CALL_ID = "extra_call_id"
     const val EXTRA_NOTIFICATION_TYPE = "extra_notification_type"
+
+    const val NOTIFICATION_ID_BACKGROUND_SERVICE = 4201
+    const val NOTIFICATION_ID_APP_UPDATE = 4202
 
     @Volatile
     var activeMatchIdInForeground: String? = null
@@ -81,9 +87,28 @@ object KindredNotificationHelper {
             }
         }
 
+        val backgroundChannel = NotificationChannel(
+            CHANNEL_BACKGROUND_SERVICE,
+            context.getString(R.string.fcm_background_channel_name),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Keeps live incoming call & message alerts ready in the background"
+            setShowBadge(false)
+        }
+
+        val updatesChannel = NotificationChannel(
+            CHANNEL_APP_UPDATES,
+            context.getString(R.string.fcm_updates_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Alerts when a new Kindred APK release is published on GitHub"
+        }
+
         manager.createNotificationChannel(matchesChannel)
         manager.createNotificationChannel(messagesChannel)
         manager.createNotificationChannel(callsChannel)
+        manager.createNotificationChannel(backgroundChannel)
+        manager.createNotificationChannel(updatesChannel)
     }
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -142,12 +167,11 @@ object KindredNotificationHelper {
             .setContentIntent(pendingIntent)
             .build()
 
-        runCatching {
-            NotificationManagerCompat.from(context).notify(
-                ("match_${matchId ?: partnerName}").hashCode(),
-                notification
-            )
-        }
+        postNotificationSafely(
+            context = context,
+            notificationId = ("match_${matchId ?: partnerName}").hashCode(),
+            notification = notification
+        )
     }
 
     fun showMessageNotification(
@@ -177,12 +201,11 @@ object KindredNotificationHelper {
             .setContentIntent(pendingIntent)
             .build()
 
-        runCatching {
-            NotificationManagerCompat.from(context).notify(
-                ("msg_${matchId ?: senderName}").hashCode(),
-                notification
-            )
-        }
+        postNotificationSafely(
+            context = context,
+            notificationId = ("msg_${matchId ?: senderName}").hashCode(),
+            notification = notification
+        )
     }
 
     private val activeCallNotificationIds = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
@@ -228,9 +251,11 @@ object KindredNotificationHelper {
             .setFullScreenIntent(pendingIntent, true)
             .build()
 
-        runCatching {
-            NotificationManagerCompat.from(context).notify(notificationId, notification)
-        }
+        postNotificationSafely(
+            context = context,
+            notificationId = notificationId,
+            notification = notification
+        )
     }
 
     fun cancelIncomingCallNotification(context: Context, callId: String? = null) {
@@ -252,6 +277,87 @@ object KindredNotificationHelper {
     }
 
     fun incomingCallNotificationId(callId: String): Int = ("call_$callId").hashCode()
+
+    fun buildBackgroundServiceNotification(context: Context): android.app.Notification {
+        ensureChannels(context)
+        val launchIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            NOTIFICATION_ID_BACKGROUND_SERVICE,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(context, CHANNEL_BACKGROUND_SERVICE)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Kindred background sync active")
+            .setContentText("Listening for instant incoming calls and live messages")
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setSilent(true)
+            .setContentIntent(pendingIntent)
+            .build()
+    }
+
+    fun showAppUpdateNotification(
+        context: Context,
+        tagName: String,
+        title: String,
+        installUrl: String
+    ) {
+        if (!hasNotificationPermission(context)) return
+        ensureChannels(context)
+        val viewIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(installUrl)).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            NOTIFICATION_ID_APP_UPDATE,
+            viewIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_APP_UPDATES)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Kindred Update Ready ($tagName)")
+            .setContentText("$title is available on GitHub. Tap to download and install.")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        postNotificationSafely(
+            context = context,
+            notificationId = NOTIFICATION_ID_APP_UPDATE,
+            notification = notification
+        )
+    }
+
+    private fun postNotificationSafely(
+        context: Context,
+        notificationId: Int,
+        notification: android.app.Notification
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        try {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+        } catch (_: SecurityException) {
+            // Permission revoked at runtime while posting notification.
+        }
+    }
+
+    fun cancelAppUpdateNotification(context: Context) {
+        runCatching {
+            NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID_APP_UPDATE)
+        }
+    }
 
     fun tokenDocumentId(token: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())

@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,9 +21,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -67,6 +72,7 @@ import com.example.R
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
+import com.example.notifications.KindredBackgroundService
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
@@ -421,9 +427,87 @@ fun SettingsScreen(
                     }
                 }
 
+                BackgroundCallsCard()
+
                 AppUpdatesCard()
 
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackgroundCallsCard() {
+    val context = LocalContext.current
+    var bgEnabled by remember { mutableStateOf(KindredBackgroundService.isEnabled(context)) }
+
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier.testTag("settings_background_service_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.NotificationsActive,
+                    contentDescription = null,
+                    tint = EmeraldMint
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Background Live Calls & Sync", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = if (bgEnabled) "Active • Listening while minimized" else "Paused when app is closed",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (bgEnabled) EmeraldMint else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = bgEnabled,
+                    onCheckedChange = { checked ->
+                        bgEnabled = checked
+                        KindredBackgroundService.setEnabled(context, checked)
+                    },
+                    modifier = Modifier.testTag("settings_background_service_switch")
+                )
+            }
+
+            Text(
+                text = "Keeps Kindred connected in the background so incoming voice and video calls ring and appear immediately without opening the app manually.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedButton(
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                        )
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("settings_battery_optimization_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.BatterySaver,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.size(6.dp))
+                Text("Allow Unrestricted Battery Usage")
             }
         }
     }
@@ -437,6 +521,7 @@ private fun AppUpdatesCard() {
     var aiStudioInput by remember { mutableStateOf(AppUpdateChecker.getConfiguredAiStudioUrl(context)) }
     var isChecking by remember { mutableStateOf(false) }
     var checkResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    val signingSha256 = remember(context) { AppUpdateChecker.getAppSigningSha256(context) }
 
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -616,6 +701,47 @@ private fun AppUpdatesCard() {
                     )
                 }
                 null -> Unit
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Security,
+                            contentDescription = null,
+                            tint = EmeraldMint,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "App Signing & Google Play Protect",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Text(
+                        text = "SHA-256: $signingSha256",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("settings_signing_sha256_text")
+                    )
+                    Text(
+                        text = "Install consistently signed release APKs (kindred-release.apk) from the same signing certificate to avoid unrecognized debug build prompts.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
