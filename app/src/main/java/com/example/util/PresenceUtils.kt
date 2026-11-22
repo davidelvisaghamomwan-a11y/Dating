@@ -8,12 +8,15 @@ import java.util.Locale
 data class PresenceDisplayState(
     val isOnline: Boolean,
     val label: String,
-    val isKnown: Boolean
+    val isKnown: Boolean,
+    val isRecentlyLeft: Boolean = false,
+    val isHidden: Boolean = false
 )
 
 object PresenceUtils {
     const val HEARTBEAT_INTERVAL_MS = 45_000L
     const val ONLINE_STALE_THRESHOLD_MS = 120_000L
+    const val RECENTLY_LEFT_WINDOW_MS = 30 * 60_000L
     const val UI_TICKER_INTERVAL_MS = 30_000L
 
     fun resolvePresenceDisplay(
@@ -25,6 +28,16 @@ object PresenceUtils {
                 isOnline = false,
                 label = "Offline",
                 isKnown = false
+            )
+        }
+
+        if (presence.hideOnlineStatus) {
+            return PresenceDisplayState(
+                isOnline = false,
+                label = "Status hidden",
+                isKnown = true,
+                isRecentlyLeft = false,
+                isHidden = true
             )
         }
 
@@ -65,7 +78,8 @@ object PresenceUtils {
         return PresenceDisplayState(
             isOnline = false,
             label = label,
-            isKnown = true
+            isKnown = true,
+            isRecentlyLeft = elapsedMs <= RECENTLY_LEFT_WINDOW_MS
         )
     }
 }

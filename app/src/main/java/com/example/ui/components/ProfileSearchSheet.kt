@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -60,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.model.DiscoveryCandidate
+import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
@@ -72,6 +74,9 @@ fun ProfileSearchSheet(
     onMessageProfile: (PublicProfile) -> Unit,
     onReportProfile: (profile: PublicProfile, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
     onBlockProfile: (PublicProfile) -> Unit = {},
+    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
+    onFriendAction: ((PublicProfile, FriendStatus) -> Unit)? = null,
+    onOpenFullProfile: ((PublicProfile) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -85,6 +90,9 @@ fun ProfileSearchSheet(
             onMessageProfile = onMessageProfile,
             onReportProfile = onReportProfile,
             onBlockProfile = onBlockProfile,
+            friendStatusForUid = friendStatusForUid,
+            onFriendAction = onFriendAction,
+            onOpenFullProfile = onOpenFullProfile,
             onClose = onDismiss
         )
     }
@@ -97,6 +105,9 @@ fun ProfileSearchContent(
     onMessageProfile: (PublicProfile) -> Unit,
     onReportProfile: (profile: PublicProfile, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
     onBlockProfile: (PublicProfile) -> Unit = {},
+    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
+    onFriendAction: ((PublicProfile, FriendStatus) -> Unit)? = null,
+    onOpenFullProfile: ((PublicProfile) -> Unit)? = null,
     onClose: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -145,6 +156,7 @@ fun ProfileSearchContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .padding(horizontal = 20.dp)
             .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -318,7 +330,14 @@ fun ProfileSearchContent(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { inspectingCandidate = candidate }
+                                    .clickable {
+                                        if (onOpenFullProfile != null) {
+                                            onClose()
+                                            onOpenFullProfile(profile)
+                                        } else {
+                                            inspectingCandidate = candidate
+                                        }
+                                    }
                                     .testTag("search_open_profile_${profile.userId}"),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -336,8 +355,9 @@ fun ProfileSearchContent(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        val flag = profile.flagEmoji()
                                         Text(
-                                            text = "${profile.displayName}, ${profile.age}",
+                                            text = if (flag.isNotBlank()) "${profile.displayName}, ${profile.age} $flag" else "${profile.displayName}, ${profile.age}",
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
@@ -451,6 +471,7 @@ fun ProfileSearchContent(
     }
 
     inspectingCandidate?.let { candidate ->
+        val status = friendStatusForUid(candidate.profile.userId)
         ModalBottomSheet(
             onDismissRequest = { inspectingCandidate = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -460,6 +481,15 @@ fun ProfileSearchContent(
                 PartnerProfileQuickSheet(
                     partner = candidate.profile,
                     distanceKm = candidate.distanceKm.takeIf { it > 0.0 },
+                    friendStatus = status,
+                    onFriendAction = onFriendAction?.let { cb -> { cb(candidate.profile, status) } },
+                    onOpenFullProfile = onOpenFullProfile?.let { cb ->
+                        {
+                            inspectingCandidate = null
+                            onClose()
+                            cb(candidate.profile)
+                        }
+                    },
                     onMessageClick = {
                         inspectingCandidate = null
                         onMessageProfile(candidate.profile)

@@ -87,6 +87,26 @@ class KindredMessagingService : FirebaseMessagingService() {
                 )
             }
 
+            KindredNotificationHelper.TYPE_FRIEND_REQUEST -> {
+                KindredNotificationHelper.showSocialNotification(
+                    context = applicationContext,
+                    title = title ?: "New friend request",
+                    body = body ?: "$senderName sent you a friend request on Kindred",
+                    notificationType = KindredNotificationHelper.TYPE_FRIEND_REQUEST,
+                    tagKey = "fr_${senderId ?: senderName}"
+                )
+            }
+
+            KindredNotificationHelper.TYPE_PROFILE_LIKE, "LIKE" -> {
+                KindredNotificationHelper.showSocialNotification(
+                    context = applicationContext,
+                    title = title ?: "Someone liked your profile!",
+                    body = body ?: "$senderName liked your profile on Kindred",
+                    notificationType = KindredNotificationHelper.TYPE_PROFILE_LIKE,
+                    tagKey = "like_${senderId ?: senderName}"
+                )
+            }
+
             else -> {
                 if (!body.isNullOrBlank() &&
                     !KindredNotificationHelper.shouldSuppressForegroundMessageNotification(matchId)

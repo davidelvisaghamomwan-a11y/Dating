@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,6 +42,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -48,6 +50,7 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Gif
 import androidx.compose.material.icons.filled.Lock
@@ -55,8 +58,10 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
@@ -120,6 +125,7 @@ import com.example.communication.VoicePermissionHelper
 import com.example.data.KindredRepository
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
+import com.example.model.CallVideoFrame
 import com.example.model.ChatMessage
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
@@ -146,12 +152,15 @@ import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
+import com.example.util.MediaDownloadHelper
+import com.example.util.PreparedVideoUpload
 import com.example.util.PresenceUtils
 import com.example.util.VerificationAnalyzer
 import com.example.util.VideoClipHelper
 import com.example.viewmodel.ChatViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -159,11 +168,10 @@ private const val MAX_CHAT_MESSAGE_LENGTH = 1000
 private const val TYPING_STALE_WINDOW_MS = 10_000L
 private const val TYPING_IDLE_DEBOUNCE_MS = 4_500L
 
-private class CaptureShortVideoContract : ActivityResultContracts.CaptureVideo() {
+private class CaptureUnlimitedVideoContract : ActivityResultContracts.CaptureVideo() {
     override fun createIntent(context: Context, input: Uri): Intent {
         return super.createIntent(context, input).apply {
-            putExtra(MediaStore.EXTRA_DURATION_LIMIT, VideoClipHelper.MAX_VIDEO_DURATION_SEC.toInt())
-            putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 0)
+            putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
         }
     }
 }
@@ -204,6 +212,7 @@ fun ChatScreen(
     val partnerTyping by chatViewModel.partnerTyping.collectAsStateWithLifecycle()
     val activeCallSession by chatViewModel.activeCallSession.collectAsStateWithLifecycle()
     val activeCallAudioChunks by chatViewModel.activeCallAudioChunks.collectAsStateWithLifecycle()
+    val activeCallVideoFrames by chatViewModel.activeCallVideoFrames.collectAsStateWithLifecycle()
     val icebreakerAiState by chatViewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusError by chatViewModel.statusError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -242,6 +251,7 @@ fun ChatScreen(
             partnerTyping = partnerTyping,
             activeCallSession = activeCallSession,
             activeCallAudioChunks = activeCallAudioChunks,
+            activeCallVideoFrames = activeCallVideoFrames,
             icebreakerAiState = icebreakerAiState,
             showBackButton = showBackButton,
             onBack = onBack,
@@ -260,9 +270,29 @@ fun ChatScreen(
                     viewOnce = viewOnce
                 )
             },
+            onSendRichMessageWithReply = { _, participants, type, text, mediaDataUrl, mediaGifId, durationSec, disappearingSec, viewOnce, preparedVideo, replyTo ->
+                chatViewModel.sendMessage(
+                    participantUids = participants,
+                    text = text,
+                    messageType = type,
+                    mediaDataUrl = mediaDataUrl,
+                    mediaGifId = mediaGifId,
+                    mediaDurationSec = durationSec,
+                    disappearingSeconds = disappearingSec,
+                    viewOnce = viewOnce,
+                    preparedVideo = preparedVideo,
+                    replyToMessageId = replyTo?.id,
+                    replyToSenderId = replyTo?.senderId,
+                    replyToText = replyTo?.text?.takeIf { it.isNotBlank() } ?: replyTo?.messageType,
+                    replyToType = replyTo?.messageType
+                )
+            },
             onMarkMessagesRead = { _, ids -> chatViewModel.markMessagesAsRead(ids) },
             onMarkViewOnceOpened = { _, msgId -> chatViewModel.markViewOnceOpened(msgId) },
             onDeleteExpiredMessage = { _, msgId -> chatViewModel.deleteExpiredMessage(msgId) },
+            onDeleteMessageForMe = { _, msgId -> chatViewModel.deleteMessageForMe(msgId) },
+            onUnsendMessage = { _, msgId, isLast -> chatViewModel.unsendMessage(msgId, isLast) },
+            onResolveVideoFile = { msg -> chatViewModel.resolveMessageVideoFile(context, msg) },
             onTypingChanged = { _, isTyping -> chatViewModel.setTypingStatus(isTyping) },
             onUpdateDisappearingTimer = { _, ttl -> chatViewModel.updateDisappearingTimer(ttl) },
             onGenerateAiIcebreakers = { tone -> chatViewModel.generateAiIcebreakers(partnerProfile, tone) },
@@ -275,6 +305,9 @@ fun ChatScreen(
             onToggleCallCamera = { chatViewModel.toggleCallCamera(it) },
             onSendCallAudioChunk = { session, seq, sr, b64 ->
                 chatViewModel.sendCallAudioChunk(session, seq, sr, b64)
+            },
+            onSendCallVideoFrame = { session, seq, frameB64 ->
+                chatViewModel.sendCallVideoFrame(session, seq, frameB64)
             },
             onEndCall = { session, duration -> chatViewModel.endCall(session, duration) },
             onUnmatch = { chatViewModel.unmatch(onComplete = onBack) },
@@ -300,6 +333,7 @@ fun ChatScreen(
     partnerTyping: TypingStatus? = null,
     activeCallSession: CallSession? = null,
     activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
+    activeCallVideoFrames: List<CallVideoFrame> = emptyList(),
     icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     showBackButton: Boolean = true,
     onBack: () -> Unit,
@@ -317,9 +351,27 @@ fun ChatScreen(
             viewOnce: Boolean
         ) -> Unit
     )? = null,
+    onSendRichMessageWithReply: (
+        (
+            matchId: String,
+            participantUids: List<String>,
+            messageType: String,
+            text: String,
+            mediaDataUrl: String?,
+            mediaGifId: String?,
+            durationSec: Long,
+            disappearingSec: Long,
+            viewOnce: Boolean,
+            preparedVideo: PreparedVideoUpload?,
+            replyTo: ChatMessage?
+        ) -> Unit
+    )? = null,
     onMarkMessagesRead: (matchId: String, messageIds: List<String>) -> Unit = { _, _ -> },
     onMarkViewOnceOpened: (matchId: String, messageId: String) -> Unit = { _, _ -> },
     onDeleteExpiredMessage: (matchId: String, messageId: String) -> Unit = { _, _ -> },
+    onDeleteMessageForMe: (matchId: String, messageId: String) -> Unit = { _, _ -> },
+    onUnsendMessage: (matchId: String, messageId: String, isLastMessage: Boolean) -> Unit = { _, _, _ -> },
+    onResolveVideoFile: (suspend (ChatMessage) -> Result<File>)? = null,
     onTypingChanged: (matchId: String, isTyping: Boolean) -> Unit = { _, _ -> },
     onUpdateDisappearingTimer: (matchId: String, ttlSeconds: Long) -> Unit = { _, _ -> },
     onGenerateAiIcebreakers: (tone: String) -> Unit = {},
@@ -329,23 +381,30 @@ fun ChatScreen(
     onToggleCallMute: (CallSession) -> Unit = {},
     onToggleCallCamera: (CallSession) -> Unit = {},
     onSendCallAudioChunk: (session: CallSession, seq: Long, sampleRateHz: Int, audioBase64: String) -> Unit = { _, _, _, _ -> },
+    onSendCallVideoFrame: (session: CallSession, seq: Long, frameBase64: String) -> Unit = { _, _, _ -> },
     onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (matchId: String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
     onReportUser: (partnerId: String, partnerName: String, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _, _ -> },
     onRetry: () -> Unit = {},
     onStatusMessage: (String) -> Unit = {},
+    onOpenPartnerFullProfile: ((PublicProfile) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val partner = thread.partnerProfile
     val partnerName = partner?.displayName ?: "this user"
+    val partnerFlag = partner?.flagEmoji().orEmpty()
     val matchId = thread.match.id
     val participants = thread.match.participantUids
     val disappearingTtl = thread.match.disappearingTtlSeconds
 
     var messageDraft by remember(matchId) { mutableStateOf("") }
+    var replyingToMessage by remember(matchId) { mutableStateOf<ChatMessage?>(null) }
+    var actionTargetMessage by remember(matchId) { mutableStateOf<ChatMessage?>(null) }
+    var showMessageSearchBar by remember(matchId) { mutableStateOf(false) }
+    var messageSearchQuery by remember(matchId) { mutableStateOf("") }
     var showUnmatchDialog by remember { mutableStateOf(false) }
     var showBlockConfirm by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
@@ -393,6 +452,7 @@ fun ChatScreen(
                 if (recordingSeconds >= 25L) {
                     voiceRecorder.stopAndEncode().onSuccess { clip ->
                         isRecordingVoice = false
+                        val activeReply = replyingToMessage
                         dispatchRichMessage(
                             matchId = matchId,
                             participants = participants,
@@ -403,9 +463,13 @@ fun ChatScreen(
                             durationSec = clip.durationSec,
                             disappearingSec = disappearingTtl,
                             viewOnce = false,
+                            preparedVideo = null,
+                            replyTo = activeReply,
+                            onSendRichMessageWithReply = onSendRichMessageWithReply,
                             onSendMediaMessage = onSendMediaMessage,
                             onSendMessage = onSendMessage
                         )
+                        replyingToMessage = null
                     }.onFailure { err ->
                         isRecordingVoice = false
                         onStatusMessage(err.localizedMessage ?: "Recording stopped")
@@ -453,9 +517,14 @@ fun ChatScreen(
         }
     }
 
-    // Purge & hide expired disappearing messages
-    val visibleMessages = remember(rawMessages, nowMillis) {
-        rawMessages.filter { !it.isExpiredAt(nowMillis) }
+    // Purge & hide expired disappearing messages + filter by search & delete-for-me
+    val visibleMessages = remember(rawMessages, nowMillis, messageSearchQuery, currentUserId) {
+        val q = messageSearchQuery.trim()
+        rawMessages.filter { msg ->
+            !msg.isExpiredAt(nowMillis) &&
+                !msg.isDeletedFor(currentUserId) &&
+                (q.isBlank() || msg.text.contains(q, ignoreCase = true))
+        }
     }
     LaunchedEffect(rawMessages, nowMillis) {
         rawMessages.filter { msg ->
@@ -463,6 +532,74 @@ fun ChatScreen(
         }.forEach { expired ->
             expiredCleanupsSent = expiredCleanupsSent + expired.id
             onDeleteExpiredMessage(matchId, expired.id)
+        }
+    }
+
+    fun sendOrDispatch(
+        type: String,
+        text: String,
+        mediaDataUrl: String? = null,
+        mediaGifId: String? = null,
+        durationSec: Long = 0L,
+        viewOnce: Boolean = false,
+        preparedVideo: PreparedVideoUpload? = null
+    ) {
+        val activeReply = replyingToMessage
+        dispatchRichMessage(
+            matchId = matchId,
+            participants = participants,
+            type = type,
+            text = text,
+            mediaDataUrl = mediaDataUrl,
+            mediaGifId = mediaGifId,
+            durationSec = durationSec,
+            disappearingSec = disappearingTtl,
+            viewOnce = viewOnce,
+            preparedVideo = preparedVideo,
+            replyTo = activeReply,
+            onSendRichMessageWithReply = onSendRichMessageWithReply,
+            onSendMediaMessage = onSendMediaMessage,
+            onSendMessage = onSendMessage
+        )
+        replyingToMessage = null
+    }
+
+    fun downloadChatMedia(msg: ChatMessage) {
+        scope.launch {
+            onStatusMessage("Saving media to Downloads / Gallery…")
+            if (msg.messageType == "PHOTO" && !msg.mediaDataUrl.isNullOrBlank()) {
+                MediaDownloadHelper.saveImageToDevice(
+                    context = context,
+                    mediaDataUrl = msg.mediaDataUrl,
+                    fileNamePrefix = "Kindred_${msg.id.take(8)}"
+                ).onSuccess {
+                    onStatusMessage("Photo saved to Pictures/Kindred")
+                }.onFailure { err ->
+                    onStatusMessage(err.localizedMessage ?: "Failed to save photo")
+                }
+            } else if (msg.messageType == "VIDEO") {
+                val resolvedResult = if (onResolveVideoFile != null) {
+                    onResolveVideoFile(msg)
+                } else {
+                    val file = VideoClipHelper.materializeVideoFile(context, msg.id, msg.mediaDataUrl)
+                    if (file != null) Result.success(file) else Result.failure(IllegalStateException("Video unavailable"))
+                }
+                resolvedResult.onSuccess { file ->
+                    MediaDownloadHelper.saveVideoFileToDevice(
+                        context = context,
+                        sourceFile = file,
+                        fileNamePrefix = "Kindred_Video_${msg.id.take(8)}"
+                    ).onSuccess {
+                        onStatusMessage("Video saved to Movies/Kindred")
+                    }.onFailure { err ->
+                        onStatusMessage(err.localizedMessage ?: "Failed to save video")
+                    }
+                }.onFailure { err ->
+                    onStatusMessage(err.localizedMessage ?: "Could not fetch video for download")
+                }
+            } else {
+                onStatusMessage("No downloadable media on this message")
+            }
         }
     }
 
@@ -474,18 +611,11 @@ fun ChatScreen(
                 val dataUrl = VerificationAnalyzer.compressUriToDataUrl(context, uri)
                 if (dataUrl != null) {
                     val caption = messageDraft.trim()
-                    dispatchRichMessage(
-                        matchId = matchId,
-                        participants = participants,
+                    sendOrDispatch(
                         type = "PHOTO",
                         text = caption,
                         mediaDataUrl = dataUrl,
-                        mediaGifId = null,
-                        durationSec = 0L,
-                        disappearingSec = disappearingTtl,
-                        viewOnce = viewOnceNextMedia,
-                        onSendMediaMessage = onSendMediaMessage,
-                        onSendMessage = onSendMessage
+                        viewOnce = viewOnceNextMedia
                     )
                     if (caption.isNotEmpty()) messageDraft = ""
                     viewOnceNextMedia = false
@@ -496,30 +626,24 @@ fun ChatScreen(
         }
     }
 
-    fun processAndSendShortVideo(uri: Uri) {
+    fun processAndSendVideo(uri: Uri) {
         if (participants.size != 2 || isProcessingVideo) return
         isProcessingVideo = true
         scope.launch {
-            val result = VideoClipHelper.prepareVideoForChat(context, uri)
+            val result = VideoClipHelper.prepareVideoForUpload(context, uri)
             isProcessingVideo = false
             result.onSuccess { clip ->
                 val caption = messageDraft.trim()
-                dispatchRichMessage(
-                    matchId = matchId,
-                    participants = participants,
+                sendOrDispatch(
                     type = "VIDEO",
                     text = caption,
-                    mediaDataUrl = clip.dataUrl,
-                    mediaGifId = null,
+                    mediaDataUrl = clip.inlineDataUrl,
                     durationSec = clip.durationSec,
-                    disappearingSec = disappearingTtl,
-                    viewOnce = false,
-                    onSendMediaMessage = onSendMediaMessage,
-                    onSendMessage = onSendMessage
+                    preparedVideo = clip
                 )
                 if (caption.isNotEmpty()) messageDraft = ""
             }.onFailure { err ->
-                onStatusMessage(err.localizedMessage ?: "Unable to attach short video.")
+                onStatusMessage(err.localizedMessage ?: "Unable to attach video.")
             }
         }
     }
@@ -528,25 +652,25 @@ fun ChatScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            processAndSendShortVideo(uri)
+            processAndSendVideo(uri)
         }
     }
 
-    val captureShortVideoLauncher = rememberLauncherForActivityResult(
-        contract = CaptureShortVideoContract()
+    val captureUnlimitedVideoLauncher = rememberLauncherForActivityResult(
+        contract = CaptureUnlimitedVideoContract()
     ) { saved ->
         val uri = pendingCaptureVideoUri
         pendingCaptureVideoUri = null
         if (saved && uri != null) {
-            processAndSendShortVideo(uri)
+            processAndSendVideo(uri)
         }
     }
 
-    fun launchShortVideoCapture() {
+    fun launchVideoCapture() {
         runCatching {
             val (_, uri) = VideoClipHelper.createCaptureVideoUri(context)
             pendingCaptureVideoUri = uri
-            captureShortVideoLauncher.launch(uri)
+            captureUnlimitedVideoLauncher.launch(uri)
         }.onFailure { err ->
             onStatusMessage(err.localizedMessage ?: "Camera video capture unavailable on this device.")
         }
@@ -556,9 +680,9 @@ fun ChatScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            launchShortVideoCapture()
+            launchVideoCapture()
         } else {
-            onStatusMessage("Camera permission is needed to record a short video.")
+            onStatusMessage("Camera permission is needed to record a video.")
         }
     }
 
@@ -579,18 +703,9 @@ fun ChatScreen(
     fun submitDraft() {
         val clean = messageDraft.trim()
         if (clean.isNotEmpty() && participants.size == 2) {
-            dispatchRichMessage(
-                matchId = matchId,
-                participants = participants,
+            sendOrDispatch(
                 type = "TEXT",
-                text = clean,
-                mediaDataUrl = null,
-                mediaGifId = null,
-                durationSec = 0L,
-                disappearingSec = disappearingTtl,
-                viewOnce = false,
-                onSendMediaMessage = onSendMediaMessage,
-                onSendMessage = onSendMessage
+                text = clean
             )
             messageDraft = ""
             onTypingChanged(matchId, false)
@@ -601,6 +716,7 @@ fun ChatScreen(
         modifier = modifier
             .fillMaxSize()
             .imePadding()
+            .navigationBarsPadding()
             .testTag("chat_screen")
     ) {
         // Real-time Chat Header + Quick Safety/Timer Strip
@@ -671,7 +787,14 @@ fun ChatScreen(
                                 horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 Text(
-                                    text = partner?.let { "${it.displayName}, ${it.age}" } ?: "Kindred Match",
+                                    text = buildString {
+                                        if (partner != null) {
+                                            append("${partner.displayName}, ${partner.age}")
+                                            if (partnerFlag.isNotBlank()) append(" $partnerFlag")
+                                        } else {
+                                            append("Kindred Match")
+                                        }
+                                    },
                                     style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -856,6 +979,23 @@ fun ChatScreen(
                     )
 
                     AssistChip(
+                        onClick = {
+                            showMessageSearchBar = !showMessageSearchBar
+                            if (!showMessageSearchBar) messageSearchQuery = ""
+                        },
+                        modifier = Modifier.testTag("chat_search_messages_button"),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Search,
+                                contentDescription = "Search messages",
+                                tint = if (showMessageSearchBar) CoralRose else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = { Text("Search", style = MaterialTheme.typography.labelSmall) }
+                    )
+
+                    AssistChip(
                         onClick = { showReportDialog = true },
                         modifier = Modifier.testTag("chat_report_button"),
                         leadingIcon = {
@@ -893,6 +1033,36 @@ fun ChatScreen(
                                 color = MaterialTheme.colorScheme.error
                             )
                         }
+                    )
+                }
+
+                if (showMessageSearchBar) {
+                    OutlinedTextField(
+                        value = messageSearchQuery,
+                        onValueChange = { messageSearchQuery = it },
+                        placeholder = { Text("Search messages in conversation…") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    if (messageSearchQuery.isNotEmpty()) {
+                                        messageSearchQuery = ""
+                                    } else {
+                                        showMessageSearchBar = false
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                            .testTag("chat_message_search_input")
                     )
                 }
             }
@@ -1043,18 +1213,9 @@ fun ChatScreen(
                                         AssistChip(
                                             onClick = {
                                                 if (participants.size == 2) {
-                                                    dispatchRichMessage(
-                                                        matchId = matchId,
-                                                        participants = participants,
+                                                    sendOrDispatch(
                                                         type = "ICEBREAKER",
-                                                        text = suggestion.prompt,
-                                                        mediaDataUrl = null,
-                                                        mediaGifId = null,
-                                                        durationSec = 0L,
-                                                        disappearingSec = disappearingTtl,
-                                                        viewOnce = false,
-                                                        onSendMediaMessage = onSendMediaMessage,
-                                                        onSendMessage = onSendMessage
+                                                        text = suggestion.prompt
                                                     )
                                                 }
                                             },
@@ -1123,6 +1284,7 @@ fun ChatScreen(
                                     showPartnerAvatar = !isMine && isLastInCluster,
                                     partner = partner,
                                     partnerId = thread.partnerId,
+                                    currentUserId = currentUserId,
                                     nowMillis = nowMillis,
                                     playingVoiceMessageId = playingVoiceId,
                                     onOpenMedia = { mediaMsg ->
@@ -1147,7 +1309,10 @@ fun ChatScreen(
                                             )
                                             playingVoiceId = if (started) voiceMsg.id else null
                                         }
-                                    }
+                                    },
+                                    onMessageActions = { actionTargetMessage = it },
+                                    onReplyMessage = { replyingToMessage = it },
+                                    onDownloadMedia = { downloadChatMedia(it) }
                                 )
                             }
 
@@ -1216,18 +1381,11 @@ fun ChatScreen(
                                     onClick = {
                                         voiceRecorder.stopAndEncode().onSuccess { clip ->
                                             isRecordingVoice = false
-                                            dispatchRichMessage(
-                                                matchId = matchId,
-                                                participants = participants,
+                                            sendOrDispatch(
                                                 type = "VOICE",
                                                 text = "",
                                                 mediaDataUrl = clip.dataUrl,
-                                                mediaGifId = null,
-                                                durationSec = clip.durationSec,
-                                                disappearingSec = disappearingTtl,
-                                                viewOnce = false,
-                                                onSendMediaMessage = onSendMediaMessage,
-                                                onSendMessage = onSendMessage
+                                                durationSec = clip.durationSec
                                             )
                                         }.onFailure { err ->
                                             isRecordingVoice = false
@@ -1353,6 +1511,56 @@ fun ChatScreen(
                     }
                 }
 
+                replyingToMessage?.let { replyTarget ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, CoralRose.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .testTag("reply_composer_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Reply,
+                                contentDescription = null,
+                                tint = CoralRose,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Replying to ${if (replyTarget.senderId == currentUserId) "yourself" else partnerName}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = CoralRose,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = replyTarget.text.ifBlank { replyTarget.messageType },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = { replyingToMessage = null },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("clear_reply_button")
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Cancel reply", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Bottom,
@@ -1430,8 +1638,12 @@ fun ChatScreen(
             currentUserId = currentUserId,
             partner = partner,
             incomingAudioChunks = activeCallAudioChunks,
+            incomingVideoFrames = activeCallVideoFrames,
             onSendAudioChunk = { seq, sampleRateHz, audioBase64 ->
                 onSendCallAudioChunk(ongoingCall, seq, sampleRateHz, audioBase64)
+            },
+            onSendVideoFrame = { seq, frameBase64 ->
+                onSendCallVideoFrame(ongoingCall, seq, frameBase64)
             },
             onToggleMute = { onToggleCallMute(ongoingCall) },
             onToggleCamera = { onToggleCallCamera(ongoingCall) },
@@ -1448,6 +1660,12 @@ fun ChatScreen(
             PartnerProfileQuickSheet(
                 partner = partner,
                 distanceKm = thread.distanceKm,
+                onOpenFullProfile = onOpenPartnerFullProfile?.let { callback ->
+                    {
+                        showPartnerSheet = false
+                        callback(partner)
+                    }
+                },
                 onUnmatchClick = {
                     showPartnerSheet = false
                     showUnmatchDialog = true
@@ -1478,18 +1696,9 @@ fun ChatScreen(
                 onSendIcebreaker = { prompt ->
                     showIcebreakerSheet = false
                     if (participants.size == 2) {
-                        dispatchRichMessage(
-                            matchId = matchId,
-                            participants = participants,
+                        sendOrDispatch(
                             type = "ICEBREAKER",
-                            text = prompt,
-                            mediaDataUrl = null,
-                            mediaGifId = null,
-                            durationSec = 0L,
-                            disappearingSec = disappearingTtl,
-                            viewOnce = false,
-                            onSendMediaMessage = onSendMediaMessage,
-                            onSendMessage = onSendMessage
+                            text = prompt
                         )
                     }
                 },
@@ -1511,36 +1720,20 @@ fun ChatScreen(
                 onSelectReaction = { reaction ->
                     showGifSheet = false
                     if (participants.size == 2) {
-                        dispatchRichMessage(
-                            matchId = matchId,
-                            participants = participants,
+                        sendOrDispatch(
                             type = "GIF",
                             text = "",
-                            mediaDataUrl = null,
-                            mediaGifId = reaction.id,
-                            durationSec = 0L,
-                            disappearingSec = disappearingTtl,
-                            viewOnce = false,
-                            onSendMediaMessage = onSendMediaMessage,
-                            onSendMessage = onSendMessage
+                            mediaGifId = reaction.id
                         )
                     }
                 },
                 onSendCustomGifUrl = { url ->
                     showGifSheet = false
                     if (participants.size == 2) {
-                        dispatchRichMessage(
-                            matchId = matchId,
-                            participants = participants,
+                        sendOrDispatch(
                             type = "GIF",
                             text = "",
-                            mediaDataUrl = null,
-                            mediaGifId = url,
-                            durationSec = 0L,
-                            disappearingSec = disappearingTtl,
-                            viewOnce = false,
-                            onSendMediaMessage = onSendMediaMessage,
-                            onSendMessage = onSendMessage
+                            mediaGifId = url
                         )
                     }
                 }
@@ -1571,8 +1764,99 @@ fun ChatScreen(
     viewingMediaMessage?.let { mediaMsg ->
         MediaViewerDialog(
             message = mediaMsg,
+            resolveVideoFile = onResolveVideoFile,
+            onDownloadMedia = { downloadChatMedia(it) },
             onDismiss = { viewingMediaMessage = null }
         )
+    }
+
+    actionTargetMessage?.let { targetMsg ->
+        ModalBottomSheet(
+            onDismissRequest = { actionTargetMessage = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .padding(bottom = 20.dp)
+                    .testTag("message_actions_sheet"),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Message Options",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                if (!targetMsg.unsent) {
+                    FilledTonalButton(
+                        onClick = {
+                            replyingToMessage = targetMsg
+                            actionTargetMessage = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("action_reply_message")
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Reply to Message")
+                    }
+                }
+                if (!targetMsg.unsent && !targetMsg.viewOnce && (targetMsg.messageType == "PHOTO" || targetMsg.messageType == "VIDEO")) {
+                    FilledTonalButton(
+                        onClick = {
+                            actionTargetMessage = null
+                            downloadChatMedia(targetMsg)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("action_download_media")
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Download to Device")
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        onDeleteMessageForMe(matchId, targetMsg.id)
+                        actionTargetMessage = null
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("action_delete_for_me")
+                ) {
+                    Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Delete for Me")
+                }
+                if (targetMsg.senderId == currentUserId && !targetMsg.unsent) {
+                    val isLast = rawMessages.lastOrNull()?.id == targetMsg.id
+                    OutlinedButton(
+                        onClick = {
+                            onUnsendMessage(matchId, targetMsg.id, isLast)
+                            actionTargetMessage = null
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("action_unsend_message")
+                    ) {
+                        Icon(Icons.Filled.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Unsend for Everyone")
+                    }
+                }
+            }
+        }
     }
 
     if (showUnmatchDialog) {
@@ -1599,6 +1883,7 @@ fun ChatScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .navigationBarsPadding()
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 28.dp)
                     .testTag("short_video_options_sheet"),
@@ -1609,10 +1894,10 @@ fun ChatScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(Icons.Filled.VideoLibrary, contentDescription = null, tint = CoralRose)
-                    Text("Attach Short Video (Up to 20s)", style = MaterialTheme.typography.titleLarge)
+                    Text("Attach High-Res Video (Any Length)", style = MaterialTheme.typography.titleLarge)
                 }
                 Text(
-                    text = "Share a short clip up to 20 seconds directly inside chat.",
+                    text = "Share high-resolution videos of any length without size limits directly in chat.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1630,7 +1915,7 @@ fun ChatScreen(
                 ) {
                     Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Pick Video Clip (≤ 20s)")
+                    Text("Pick Video from Gallery")
                 }
                 OutlinedButton(
                     onClick = {
@@ -1640,7 +1925,7 @@ fun ChatScreen(
                             Manifest.permission.CAMERA
                         ) == PackageManager.PERMISSION_GRANTED
                         if (hasCam) {
-                            launchShortVideoCapture()
+                            launchVideoCapture()
                         } else {
                             cameraVideoPermissionLauncher.launch(Manifest.permission.CAMERA)
                         }
@@ -1652,7 +1937,7 @@ fun ChatScreen(
                 ) {
                     Icon(Icons.Filled.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Record Short Video (≤ 20s)")
+                    Text("Record Video with Camera")
                 }
             }
         }
@@ -1706,12 +1991,43 @@ private fun dispatchRichMessage(
     durationSec: Long,
     disappearingSec: Long,
     viewOnce: Boolean,
+    preparedVideo: PreparedVideoUpload? = null,
+    replyTo: ChatMessage? = null,
+    onSendRichMessageWithReply: (
+        (
+            String,
+            List<String>,
+            String,
+            String,
+            String?,
+            String?,
+            Long,
+            Long,
+            Boolean,
+            PreparedVideoUpload?,
+            ChatMessage?
+        ) -> Unit
+    )? = null,
     onSendMediaMessage: (
         (String, List<String>, String, String, String?, String?, Long, Long, Boolean) -> Unit
-    )?,
+    )? = null,
     onSendMessage: (String, List<String>, String, String) -> Unit
 ) {
-    if (onSendMediaMessage != null) {
+    if (onSendRichMessageWithReply != null) {
+        onSendRichMessageWithReply(
+            matchId,
+            participants,
+            type,
+            text,
+            mediaDataUrl,
+            mediaGifId,
+            durationSec,
+            disappearingSec,
+            viewOnce,
+            preparedVideo,
+            replyTo
+        )
+    } else if (onSendMediaMessage != null) {
         onSendMediaMessage(
             matchId,
             participants,

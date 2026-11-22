@@ -5,7 +5,9 @@ import com.example.R
 import com.example.model.BlockRecord
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
+import com.example.model.CallVideoFrame
 import com.example.model.ChatMessage
+import com.example.model.KindredConstants
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.PrivateUser
@@ -15,10 +17,13 @@ import com.example.model.TypingStatus
 import com.example.model.UserPresence
 import com.example.model.VerificationChallenge
 import com.example.model.VerificationRecord
+import com.example.model.VisibilityLevel
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
+import com.example.util.PreparedVideoUpload
+import com.example.util.VideoClipHelper
 import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
@@ -40,8 +45,12 @@ import kotlinx.coroutines.tasks.await
 class KindredRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth,
-    private val geoService: GeoHashMatchingService = GeoHashMatchingService(db, auth)
+    private val geoService: GeoHashMatchingService = GeoHashMatchingService(db, auth),
+    private val socialRepo: SocialAndMediaRepository = SocialAndMediaRepository(db, auth)
 ) {
+    val socialRepository: SocialAndMediaRepository
+        get() = socialRepo
+
     constructor(context: Context) : this(
         FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
@@ -212,6 +221,33 @@ class KindredRepository(
         }
     }
 
+    fun observeCallVideoFrames(
+        matchId: String,
+        callId: String,
+        viewerUserId: String
+    ): Flow<List<CallVideoFrame>> {
+        if (matchId.isBlank() || callId.isBlank() || viewerUserId.isBlank()) {
+            return flowOf(emptyList())
+        }
+        val path = "matches/$matchId/calls/$callId/videoFrames"
+        return flow {
+            emitAll(
+                db.collection("matches")
+                    .document(matchId)
+                    .collection("calls")
+                    .document(callId)
+                    .collection("videoFrames")
+                    .whereArrayContains("participantUids", viewerUserId)
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(CallVideoFrame::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedByDescending { it.seq }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, path, viewerUserId) }
+            )
+        }
+    }
+
     fun observeVerifications(userId: String): Flow<List<VerificationRecord>> = flow {
         val path = "users/$userId/verifications"
         emitAll(
@@ -244,22 +280,105 @@ class KindredRepository(
         }
     }
 
-    suspend fun updatePresence(online: Boolean): Result<Unit> {
+    suspend fun updatePresence(online: Boolean, hideOnlineStatus: Boolean? = null): Result<Unit> {
         val uid = auth.currentUser?.uid ?: return Result.success(Unit)
         val docRef = db.collection("presence").document(uid)
         return try {
-            val payload = mapOf(
-                "userId" to uid,
-                "online" to online,
-                "lastSeenAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            docRef.set(payload).await()
+            val existing = docRef.get().await()
+            if (existing.exists()) {
+                val updates = mutableMapOf<String, Any>(
+                    "online" to online,
+                    "lastSeenAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (hideOnlineStatus != null) {
+                    updates["hideOnlineStatus"] = hideOnlineStatus
+                }
+                docRef.update(updates).await()
+            } else {
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "online" to online,
+                    "lastSeenAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (hideOnlineStatus != null) {
+                    payload["hideOnlineStatus"] = hideOnlineStatus
+                }
+                docRef.set(payload).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updatePrivacyAndHideOnline(
+        hideOnlineStatus: Boolean,
+        photosVisibility: String,
+        videosVisibility: String,
+        infoVisibility: String
+    ): Result<Unit> {
+        val safePhotosVis = if (photosVisibility in setOf(VisibilityLevel.EVERYONE, VisibilityLevel.MATCHES_AND_FRIENDS, VisibilityLevel.FRIENDS_ONLY)) {
+            photosVisibility
+        } else VisibilityLevel.EVERYONE
+        val safeVideosVis = if (videosVisibility in setOf(VisibilityLevel.EVERYONE, VisibilityLevel.MATCHES_AND_FRIENDS, VisibilityLevel.FRIENDS_ONLY)) {
+            videosVisibility
+        } else VisibilityLevel.EVERYONE
+        val safeInfoVis = if (infoVisibility in setOf(VisibilityLevel.EVERYONE, VisibilityLevel.MATCHES_AND_FRIENDS, VisibilityLevel.FRIENDS_ONLY)) {
+            infoVisibility
+        } else VisibilityLevel.EVERYONE
+
+        var docPath = "publicProfiles"
+        return try {
+            val uid = requireUserId()
+            val privateRef = db.collection("users").document(uid)
+            val publicRef = db.collection("publicProfiles").document(uid)
+            val batch = db.batch()
+            if (privateRef.get().await().exists()) {
+                batch.update(
+                    privateRef,
+                    mapOf(
+                        "hideOnlineStatus" to hideOnlineStatus,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }
+            val pubSnap = publicRef.get().await()
+            if (pubSnap.exists()) {
+                docPath = publicRef.path
+                val existingPublic = pubSnap.toObject(PublicProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                val privUpdates = mapOf(
+                    "hideOnlineStatus" to hideOnlineStatus,
+                    "photosVisibility" to safePhotosVis,
+                    "videosVisibility" to safeVideosVis,
+                    "infoVisibility" to safeInfoVis,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                batch.update(publicRef, privUpdates)
+                if (existingPublic != null) {
+                    val c3 = existingPublic.geohash3
+                    val c4 = existingPublic.geohash4
+                    if (c3.length == 3) {
+                        val ref3 = db.collection("geoCells").document(c3).collection("profiles").document(uid)
+                        if (ref3.get().await().exists()) batch.update(ref3, privUpdates)
+                    }
+                    if (c4.length == 4) {
+                        val ref4 = db.collection("geoCells").document(c4).collection("profiles").document(uid)
+                        if (ref4.get().await().exists()) batch.update(ref4, privUpdates)
+                    }
+                }
+            }
+            batch.commit().await()
+            updatePresence(online = !hideOnlineStatus, hideOnlineStatus = hideOnlineStatus)
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
             Result.failure(e)
         }
     }
@@ -353,7 +472,9 @@ class KindredRepository(
         minAgePref: Int,
         maxAgePref: Int,
         maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean
+        verifiedOnlyFilter: Boolean,
+        dateOfBirth: String = "",
+        profileCompleted: Boolean = true
     ): Result<Unit> {
         val cleanName = displayName.trim().take(40)
         if (cleanName.length < 2) {
@@ -371,7 +492,7 @@ class KindredRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && it.length <= 180_000 }
             .distinct()
-            .take(4)
+            .take(KindredConstants.MAX_PROFILE_PHOTOS)
         val primaryPhoto = cleanPhotos.firstOrNull()
         val coarseLat = LocationAndGeoHelper.roundToCoarse(latitude.coerceIn(-90.0, 90.0))
         val coarseLng = LocationAndGeoHelper.roundToCoarse(longitude.coerceIn(-180.0, 180.0))
@@ -432,6 +553,9 @@ class KindredRepository(
             val photosChanged = existingPublic != null && existingPublic.allProfilePhotos() != cleanPhotos
             val keepVerifiedStatus = existingPublic != null && !photosChanged && existingPublic.isProfileVerified
 
+            val cleanDob = dateOfBirth.trim().take(16)
+            val resolvedDob = if (cleanDob.isNotBlank()) cleanDob else existingPublic?.dateOfBirth.orEmpty()
+
             currentPath = publicRef.path
             if (publicExists) {
                 val updatePublic = mutableMapOf<String, Any>(
@@ -450,8 +574,12 @@ class KindredRepository(
                     "profilePhotos" to cleanPhotos,
                     "avatarSeed" to uid.take(40),
                     "discoverable" to discoverable,
+                    "profileCompleted" to profileCompleted,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
+                if (resolvedDob.isNotBlank()) {
+                    updatePublic["dateOfBirth"] = resolvedDob
+                }
                 if (primaryPhoto != null) {
                     updatePublic["photoDataUrl"] = primaryPhoto
                 } else if (existingPublic?.photoDataUrl != null) {
@@ -480,11 +608,15 @@ class KindredRepository(
                     "profilePhotos" to cleanPhotos,
                     "avatarSeed" to uid.take(40),
                     "discoverable" to discoverable,
+                    "profileCompleted" to profileCompleted,
                     "verificationStatus" to "UNVERIFIED",
                     "verificationScore" to 30L,
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
+                if (resolvedDob.isNotBlank()) {
+                    createPublic["dateOfBirth"] = resolvedDob
+                }
                 if (primaryPhoto != null) {
                     createPublic["photoDataUrl"] = primaryPhoto
                 }
@@ -506,6 +638,8 @@ class KindredRepository(
                 photoDataUrl = primaryPhoto,
                 profilePhotos = cleanPhotos,
                 discoverable = discoverable,
+                dateOfBirth = resolvedDob,
+                profileCompleted = profileCompleted,
                 existingPublic = existingPublic,
                 forceUnverified = photosChanged && existingPublic?.isProfileVerified == true
             )
@@ -543,7 +677,11 @@ class KindredRepository(
         interests: List<String>,
         profilePhotos: List<String>,
         cityLabel: String? = null,
-        country: String? = null
+        country: String? = null,
+        displayName: String? = null,
+        gender: String? = null,
+        dateOfBirth: String? = null,
+        computedAge: Int? = null
     ): Result<Unit> {
         val cleanBio = bio.trim().take(400)
         val cleanInterests = interests
@@ -555,7 +693,7 @@ class KindredRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() && it.length <= 180_000 }
             .distinct()
-            .take(4)
+            .take(KindredConstants.MAX_PROFILE_PHOTOS)
         val primaryPhoto = cleanPhotos.firstOrNull()
 
         var docPath = "publicProfiles"
@@ -574,16 +712,15 @@ class KindredRepository(
             }
 
             if (existingPublic == null) {
-                val safeFallbackName = fallbackDisplayName
-                    ?.trim()
-                    ?.take(40)
-                    ?.takeIf { it.length >= 2 }
+                val safeFallbackName = displayName?.trim()?.take(40)?.takeIf { it.length >= 2 }
+                    ?: fallbackDisplayName?.trim()?.take(40)?.takeIf { it.length >= 2 }
                     ?: "Kindred Member"
+                val hasExplicitAge = computedAge != null && computedAge in 18..99
                 return saveProfileAndPreferences(
                     email = email,
                     displayName = safeFallbackName,
-                    age = 26,
-                    gender = "Woman",
+                    age = computedAge?.coerceIn(18, 99) ?: 18,
+                    gender = gender?.takeIf { it in KindredConstants.GENDER_OPTIONS } ?: "Woman",
                     bio = cleanBio,
                     cityLabel = cityLabel?.trim()?.take(80).orEmpty().ifBlank { "San Francisco" },
                     country = country?.trim()?.take(80).orEmpty().ifBlank { "United States" },
@@ -594,26 +731,39 @@ class KindredRepository(
                     profilePhotos = cleanPhotos,
                     discoverable = true,
                     interestedIn = "Everyone",
-                    minAgePref = 20,
+                    minAgePref = 18,
                     maxAgePref = 45,
                     maxDistanceKm = 100,
-                    verifiedOnlyFilter = false
+                    verifiedOnlyFilter = false,
+                    dateOfBirth = dateOfBirth.orEmpty(),
+                    profileCompleted = hasExplicitAge && !dateOfBirth.isNullOrBlank()
                 )
             }
 
+            val nextName = displayName?.trim()?.take(40)?.takeIf { it.length >= 2 } ?: existingPublic.displayName
+            val nextGender = gender?.takeIf { it in KindredConstants.GENDER_OPTIONS } ?: existingPublic.gender
+            val nextAge = computedAge?.coerceIn(18, 99)?.toLong() ?: existingPublic.age
+            val nextDob = dateOfBirth?.trim()?.take(16)?.takeIf { it.isNotBlank() } ?: existingPublic.dateOfBirth
             val nextCity = cityLabel?.trim()?.take(80)?.ifBlank { existingPublic.cityLabel } ?: existingPublic.cityLabel
             val nextCountry = country?.trim()?.take(80) ?: existingPublic.country
             val photosChanged = existingPublic.allProfilePhotos() != cleanPhotos
             val resetVerification = photosChanged && existingPublic.isProfileVerified
 
             val updatePublic = mutableMapOf<String, Any>(
+                "displayName" to nextName,
+                "age" to nextAge,
+                "gender" to nextGender,
                 "bio" to cleanBio,
                 "cityLabel" to nextCity,
                 "country" to nextCountry,
                 "interests" to cleanInterests,
                 "profilePhotos" to cleanPhotos,
+                "profileCompleted" to true,
                 "updatedAt" to FieldValue.serverTimestamp()
             )
+            if (nextDob.isNotBlank()) {
+                updatePublic["dateOfBirth"] = nextDob
+            }
             if (primaryPhoto != null) {
                 updatePublic["photoDataUrl"] = primaryPhoto
             } else if (existingPublic.photoDataUrl != null) {
@@ -637,9 +787,9 @@ class KindredRepository(
 
             val geoProfilePayload = buildGeoCellPayload(
                 uid = uid,
-                displayName = existingPublic.displayName,
-                age = existingPublic.age,
-                gender = existingPublic.gender,
+                displayName = nextName,
+                age = nextAge,
+                gender = nextGender,
                 bio = cleanBio,
                 cityLabel = nextCity,
                 country = nextCountry,
@@ -649,6 +799,8 @@ class KindredRepository(
                 photoDataUrl = primaryPhoto,
                 profilePhotos = cleanPhotos,
                 discoverable = existingPublic.discoverable,
+                dateOfBirth = nextDob,
+                profileCompleted = true,
                 existingPublic = existingPublic,
                 forceUnverified = resetVerification
             )
@@ -1179,21 +1331,27 @@ class KindredRepository(
         mediaGifId: String? = null,
         mediaDurationSec: Long = 0L,
         disappearingSeconds: Long = 0L,
-        viewOnce: Boolean = false
+        viewOnce: Boolean = false,
+        preparedVideo: PreparedVideoUpload? = null,
+        replyToMessageId: String? = null,
+        replyToSenderId: String? = null,
+        replyToText: String? = null,
+        replyToType: String? = null
     ): Result<Unit> {
         val allowedType = when (messageType) {
             "ICEBREAKER", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL" -> messageType
             else -> "TEXT"
         }
         val cleanText = text.trim().take(1000)
-        val cleanMedia = mediaDataUrl?.trim()?.takeIf { it.isNotBlank() }
+        val cleanMedia = (preparedVideo?.inlineDataUrl ?: mediaDataUrl)?.trim()?.takeIf { it.isNotBlank() }
         val cleanGif = mediaGifId?.trim()?.take(300)?.takeIf { it.isNotBlank() }
         if (cleanText.isEmpty() && allowedType !in setOf("PHOTO", "VIDEO", "VOICE", "GIF")) {
             return Result.failure(IllegalArgumentException("Message must be between 1 and 1000 characters."))
         }
-        if (cleanMedia != null && cleanMedia.length > 920_000) {
-            return Result.failure(IllegalArgumentException("Media exceeds maximum sync size. Try a shorter clip or smaller photo."))
+        if (preparedVideo == null && cleanMedia != null && cleanMedia.length > 920_000) {
+            return Result.failure(IllegalArgumentException("Photo or voice attachment exceeds sync size."))
         }
+        val effectiveDurationSec = preparedVideo?.durationSec ?: mediaDurationSec.coerceAtLeast(0L)
         val safeDisappearSec = disappearingSeconds.coerceIn(0L, 604_800L)
         val expiresAtMs = if (!viewOnce && safeDisappearSec > 0L) {
             System.currentTimeMillis() + safeDisappearSec * 1000L
@@ -1204,8 +1362,10 @@ class KindredRepository(
             viewOnce && allowedType == "PHOTO" -> "⏱️ View-once photo"
             viewOnce && allowedType == "VOICE" -> "⏱️ View-once voice note"
             allowedType == "PHOTO" -> cleanText.ifBlank { "📷 Photo" }
-            allowedType == "VIDEO" -> cleanText.ifBlank { "🎥 Short video (${mediaDurationSec.coerceIn(1L, 20L)}s)" }
-            allowedType == "VOICE" -> "🎙️ Voice note (${mediaDurationSec.coerceIn(1L, 120L)}s)"
+            allowedType == "VIDEO" -> cleanText.ifBlank {
+                if (effectiveDurationSec > 0L) "🎥 Video (${VideoClipHelper.formatDurationLabel(effectiveDurationSec)})" else "🎥 Video"
+            }
+            allowedType == "VOICE" -> "🎙️ Voice note (${effectiveDurationSec.coerceAtLeast(1L)}s)"
             allowedType == "GIF" -> cleanText.ifBlank { "🎞️ Sent a GIF" }
             else -> cleanText
         }.take(300)
@@ -1232,10 +1392,42 @@ class KindredRepository(
                 "openedByRecipient" to false,
                 "createdAt" to FieldValue.serverTimestamp()
             )
-            if (cleanMedia != null) payload["mediaDataUrl"] = cleanMedia
+            if (preparedVideo != null) {
+                if (!preparedVideo.inlineDataUrl.isNullOrBlank()) {
+                    payload["mediaDataUrl"] = preparedVideo.inlineDataUrl
+                }
+                if (!preparedVideo.thumbnailDataUrl.isNullOrBlank() && preparedVideo.thumbnailDataUrl.length <= 180_000) {
+                    payload["thumbnailDataUrl"] = preparedVideo.thumbnailDataUrl
+                }
+                payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
+                payload["mediaChunkCount"] = preparedVideo.chunkCount.toLong()
+                payload["mediaByteSize"] = preparedVideo.sizeBytes.coerceAtLeast(0L)
+                if (preparedVideo.chunkBase64List.isNotEmpty()) {
+                    socialRepo.uploadChunksToSubcollection(
+                        parentCollection = msgRef.collection("mediaChunks"),
+                        ownerUid = uid,
+                        participantUids = participantUids,
+                        chunks = preparedVideo.chunkBase64List
+                    )
+                }
+            } else if (cleanMedia != null) {
+                payload["mediaDataUrl"] = cleanMedia
+            }
             if (cleanGif != null) payload["mediaGifId"] = cleanGif
-            if (mediaDurationSec > 0L) payload["mediaDurationSec"] = mediaDurationSec.coerceIn(0L, 120L)
+            if (effectiveDurationSec > 0L) payload["mediaDurationSec"] = effectiveDurationSec
             if (expiresAtMs != null) payload["expiresAtMs"] = expiresAtMs
+            if (!replyToMessageId.isNullOrBlank()) {
+                payload["replyToMessageId"] = replyToMessageId.take(128)
+                if (!replyToSenderId.isNullOrBlank()) {
+                    payload["replyToSenderId"] = replyToSenderId.take(128)
+                }
+                if (!replyToText.isNullOrBlank()) {
+                    payload["replyToText"] = replyToText.take(300)
+                }
+                if (!replyToType.isNullOrBlank()) {
+                    payload["replyToType"] = replyToType.take(24)
+                }
+            }
 
             val batch = db.batch()
             batch.set(msgRef, payload)
@@ -1335,6 +1527,92 @@ class KindredRepository(
             handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
+    }
+
+    suspend fun deleteMessageForMe(matchId: String, messageId: String): Result<Unit> {
+        var docPath = "matches/$matchId/messages/$messageId"
+        return try {
+            val uid = requireUserId()
+            val ref = db.collection("matches").document(matchId).collection("messages").document(messageId)
+            docPath = ref.path
+            ref.update("deletedForUids", FieldValue.arrayUnion(uid)).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun unsendMessage(
+        matchId: String,
+        messageId: String,
+        isLastMessage: Boolean = false
+    ): Result<Unit> {
+        var docPath = "matches/$matchId/messages/$messageId"
+        return try {
+            requireUserId()
+            val matchRef = db.collection("matches").document(matchId)
+            val msgRef = matchRef.collection("messages").document(messageId)
+            docPath = msgRef.path
+            val batch = db.batch()
+            batch.update(
+                msgRef,
+                mapOf(
+                    "unsent" to true,
+                    "unsentAt" to FieldValue.serverTimestamp(),
+                    "text" to "Message unsent",
+                    "mediaDataUrl" to FieldValue.delete(),
+                    "thumbnailDataUrl" to FieldValue.delete(),
+                    "mediaGifId" to FieldValue.delete()
+                )
+            )
+            if (isLastMessage) {
+                batch.update(
+                    matchRef,
+                    mapOf(
+                        "lastMessageText" to "Message unsent",
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun searchMessagesAcrossMatches(
+        userId: String,
+        matchIds: List<String>,
+        query: String
+    ): List<Pair<String, ChatMessage>> {
+        val q = query.trim()
+        if (q.isBlank() || userId.isBlank()) return emptyList()
+        val results = mutableListOf<Pair<String, ChatMessage>>()
+        for (matchId in matchIds.take(25)) {
+            runCatching {
+                val snap = db.collection("matches").document(matchId).collection("messages")
+                    .whereArrayContains("participantUids", userId)
+                    .get()
+                    .await()
+                val msgs = snap.toObjects(ChatMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                msgs.filter { msg ->
+                    !msg.unsent &&
+                        !msg.isDeletedFor(userId) &&
+                        !msg.isExpiredAt() &&
+                        msg.text.contains(q, ignoreCase = true)
+                }.forEach { msg ->
+                    results += matchId to msg
+                }
+            }
+        }
+        return results.sortedByDescending { it.second.createdAt ?: Timestamp(0, 0) }
     }
 
     suspend fun updateMatchDisappearingTimer(matchId: String, ttlSeconds: Long): Result<Unit> {
@@ -1505,6 +1783,47 @@ class KindredRepository(
         }
     }
 
+    suspend fun sendCallVideoFrame(
+        matchId: String,
+        callId: String,
+        participantUids: List<String>,
+        seq: Long,
+        frameBase64: String
+    ): Result<Unit> {
+        if (matchId.isBlank() || callId.isBlank() || frameBase64.isBlank() || participantUids.size != 2) {
+            return Result.success(Unit)
+        }
+        var docPath = "matches/$matchId/calls/$callId/videoFrames"
+        return try {
+            val uid = requireUserId()
+            if (uid !in participantUids) return Result.success(Unit)
+            val frameRef = db.collection("matches")
+                .document(matchId)
+                .collection("calls")
+                .document(callId)
+                .collection("videoFrames")
+                .document("${uid}_latest")
+            docPath = frameRef.path
+            frameRef.set(
+                mapOf(
+                    "matchId" to matchId,
+                    "callId" to callId,
+                    "senderUid" to uid,
+                    "participantUids" to participantUids,
+                    "seq" to seq,
+                    "frameBase64" to frameBase64.take(160_000),
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docPath)
+            Result.failure(e)
+        }
+    }
+
     suspend fun endCallAndLogMessage(
         matchId: String,
         callId: String,
@@ -1531,7 +1850,7 @@ class KindredRepository(
             participantUids = participantUids,
             text = label,
             messageType = "CALL",
-            mediaDurationSec = durationSeconds.coerceIn(0L, 120L)
+            mediaDurationSec = durationSeconds.coerceAtLeast(0L)
         )
     }
 
@@ -1645,7 +1964,7 @@ class KindredRepository(
             val cleanReason = reason.trim().take(100)
             require(cleanReason.length >= 2) { "Please choose a reason for reporting." }
             val safeSurface = when (sourceSurface.uppercase()) {
-                "DISCOVER", "SEARCH", "CHAT", "PROFILE" -> sourceSurface.uppercase()
+                "DISCOVER", "SEARCH", "CHAT", "PROFILE", "VIDEO_FEED", "STORY" -> sourceSurface.uppercase()
                 else -> "PROFILE"
             }
             val reportRef = db.collection("reports").document()
@@ -1787,6 +2106,8 @@ class KindredRepository(
         photoDataUrl: String?,
         profilePhotos: List<String>,
         discoverable: Boolean,
+        dateOfBirth: String = "",
+        profileCompleted: Boolean = true,
         existingPublic: PublicProfile?,
         forceUnverified: Boolean
     ): Map<String, Any> {
@@ -1810,11 +2131,19 @@ class KindredRepository(
             "profilePhotos" to profilePhotos,
             "avatarSeed" to uid.take(40),
             "discoverable" to discoverable,
+            "profileCompleted" to profileCompleted,
+            "hideOnlineStatus" to (existingPublic?.hideOnlineStatus ?: false),
+            "photosVisibility" to (existingPublic?.photosVisibility ?: VisibilityLevel.EVERYONE),
+            "videosVisibility" to (existingPublic?.videosVisibility ?: VisibilityLevel.EVERYONE),
+            "infoVisibility" to (existingPublic?.infoVisibility ?: VisibilityLevel.EVERYONE),
             "verificationStatus" to if (effectiveVerified) "VERIFIED" else "UNVERIFIED",
             "verificationScore" to if (effectiveVerified) (existingPublic?.verificationScore ?: 70L) else 30L,
             "createdAt" to (existingPublic?.createdAt ?: FieldValue.serverTimestamp()),
             "updatedAt" to FieldValue.serverTimestamp()
         )
+        if (dateOfBirth.isNotBlank()) {
+            map["dateOfBirth"] = dateOfBirth
+        }
         if (!photoDataUrl.isNullOrBlank() && photoDataUrl.length <= 180_000) {
             map["photoDataUrl"] = photoDataUrl
         }

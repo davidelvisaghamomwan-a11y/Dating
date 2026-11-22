@@ -73,29 +73,16 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun allProfilePhotos_deduplicatesAndCapsAtFour() {
+    fun allProfilePhotos_deduplicatesAndCapsAtMaxLimit() {
+        val sampleList = (1..15).map { idx -> "data:image/jpeg;base64,PHOTO_$idx" }
         val profile = PublicProfile(
-            photoDataUrl = "data:image/jpeg;base64,AAA",
-            profilePhotos = listOf(
-                "data:image/jpeg;base64,AAA",
-                "data:image/jpeg;base64,BBB",
-                " ",
-                "data:image/jpeg;base64,CCC",
-                "data:image/jpeg;base64,DDD",
-                "data:image/jpeg;base64,EEE"
-            )
+            photoDataUrl = "data:image/jpeg;base64,PHOTO_1",
+            profilePhotos = listOf("data:image/jpeg;base64,PHOTO_1", " ") + sampleList
         )
         val result = profile.allProfilePhotos()
-        assertEquals(4, result.size)
-        assertEquals(
-            listOf(
-                "data:image/jpeg;base64,AAA",
-                "data:image/jpeg;base64,BBB",
-                "data:image/jpeg;base64,CCC",
-                "data:image/jpeg;base64,DDD"
-            ),
-            result
-        )
+        assertEquals(com.example.model.KindredConstants.MAX_PROFILE_PHOTOS, result.size)
+        assertEquals("data:image/jpeg;base64,PHOTO_1", result.first())
+        assertEquals("data:image/jpeg;base64,PHOTO_12", result.last())
     }
 
     @Test

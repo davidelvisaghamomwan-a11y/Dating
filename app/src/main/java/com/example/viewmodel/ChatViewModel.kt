@@ -1,19 +1,25 @@
 package com.example.viewmodel
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
 import com.example.data.KindredRepository
+import com.example.data.SocialAndMediaRepository
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
+import com.example.model.CallVideoFrame
 import com.example.model.ChatMessage
 import com.example.model.PublicProfile
 import com.example.model.TypingStatus
 import com.example.model.UiState
 import com.example.model.UserPresence
+import com.example.util.PreparedVideoUpload
+import com.google.firebase.Firebase
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,11 +32,12 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Dedicated ViewModel for standalone [com.example.ui.screens.ChatScreen] invocations,
  * managing real-time Firestore messages, read receipts, typing indicators, partner presence,
- * call signaling, and AI icebreakers for a single match thread.
+ * call signaling, live call video frames, and AI icebreakers for a single match thread.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
@@ -38,7 +45,8 @@ class ChatViewModel(
     val matchId: String,
     val currentUserId: String,
     val partnerUserId: String = "",
-    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService()
+    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService(),
+    private val socialRepo: SocialAndMediaRepository? = null
 ) : ViewModel() {
 
     private val _retryNonce = MutableStateFlow(0)
@@ -136,6 +144,25 @@ class ChatViewModel(
             initialValue = emptyList()
         )
 
+    val activeCallVideoFrames: StateFlow<List<CallVideoFrame>> = activeCallSession
+        .flatMapLatest { session ->
+            if (session == null || session.status != "ACTIVE") {
+                flowOf(emptyList())
+            } else {
+                repository.observeCallVideoFrames(session.matchId, session.id, currentUserId)
+                    .map { frames -> frames.filter { it.senderUid != currentUserId } }
+                    .catch { error ->
+                        if (error is CancellationException) throw error
+                        emit(emptyList())
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
     private val _icebreakerAiState = MutableStateFlow<IcebreakerAiUiState>(IcebreakerAiUiState.Idle)
     val icebreakerAiState: StateFlow<IcebreakerAiUiState> = _icebreakerAiState.asStateFlow()
 
@@ -158,7 +185,12 @@ class ChatViewModel(
         mediaGifId: String? = null,
         mediaDurationSec: Long = 0L,
         disappearingSeconds: Long = 0L,
-        viewOnce: Boolean = false
+        viewOnce: Boolean = false,
+        preparedVideo: PreparedVideoUpload? = null,
+        replyToMessageId: String? = null,
+        replyToSenderId: String? = null,
+        replyToText: String? = null,
+        replyToType: String? = null
     ) {
         viewModelScope.launch {
             val result = repository.sendMessage(
@@ -170,7 +202,12 @@ class ChatViewModel(
                 mediaGifId = mediaGifId,
                 mediaDurationSec = mediaDurationSec,
                 disappearingSeconds = disappearingSeconds,
-                viewOnce = viewOnce
+                viewOnce = viewOnce,
+                preparedVideo = preparedVideo,
+                replyToMessageId = replyToMessageId,
+                replyToSenderId = replyToSenderId,
+                replyToText = replyToText,
+                replyToType = replyToType
             )
             result.onFailure { err ->
                 _statusError.value = err.localizedMessage ?: "Failed to send message"
@@ -195,6 +232,35 @@ class ChatViewModel(
         viewModelScope.launch {
             repository.deleteMessage(matchId, messageId)
         }
+    }
+
+    fun deleteMessageForMe(messageId: String) {
+        viewModelScope.launch {
+            repository.deleteMessageForMe(matchId, messageId)
+                .onFailure { err ->
+                    _statusError.value = err.localizedMessage ?: "Failed to delete message"
+                }
+        }
+    }
+
+    fun unsendMessage(messageId: String, isLastMessage: Boolean = false) {
+        viewModelScope.launch {
+            repository.unsendMessage(matchId, messageId, isLastMessage)
+                .onFailure { err ->
+                    _statusError.value = err.localizedMessage ?: "Failed to unsend message"
+                }
+        }
+    }
+
+    suspend fun resolveMessageVideoFile(context: Context, message: ChatMessage): Result<File> {
+        val repo = socialRepo ?: repository.socialRepository
+        return repo.resolveVideoToFile(
+            context = context,
+            cacheKey = message.id.ifBlank { "msg_video" },
+            inlineDataUrl = message.mediaDataUrl,
+            chunkCount = message.mediaChunkCount,
+            chunksCollection = repo.messageMediaChunksRef(message.matchId.ifBlank { matchId }, message.id)
+        )
     }
 
     fun updateDisappearingTimer(ttlSeconds: Long) {
@@ -301,6 +367,18 @@ class ChatViewModel(
                 seq = seq,
                 sampleRateHz = sampleRateHz,
                 audioBase64 = audioBase64
+            )
+        }
+    }
+
+    fun sendCallVideoFrame(session: CallSession, seq: Long, frameBase64: String) {
+        viewModelScope.launch {
+            repository.sendCallVideoFrame(
+                matchId = session.matchId,
+                callId = session.id,
+                participantUids = session.participantUids,
+                seq = seq,
+                frameBase64 = frameBase64
             )
         }
     }

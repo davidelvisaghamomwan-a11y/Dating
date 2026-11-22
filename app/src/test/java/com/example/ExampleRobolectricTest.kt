@@ -37,11 +37,15 @@ import com.example.model.UserPresence
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
 import com.example.model.CallSession
+import com.example.model.FeedPost
+import com.example.model.FriendStatus
+import com.example.model.ProfileVideoItem
 import com.example.model.TypingStatus
 import com.example.notifications.KindredBackgroundService
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
 import com.example.ui.components.LocationVerificationGate
+import com.example.ui.components.PartnerPhotoGalleryDialog
 import com.example.ui.components.ProfileSearchContent
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.ChatScreen
@@ -49,18 +53,25 @@ import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
 import com.example.ui.screens.MatchesAndChatScreen
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.ProfileSetupScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.UserProfileDetailScreen
 import com.example.ui.screens.VerificationScreen
 import com.example.ui.theme.KindredTheme
 import com.example.update.AppUpdateChecker
+import com.example.util.CountryFlagHelper
+import com.example.util.DobUtils
+import com.example.util.DobValidationResult
 import com.example.util.FaceComparisonEngine
 import com.example.util.FaceDescriptor
 import com.example.util.FacePoint
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
+import com.example.util.ProfileCompletionUtils
 import com.example.util.ResolvedDeviceLocation
 import com.example.util.VideoClipHelper
 import com.google.firebase.Timestamp
+import java.util.Calendar
 import java.util.Date
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -150,7 +161,7 @@ class ExampleRobolectricTest {
         }
 
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Elena, 28").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Elena, 28 🇺🇸").assertIsDisplayed()
         composeTestRule.onNodeWithText("Hey! Ready for that coffee walk?").assertIsDisplayed()
         composeTestRule.onNodeWithText("Always ready for coffee!").assertIsDisplayed()
 
@@ -782,7 +793,7 @@ class ExampleRobolectricTest {
         }
 
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("chat_block_button").performClick()
+        composeTestRule.onNodeWithTag("chat_block_button").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("confirm_chat_block_button").performClick()
         composeTestRule.waitForIdle()
@@ -1203,19 +1214,19 @@ class ExampleRobolectricTest {
         }
 
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Sienna, 25", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Sienna, 25 🇺🇸", useUnmergedTree = true).assertIsDisplayed()
 
         // Tap Pass button -> animates card out and advances to Marcus
         composeTestRule.onNodeWithTag("pass_button").performClick()
         composeTestRule.mainClock.advanceTimeBy(400)
         composeTestRule.waitForIdle()
         assertEquals(listOf("user_alpha" to "PASS"), recordedSwipes)
-        composeTestRule.onNodeWithText("Marcus, 30", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Marcus, 30 🇺🇸", useUnmergedTree = true).assertIsDisplayed()
 
         // Tap Undo button -> restores Sienna to top of deck
         composeTestRule.onNodeWithTag("undo_swipe_button").performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Sienna, 25", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Sienna, 25 🇺🇸", useUnmergedTree = true).assertIsDisplayed()
 
         // Tap Like button -> animates card right and records LIKE
         composeTestRule.onNodeWithTag("like_button").performClick()
@@ -1829,13 +1840,13 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `video clip helper enforces 20s limit and chat renders VIDEO message and picker sheet`() {
-        assertTrue(VideoClipHelper.isDurationAllowed(1_000L))
-        assertTrue(VideoClipHelper.isDurationAllowed(20_000L))
-        assertFalse(VideoClipHelper.isDurationAllowed(0L))
-        assertFalse(VideoClipHelper.isDurationAllowed(20_001L))
+    fun `video clip helper supports unlimited duration chunking and chat renders VIDEO message`() {
+        val raw = ByteArray(1_100_000) { (it % 127).toByte() }
+        val chunks = VideoClipHelper.splitBytesIntoBase64Chunks(raw, VideoClipHelper.CHUNK_RAW_BYTES)
+        assertEquals(3, chunks.size)
         assertEquals("0:15", VideoClipHelper.formatDurationLabel(15L))
-        assertEquals("0:20", VideoClipHelper.formatDurationLabel(25L))
+        assertEquals("0:25", VideoClipHelper.formatDurationLabel(25L))
+        assertEquals("1:05:00", VideoClipHelper.formatDurationLabel(3900L))
 
         val videoMsg = ChatMessage(
             id = "v1",
@@ -1844,8 +1855,9 @@ class ExampleRobolectricTest {
             participantUids = listOf("alice_1", "bob_2"),
             messageType = "VIDEO",
             mediaDataUrl = "",
-            mediaDurationSec = 14L,
-            text = "Sunset clip",
+            mediaDurationSec = 45L,
+            mediaChunkCount = 3L,
+            text = "Unlimited clip",
             createdAt = Timestamp(Date())
         )
 
@@ -1889,6 +1901,274 @@ class ExampleRobolectricTest {
         AppUpdateChecker.recordAutoCheckTimestamp(context, now)
         assertFalse(AppUpdateChecker.shouldAutoCheckNow(context, now + 60_000L))
         assertTrue(AppUpdateChecker.shouldAutoCheckNow(context, now + 5 * 60_000L + 1L))
+    }
+
+    @Test
+    fun `dob utils formats DD-MM-YYYY validates leap years and enforces adult age`() {
+        val ref = Calendar.getInstance().apply { set(2026, Calendar.NOVEMBER, 22) }
+
+        assertEquals(29, DobUtils.daysInMonth(2, 2024))
+        assertEquals(28, DobUtils.daysInMonth(2, 2023))
+
+        val missing = DobUtils.validateDob(null, 5, 1998, ref)
+        assertTrue(missing is DobValidationResult.Invalid)
+
+        val underage = DobUtils.validateDob(22, 11, 2010, ref)
+        assertTrue(underage is DobValidationResult.Invalid)
+
+        val valid = DobUtils.validateDob(5, 3, 1997, ref)
+        assertTrue(valid is DobValidationResult.Valid)
+        val validResult = valid as DobValidationResult.Valid
+        assertEquals("05-03-1997", validResult.dobFormatted)
+        assertEquals(29, validResult.age)
+
+        val parsed = DobUtils.parseDob("05-03-1997")
+        assertEquals(Triple(5, 3, 1997), parsed)
+    }
+
+    @Test
+    fun `country flags profile completion and presence labels work accurately`() {
+        assertEquals("\uD83C\uDDF3\uD83C\uDDEC", CountryFlagHelper.flagEmojiForCountry("Nigeria"))
+        assertEquals("\uD83C\uDDFA\uD83C\uDDF8", CountryFlagHelper.flagEmojiForCountry("United States"))
+        assertTrue(CountryFlagHelper.nameAgeWithFlag("Maya", 27, "Canada").contains("\uD83C\uDDE8\uD83C\uDDE6"))
+
+        val profile = PublicProfile(
+            userId = "u1",
+            displayName = "Maya",
+            age = 27,
+            gender = "Woman",
+            bio = "Coffee nerd, photographer, and weekend mountain hiker.",
+            cityLabel = "Toronto",
+            country = "Canada",
+            interests = listOf("Coffee", "Hiking", "Photography"),
+            profilePhotos = listOf("p1", "p2"),
+            verificationStatus = "VERIFIED"
+        )
+        val completion = ProfileCompletionUtils.calculate(profile, videoCount = 1)
+        assertEquals(100, completion.percentage)
+        assertTrue(completion.missingSteps.isEmpty())
+
+        val incomplete = ProfileCompletionUtils.calculate(profile.copy(bio = "Hi", profilePhotos = emptyList(), verificationStatus = "UNVERIFIED"), videoCount = 0)
+        assertTrue(incomplete.percentage < 70)
+        assertTrue(incomplete.missingSteps.isNotEmpty())
+
+        val now = 1_700_000_000_000L
+        val online = PresenceUtils.resolvePresenceDisplay(
+            UserPresence(userId = "u1", online = true, lastSeenAt = Timestamp(Date(now - 10_000L))),
+            nowMillis = now
+        )
+        assertTrue(online.isOnline)
+        assertEquals("Online", online.label)
+
+        val recentlyLeft = PresenceUtils.resolvePresenceDisplay(
+            UserPresence(userId = "u1", online = false, lastSeenAt = Timestamp(Date(now - 5 * 60_000L))),
+            nowMillis = now
+        )
+        assertFalse(recentlyLeft.isOnline)
+        assertTrue(recentlyLeft.isRecentlyLeft)
+
+        val hidden = PresenceUtils.resolvePresenceDisplay(
+            UserPresence(userId = "u1", online = true, hideOnlineStatus = true, lastSeenAt = Timestamp(Date(now))),
+            nowMillis = now
+        )
+        assertFalse(hidden.isOnline)
+        assertTrue(hidden.isHidden)
+    }
+
+    @Test
+    fun `profile setup screen has no prefilled DOB or age and saves selected DD-MM-YYYY`() {
+        var savedName = ""
+        var savedAge = 0
+        var savedDob = ""
+
+        composeTestRule.setContent {
+            KindredTheme {
+                ProfileSetupScreen(
+                    existingProfile = null,
+                    defaultDisplayName = null,
+                    latestLocation = ResolvedDeviceLocation(
+                        exactLatitude = 6.5244,
+                        exactLongitude = 3.3792,
+                        coarseLatitude = 6.52,
+                        coarseLongitude = 3.38,
+                        cityLabel = "Lagos",
+                        countryName = "Nigeria",
+                        isLiveGps = true
+                    ),
+                    isBusy = false,
+                    onSaveSetup = { name, age, dob, _, _, _, _, _, _, _, _ ->
+                        savedName = name
+                        savedAge = age
+                        savedDob = dob
+                    },
+                    onSignOut = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        // Initial age badge must show "--", never any hardcoded default age like 26
+        composeTestRule.onNodeWithText("Age: --").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("setup_full_name_input").performTextReplacement("Tunde Adeyemi")
+        composeTestRule.onNodeWithTag("setup_bio_input").performTextReplacement("Explorer, designer, and espresso fan in Lagos.")
+        composeTestRule.onNodeWithTag("setup_save_profile_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Must block submission until DOB dropdowns are chosen
+        composeTestRule.onNodeWithTag("setup_validation_error").assertIsDisplayed()
+        assertEquals("", savedDob)
+
+        composeTestRule.onNodeWithTag("setup_dob_day_dropdown").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("dob_day_option_14").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("setup_dob_month_dropdown").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("dob_month_option_6").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("setup_dob_year_dropdown").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("dob_year_option_1996").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("setup_save_profile_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("Tunde Adeyemi", savedName)
+        assertEquals("14-06-1996", savedDob)
+        assertTrue(savedAge >= 18)
+    }
+
+    @Test
+    fun `discover feed mode displays people you may know and posts with friend and like callbacks`() {
+        var addedFriendUid = ""
+        var likedPostId = ""
+        val suggested = DiscoveryCandidate(
+            profile = PublicProfile(
+                userId = "u_kemi",
+                displayName = "Kemi",
+                age = 25,
+                cityLabel = "Abuja",
+                country = "Nigeria"
+            ),
+            distanceKm = 4.5
+        )
+        val post = FeedPost(
+            id = "fp_1",
+            userId = "u_kemi",
+            authorName = "Kemi",
+            authorCountry = "Nigeria",
+            caption = "Evening coffee overlooking Victoria Island!",
+            likedByUids = listOf("u_other1", "u_other2", "u_other3")
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                DiscoverScreen(
+                    myProfile = PublicProfile(userId = "me", displayName = "Alex", age = 28),
+                    privateUser = null,
+                    geoHashMeta = null,
+                    candidates = listOf(suggested),
+                    onSwipe = { _, _ -> },
+                    onRefreshLocation = {},
+                    onLocationError = {},
+                    onUpdateFilters = { _, _, _, _, _ -> },
+                    onNavigateToProfile = {},
+                    onNavigateToVerify = {},
+                    suggestedProfiles = listOf(suggested),
+                    feedPosts = listOf(post),
+                    onFriendAction = { addedFriendUid = it.userId },
+                    onToggleFeedPostLike = { postId, _ -> likedPostId = postId }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("discover_mode_feed").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("social_timeline_feed").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("social_timeline_feed").performScrollToIndex(1)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("people_you_may_know_card_u_kemi").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("feed_add_friend_u_kemi").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("u_kemi", addedFriendUid)
+
+        composeTestRule.onNodeWithTag("social_timeline_feed").performScrollToIndex(3)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("feed_like_button_fp_1").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals("fp_1", likedPostId)
+    }
+
+    @Test
+    fun `user profile detail renders full action buttons without truncation`() {
+        var messaged = false
+        var reported = false
+        var blocked = false
+        val profile = PublicProfile(
+            userId = "u_elena",
+            displayName = "Elena",
+            age = 28,
+            cityLabel = "London",
+            country = "United Kingdom",
+            bio = "Architectural designer & jazz lover",
+            interests = listOf("Architecture", "Jazz", "Travel")
+        )
+
+        composeTestRule.setContent {
+            KindredTheme {
+                UserProfileDetailScreen(
+                    profile = profile,
+                    currentUserId = "me",
+                    videos = emptyList(),
+                    friends = emptyList(),
+                    friendStatus = FriendStatus.NONE,
+                    isBlocked = false,
+                    onBack = {},
+                    onMessageClick = { messaged = true },
+                    onFriendAction = {},
+                    onToggleLike = {},
+                    onToggleFavorite = {},
+                    onReportUser = { _, _, _ -> reported = true },
+                    onBlockUser = { blocked = true },
+                    onUnblockUser = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("user_detail_actions_row").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("user_detail_message_button").assertIsDisplayed().performClick()
+        composeTestRule.onNodeWithTag("user_detail_block_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("user_detail_confirm_block_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("user_detail_report_button").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("submit_report_button").performClick()
+        composeTestRule.waitForIdle()
+
+        assertTrue(messaged)
+        assertTrue(blocked)
+        assertTrue(reported)
+    }
+
+    @Test
+    fun `partner gallery dialog shows mixed photo and video counter`() {
+        composeTestRule.setContent {
+            KindredTheme {
+                PartnerPhotoGalleryDialog(
+                    photos = listOf("https://example.com/p1.jpg", "https://example.com/p2.jpg"),
+                    videos = listOf(ProfileVideoItem(id = "v1", userId = "bob_2", caption = "Clip", mediaDurationSec = 12L)),
+                    initialIndex = 0,
+                    partnerName = "Elena",
+                    onDismiss = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("partner_photo_gallery_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gallery_counter_label").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Media 1 of 3").assertIsDisplayed()
     }
 
     private fun hypot(dx: Float, dy: Float): Float = kotlin.math.hypot(dx, dy)

@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,19 +26,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -51,6 +58,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -72,6 +80,7 @@ import com.example.R
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
+import com.example.model.VisibilityLevel
 import com.example.notifications.KindredBackgroundService
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -97,7 +106,16 @@ fun SettingsScreen(
         verifiedOnlyFilter: Boolean,
         myGender: String?,
         discoverable: Boolean?
-    ) -> Unit
+    ) -> Unit,
+    onUpdatePrivacy: (
+        (
+            hideOnlineStatus: Boolean,
+            photosVis: String,
+            videosVis: String,
+            infoVis: String
+        ) -> Unit
+    )? = null,
+    onDeleteAccount: (() -> Unit)? = null
 ) {
     var interestedIn by remember(privateUser) {
         mutableStateOf(privateUser?.interestedIn ?: "Everyone")
@@ -120,6 +138,19 @@ fun SettingsScreen(
     var discoverable by remember(myProfile) {
         mutableStateOf(myProfile?.discoverable ?: true)
     }
+    var hideOnlineStatus by remember(myProfile, privateUser) {
+        mutableStateOf(myProfile?.hideOnlineStatus ?: privateUser?.hideOnlineStatus ?: false)
+    }
+    var photosVisibility by remember(myProfile) {
+        mutableStateOf(myProfile?.photosVisibility ?: VisibilityLevel.EVERYONE)
+    }
+    var videosVisibility by remember(myProfile) {
+        mutableStateOf(myProfile?.videosVisibility ?: VisibilityLevel.EVERYONE)
+    }
+    var infoVisibility by remember(myProfile) {
+        mutableStateOf(myProfile?.infoVisibility ?: VisibilityLevel.EVERYONE)
+    }
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
 
     val roundedDistance = maxDistanceKm.roundToInt()
     val geoPrecision = GeoHashUtils.precisionForRadiusKm(roundedDistance.toDouble())
@@ -161,6 +192,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
@@ -427,11 +459,179 @@ fun SettingsScreen(
                     }
                 }
 
+                if (onUpdatePrivacy != null && myProfile != null) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                        modifier = Modifier.testTag("settings_privacy_card")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Filled.Lock, contentDescription = null, tint = ChampagneGold, modifier = Modifier.size(18.dp))
+                                Text("Privacy & Online Visibility", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Hide Online Status", style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        text = "Hide your online dot & last seen from Active Users and profiles",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = hideOnlineStatus,
+                                    onCheckedChange = { hideOnlineStatus = it },
+                                    modifier = Modifier.testTag("settings_hide_online_switch")
+                                )
+                            }
+                            SettingsVisibilityPicker(
+                                title = "Photos visibility",
+                                current = photosVisibility,
+                                onSelect = { photosVisibility = it }
+                            )
+                            SettingsVisibilityPicker(
+                                title = "Videos visibility",
+                                current = videosVisibility,
+                                onSelect = { videosVisibility = it }
+                            )
+                            SettingsVisibilityPicker(
+                                title = "Bio & interests visibility",
+                                current = infoVisibility,
+                                onSelect = { infoVisibility = it }
+                            )
+                            FilledTonalButton(
+                                onClick = {
+                                    onUpdatePrivacy(hideOnlineStatus, photosVisibility, videosVisibility, infoVisibility)
+                                },
+                                enabled = !isBusy,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("settings_save_privacy_button")
+                            ) {
+                                Text("Save Privacy Settings")
+                            }
+                        }
+                    }
+                }
+
                 BackgroundCallsCard()
 
                 AppUpdatesCard()
 
+                if (onDeleteAccount != null) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                        modifier = Modifier.testTag("settings_delete_account_card")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "Danger Zone",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Permanently remove your Kindred profile, photos, videos, matches, and account credentials.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedButton(
+                                onClick = { showDeleteAccountDialog = true },
+                                enabled = !isBusy,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("settings_delete_account_button")
+                            ) {
+                                Icon(Icons.Filled.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Delete Account", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    if (showDeleteAccountDialog && onDeleteAccount != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAccountDialog = false },
+            title = { Text("Delete Kindred Account?") },
+            text = {
+                Text("This permanently removes your profile, discovery card, matches, and account. This action cannot be undone.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteAccountDialog = false
+                        onDeleteAccount()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete Permanently")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAccountDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SettingsVisibilityPicker(
+    title: String,
+    current: String,
+    onSelect: (String) -> Unit
+) {
+    val options = listOf(
+        VisibilityLevel.EVERYONE to "Everyone",
+        VisibilityLevel.MATCHES_AND_FRIENDS to "Matches & Friends",
+        VisibilityLevel.FRIENDS_ONLY to "Friends Only"
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(text = title, style = MaterialTheme.typography.labelLarge)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            options.forEach { (level, label) ->
+                FilterChip(
+                    selected = current == level,
+                    onClick = { onSelect(level) },
+                    label = { Text(label) }
+                )
             }
         }
     }

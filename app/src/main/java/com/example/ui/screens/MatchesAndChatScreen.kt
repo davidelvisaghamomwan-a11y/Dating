@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -65,6 +66,7 @@ import com.example.R
 import com.example.ai.IcebreakerAiUiState
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
+import com.example.model.CallVideoFrame
 import com.example.model.ChatMessage
 import com.example.model.MatchThreadItem
 import com.example.model.PublicProfile
@@ -76,7 +78,9 @@ import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
+import com.example.util.PreparedVideoUpload
 import com.google.firebase.Timestamp
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -99,6 +103,7 @@ fun MatchesAndChatScreen(
     activePartnerTyping: TypingStatus? = null,
     activeCallSession: CallSession? = null,
     activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
+    activeCallVideoFrames: List<CallVideoFrame> = emptyList(),
     icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     onSelectMatch: (String?) -> Unit,
     onOpenSearch: () -> Unit = {},
@@ -116,9 +121,27 @@ fun MatchesAndChatScreen(
             viewOnce: Boolean
         ) -> Unit
     )? = null,
+    onSendRichMessageWithReply: (
+        (
+            matchId: String,
+            participantUids: List<String>,
+            messageType: String,
+            text: String,
+            mediaDataUrl: String?,
+            mediaGifId: String?,
+            durationSec: Long,
+            disappearingSec: Long,
+            viewOnce: Boolean,
+            preparedVideo: PreparedVideoUpload?,
+            replyTo: ChatMessage?
+        ) -> Unit
+    )? = null,
     onMarkMessagesRead: (matchId: String, messageIds: List<String>) -> Unit = { _, _ -> },
     onMarkViewOnceOpened: (matchId: String, messageId: String) -> Unit = { _, _ -> },
     onDeleteExpiredMessage: (matchId: String, messageId: String) -> Unit = { _, _ -> },
+    onDeleteMessageForMe: (matchId: String, messageId: String) -> Unit = { _, _ -> },
+    onUnsendMessage: (matchId: String, messageId: String, isLastMessage: Boolean) -> Unit = { _, _, _ -> },
+    onResolveVideoFile: (suspend (ChatMessage) -> Result<File>)? = null,
     onTypingChanged: (matchId: String, isTyping: Boolean) -> Unit = { _, _ -> },
     onUpdateDisappearingTimer: (matchId: String, ttlSeconds: Long) -> Unit = { _, _ -> },
     onGenerateAiIcebreakers: (myProfile: PublicProfile?, partnerProfile: PublicProfile?, tone: String) -> Unit = { _, _, _ -> },
@@ -128,12 +151,14 @@ fun MatchesAndChatScreen(
     onToggleCallMute: (CallSession) -> Unit = {},
     onToggleCallCamera: (CallSession) -> Unit = {},
     onSendCallAudioChunk: (session: CallSession, seq: Long, sampleRateHz: Int, audioBase64: String) -> Unit = { _, _, _, _ -> },
+    onSendCallVideoFrame: (session: CallSession, seq: Long, frameBase64: String) -> Unit = { _, _, _ -> },
     onEndCall: (CallSession, Long) -> Unit = { _, _ -> },
     onUnmatch: (String) -> Unit,
     onBlockUser: (partnerId: String, partnerName: String) -> Unit = { _, _ -> },
     onReportUser: (partnerId: String, partnerName: String, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _, _ -> },
     onRetryChat: () -> Unit = {},
-    onStatusMessage: (String) -> Unit = {}
+    onStatusMessage: (String) -> Unit = {},
+    onOpenPartnerFullProfile: ((PublicProfile) -> Unit)? = null
 ) {
     val activeThread = remember(matches, selectedMatchId) {
         matches.firstOrNull { it.match.id == selectedMatchId }
@@ -174,14 +199,19 @@ fun MatchesAndChatScreen(
                             partnerTyping = activePartnerTyping,
                             activeCallSession = activeCallSession,
                             activeCallAudioChunks = activeCallAudioChunks,
+                            activeCallVideoFrames = activeCallVideoFrames,
                             icebreakerAiState = icebreakerAiState,
                             showBackButton = false,
                             onBack = { onSelectMatch(null) },
                             onSendMessage = onSendMessage,
                             onSendMediaMessage = onSendMediaMessage,
+                            onSendRichMessageWithReply = onSendRichMessageWithReply,
                             onMarkMessagesRead = onMarkMessagesRead,
                             onMarkViewOnceOpened = onMarkViewOnceOpened,
                             onDeleteExpiredMessage = onDeleteExpiredMessage,
+                            onDeleteMessageForMe = onDeleteMessageForMe,
+                            onUnsendMessage = onUnsendMessage,
+                            onResolveVideoFile = onResolveVideoFile,
                             onTypingChanged = onTypingChanged,
                             onUpdateDisappearingTimer = onUpdateDisappearingTimer,
                             onGenerateAiIcebreakers = { tone ->
@@ -193,12 +223,14 @@ fun MatchesAndChatScreen(
                             onToggleCallMute = onToggleCallMute,
                             onToggleCallCamera = onToggleCallCamera,
                             onSendCallAudioChunk = onSendCallAudioChunk,
+                            onSendCallVideoFrame = onSendCallVideoFrame,
                             onEndCall = onEndCall,
                             onUnmatch = onUnmatch,
                             onBlockUser = onBlockUser,
                             onReportUser = onReportUser,
                             onRetry = onRetryChat,
-                            onStatusMessage = onStatusMessage
+                            onStatusMessage = onStatusMessage,
+                            onOpenPartnerFullProfile = onOpenPartnerFullProfile
                         )
                     } else {
                         SelectConversationPlaceholder()
@@ -219,14 +251,19 @@ fun MatchesAndChatScreen(
                     partnerTyping = activePartnerTyping,
                     activeCallSession = activeCallSession,
                     activeCallAudioChunks = activeCallAudioChunks,
+                    activeCallVideoFrames = activeCallVideoFrames,
                     icebreakerAiState = icebreakerAiState,
                     showBackButton = true,
                     onBack = { onSelectMatch(null) },
                     onSendMessage = onSendMessage,
                     onSendMediaMessage = onSendMediaMessage,
+                    onSendRichMessageWithReply = onSendRichMessageWithReply,
                     onMarkMessagesRead = onMarkMessagesRead,
                     onMarkViewOnceOpened = onMarkViewOnceOpened,
                     onDeleteExpiredMessage = onDeleteExpiredMessage,
+                    onDeleteMessageForMe = onDeleteMessageForMe,
+                    onUnsendMessage = onUnsendMessage,
+                    onResolveVideoFile = onResolveVideoFile,
                     onTypingChanged = onTypingChanged,
                     onUpdateDisappearingTimer = onUpdateDisappearingTimer,
                     onGenerateAiIcebreakers = { tone ->
@@ -238,12 +275,14 @@ fun MatchesAndChatScreen(
                     onToggleCallMute = onToggleCallMute,
                     onToggleCallCamera = onToggleCallCamera,
                     onSendCallAudioChunk = onSendCallAudioChunk,
+                    onSendCallVideoFrame = onSendCallVideoFrame,
                     onEndCall = onEndCall,
                     onUnmatch = onUnmatch,
                     onBlockUser = onBlockUser,
                     onReportUser = onReportUser,
                     onRetry = onRetryChat,
-                    onStatusMessage = onStatusMessage
+                    onStatusMessage = onStatusMessage,
+                    onOpenPartnerFullProfile = onOpenPartnerFullProfile
                 )
             } else {
                 InboxListPane(
@@ -569,8 +608,14 @@ private fun InboxListPane(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        val partnerFlag = partner?.flagEmoji().orEmpty()
                                         Text(
-                                            text = partner?.let { "${it.displayName}, ${it.age}" } ?: "Kindred Member",
+                                            text = if (partner != null) {
+                                                if (partnerFlag.isNotBlank()) "${partner.displayName}, ${partner.age} $partnerFlag"
+                                                else "${partner.displayName}, ${partner.age}"
+                                            } else {
+                                                "Kindred Member"
+                                            },
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = if (isUnread) FontWeight.Bold else FontWeight.SemiBold,
                                             maxLines = 1,

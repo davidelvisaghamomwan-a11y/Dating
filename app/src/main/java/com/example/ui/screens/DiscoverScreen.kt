@@ -1,10 +1,14 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.view.ViewGroup
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,32 +19,49 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,13 +69,17 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -62,7 +87,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -84,14 +111,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.model.DiscoveryCandidate
+import com.example.model.FeedComment
+import com.example.model.FeedPost
+import com.example.model.FriendStatus
 import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
+import com.example.model.StoryItem
 import com.example.ui.components.LocationDistancePill
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.ReportUserDialog
+import com.example.ui.components.StoriesTrayRow
+import com.example.ui.components.StoryViewerDialog
 import com.example.ui.components.SwipeCardController
 import com.example.ui.components.SwipeCardDeck
 import com.example.ui.components.SwipeDirection
@@ -99,10 +134,19 @@ import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
+import com.example.util.CountryFlagHelper
 import com.example.util.LocationAndGeoHelper
+import com.example.util.PreparedVideoUpload
 import com.example.util.ResolvedDeviceLocation
+import com.example.util.VerificationAnalyzer
+import com.example.util.VideoClipHelper
 import com.example.viewmodel.GeoHashContextMeta
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -125,7 +169,30 @@ fun DiscoverScreen(
     latestLocation: ResolvedDeviceLocation? = null,
     onLocationPermissionGranted: () -> Unit = {},
     canUndoLastSwipe: Boolean = false,
-    onUndoSwipe: () -> Unit = {}
+    onUndoSwipe: () -> Unit = {},
+    activeOnlineCount: Int = 0,
+    onOpenActiveUsers: () -> Unit = {},
+    stories: List<StoryItem> = emptyList(),
+    onPostPhotoStory: (photoDataUrl: String, caption: String) -> Unit = { _, _ -> },
+    onPostVideoStory: (prepared: PreparedVideoUpload, caption: String) -> Unit = { _, _ -> },
+    onMarkStoryViewed: (String) -> Unit = {},
+    onDeleteStory: (String) -> Unit = {},
+    resolveStoryVideoFile: suspend (StoryItem) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    onOpenVideoFeed: () -> Unit = {},
+    suggestedProfiles: List<DiscoveryCandidate> = emptyList(),
+    feedPosts: List<FeedPost> = emptyList(),
+    currentUserId: String = myProfile?.userId ?: "",
+    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
+    onFriendAction: (PublicProfile) -> Unit = {},
+    onOpenUserProfile: (PublicProfile) -> Unit = {},
+    onOpenUserProfileById: (String) -> Unit = {},
+    onPublishFeedPost: (caption: String, photoDataUrl: String?, preparedVideo: PreparedVideoUpload?, onComplete: () -> Unit) -> Unit = { _, _, _, cb -> cb() },
+    onToggleFeedPostLike: (postId: String, currentlyLiked: Boolean) -> Unit = { _, _ -> },
+    observeFeedComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
+    onAddFeedPostComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, cb -> cb() },
+    onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
+    onDeleteFeedPost: (postId: String) -> Unit = {},
+    resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -133,6 +200,10 @@ fun DiscoverScreen(
     var blockConfirmCandidate by remember { mutableStateOf<DiscoveryCandidate?>(null) }
     var reportConfirmCandidate by remember { mutableStateOf<DiscoveryCandidate?>(null) }
     var isLocating by remember { mutableStateOf(false) }
+    var selectedMode by remember { mutableStateOf("DECK") }
+    var activeStoryIndex by remember { mutableStateOf<Int?>(null) }
+    var showPostComposerSheet by remember { mutableStateOf(false) }
+    var activeCommentsPost by remember { mutableStateOf<FeedPost?>(null) }
 
     fun fetchAndApplyGps() {
         isLocating = true
@@ -170,10 +241,14 @@ fun DiscoverScreen(
         }
     } ?: myProfile?.formattedLocation() ?: "Set location"
 
+    val peopleToKnow = remember(suggestedProfiles, candidates) {
+        (if (suggestedProfiles.isNotEmpty()) suggestedProfiles else candidates).take(20)
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
         val isWide = maxWidth >= 700.dp
 
@@ -317,12 +392,98 @@ fun DiscoverScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Compact Live Online Banner + Swipe Deck / Social Feed Switcher
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = EmeraldMint.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.45f)),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(onClick = onOpenActiveUsers)
+                        .testTag("discover_online_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(EmeraldMint)
+                        )
+                        Text(
+                            text = "$activeOnlineCount online now",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = EmeraldMint,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(
+                        selected = selectedMode == "DECK",
+                        onClick = { selectedMode = "DECK" },
+                        label = { Text("Deck") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = CoralRose.copy(alpha = 0.2f),
+                            selectedLabelColor = CoralRose
+                        ),
+                        modifier = Modifier.testTag("discover_mode_deck")
+                    )
+                    FilterChip(
+                        selected = selectedMode == "FEED",
+                        onClick = { selectedMode = "FEED" },
+                        label = { Text("Social Feed") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = CoralRose.copy(alpha = 0.2f),
+                            selectedLabelColor = CoralRose
+                        ),
+                        modifier = Modifier.testTag("discover_mode_feed")
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             if (myProfile == null) {
                 OnboardingProfilePromptCard(
                     onCreateProfile = onNavigateToProfile,
                     modifier = Modifier.weight(1f)
+                )
+            } else if (selectedMode == "FEED") {
+                SocialTimelineFeedContent(
+                    myProfile = myProfile,
+                    currentUserId = currentUserId,
+                    stories = stories,
+                    peopleToKnow = peopleToKnow,
+                    feedPosts = feedPosts,
+                    friendStatusForUid = friendStatusForUid,
+                    onOpenStory = { idx -> activeStoryIndex = idx },
+                    onPostPhotoStory = onPostPhotoStory,
+                    onPostVideoStory = onPostVideoStory,
+                    onOpenVideoFeed = onOpenVideoFeed,
+                    onLocationError = onLocationError,
+                    onOpenProfile = onOpenUserProfile,
+                    onOpenProfileById = onOpenUserProfileById,
+                    onFriendAction = onFriendAction,
+                    onOpenCreatePost = { showPostComposerSheet = true },
+                    onTogglePostLike = onToggleFeedPostLike,
+                    onOpenComments = { post -> activeCommentsPost = post },
+                    onDeletePost = onDeleteFeedPost,
+                    resolvePostVideoFile = resolveFeedPostVideoFile,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
                 )
             } else if (candidates.isEmpty()) {
                 EmptyDiscoveryCard(
@@ -372,6 +533,9 @@ fun DiscoverScreen(
                 ) { item, _ ->
                     ProfileDeckCard(
                         candidate = item,
+                        friendStatus = friendStatusForUid(item.profile.userId),
+                        onOpenProfile = { onOpenUserProfile(item.profile) },
+                        onFriendAction = { onFriendAction(item.profile) },
                         onReportClick = { reportConfirmCandidate = item },
                         onBlockClick = { blockConfirmCandidate = item },
                         modifier = Modifier.fillMaxSize()
@@ -503,6 +667,45 @@ fun DiscoverScreen(
         }
     }
 
+    activeStoryIndex?.let { startIdx ->
+        StoryViewerDialog(
+            stories = stories,
+            initialIndex = startIdx,
+            currentUserId = currentUserId,
+            resolveVideoFile = resolveStoryVideoFile,
+            onMarkViewed = onMarkStoryViewed,
+            onDeleteStory = onDeleteStory,
+            onOpenAuthorProfile = onOpenUserProfileById,
+            onDismiss = { activeStoryIndex = null }
+        )
+    }
+
+    if (showPostComposerSheet) {
+        CreateFeedPostSheet(
+            onDismiss = { showPostComposerSheet = false },
+            onPublish = { caption, photo, video ->
+                onPublishFeedPost(caption, photo, video) {
+                    showPostComposerSheet = false
+                }
+            },
+            onError = onLocationError
+        )
+    }
+
+    activeCommentsPost?.let { post ->
+        val comments by remember(post.id) { observeFeedComments(post.id) }
+            .collectAsStateWithLifecycle(initialValue = emptyList())
+        FeedPostCommentsSheet(
+            post = post,
+            comments = comments,
+            currentUserId = currentUserId,
+            onDismiss = { activeCommentsPost = null },
+            onAddComment = { text, clearCb -> onAddFeedPostComment(post.id, text, clearCb) },
+            onDeleteComment = { commentId -> onDeleteFeedPostComment(post.id, commentId) },
+            onOpenAuthorProfile = onOpenUserProfileById
+        )
+    }
+
     if (showFilterSheet) {
         DiscoveryFiltersBottomSheet(
             privateUser = privateUser,
@@ -556,10 +759,655 @@ fun DiscoverScreen(
     }
 }
 
+@Composable
+private fun SocialTimelineFeedContent(
+    myProfile: PublicProfile,
+    currentUserId: String,
+    stories: List<StoryItem>,
+    peopleToKnow: List<DiscoveryCandidate>,
+    feedPosts: List<FeedPost>,
+    friendStatusForUid: (String) -> FriendStatus,
+    onOpenStory: (Int) -> Unit,
+    onPostPhotoStory: (String, String) -> Unit,
+    onPostVideoStory: (PreparedVideoUpload, String) -> Unit,
+    onOpenVideoFeed: () -> Unit,
+    onLocationError: (String) -> Unit,
+    onOpenProfile: (PublicProfile) -> Unit,
+    onOpenProfileById: (String) -> Unit,
+    onFriendAction: (PublicProfile) -> Unit,
+    onOpenCreatePost: () -> Unit,
+    onTogglePostLike: (String, Boolean) -> Unit,
+    onOpenComments: (FeedPost) -> Unit,
+    onDeletePost: (String) -> Unit,
+    resolvePostVideoFile: suspend (FeedPost) -> Result<File>,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        modifier = modifier.testTag("social_timeline_feed"),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item(key = "stories_row") {
+            StoriesTrayRow(
+                myProfile = myProfile,
+                stories = stories,
+                currentUserId = currentUserId,
+                onOpenStory = onOpenStory,
+                onPostPhotoStory = onPostPhotoStory,
+                onPostVideoStory = onPostVideoStory,
+                onOpenVideoFeed = onOpenVideoFeed,
+                onStatusMessage = onLocationError
+            )
+        }
+
+        if (peopleToKnow.isNotEmpty()) {
+            item(key = "people_you_may_know_section") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "People You May Know",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 2.dp),
+                        modifier = Modifier.testTag("people_you_may_know_list")
+                    ) {
+                        items(peopleToKnow, key = { it.profile.userId }) { candidate ->
+                            val person = candidate.profile
+                            val flag = person.flagEmoji()
+                            val fStatus = friendStatusForUid(person.userId)
+                            Card(
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                                modifier = Modifier
+                                    .width(166.dp)
+                                    .clickable { onOpenProfile(person) }
+                                    .testTag("people_you_may_know_card_${person.userId}")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    ProfileAvatarImage(
+                                        photoDataUrl = person.photoDataUrl,
+                                        displayName = person.displayName,
+                                        seed = person.avatarSeed,
+                                        modifier = Modifier.size(64.dp),
+                                        shape = CircleShape,
+                                        initialsFontSizeSp = 20
+                                    )
+                                    Text(
+                                        text = buildString {
+                                            append("${person.displayName}, ${person.age}")
+                                            if (flag.isNotBlank()) append(" $flag")
+                                        },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = person.bio.ifBlank { person.formattedLocation() },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    val friendBtnLabel = when (fStatus) {
+                                        FriendStatus.NONE -> "Add Friend"
+                                        FriendStatus.OUTGOING_PENDING -> "Request Sent"
+                                        FriendStatus.INCOMING_PENDING -> "Accept"
+                                        FriendStatus.FRIENDS -> "Friends ✓"
+                                    }
+                                    FilledTonalButton(
+                                        onClick = { onFriendAction(person) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .minimumInteractiveComponentSize()
+                                            .testTag("feed_add_friend_${person.userId}")
+                                    ) {
+                                        Text(friendBtnLabel, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item(key = "friends_posts_header") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Friends' Posts",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Button(
+                    onClick = onOpenCreatePost,
+                    colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
+                    modifier = Modifier.testTag("create_feed_post_button")
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Create Post")
+                }
+            }
+        }
+
+        if (feedPosts.isEmpty()) {
+            item(key = "empty_feed_posts") {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("No timeline posts yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "Share your first photo, clip, or update with friends and connections.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        } else {
+            items(feedPosts, key = { it.id }) { post ->
+                SocialFeedPostCard(
+                    post = post,
+                    currentUserId = currentUserId,
+                    resolveVideoFile = resolvePostVideoFile,
+                    onToggleLike = { onTogglePostLike(post.id, currentUserId in post.likedByUids) },
+                    onOpenComments = { onOpenComments(post) },
+                    onDeletePost = { onDeletePost(post.id) },
+                    onOpenAuthor = { onOpenProfileById(post.userId) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SocialFeedPostCard(
+    post: FeedPost,
+    currentUserId: String,
+    resolveVideoFile: suspend (FeedPost) -> Result<File>,
+    onToggleLike: () -> Unit,
+    onOpenComments: () -> Unit,
+    onDeletePost: () -> Unit,
+    onOpenAuthor: () -> Unit
+) {
+    val context = LocalContext.current
+    val isLiked = currentUserId in post.likedByUids
+    val flag = CountryFlagHelper.flagEmojiForCountry(post.authorCountry.orEmpty())
+    val timeLabel = remember(post.createdAt) {
+        post.createdAt?.toDate()?.let {
+            SimpleDateFormat("MMM d • h:mm a", Locale.getDefault()).format(it)
+        } ?: "Just now"
+    }
+    var playVideo by remember(post.id) { mutableStateOf(false) }
+    var resolvedVideoFile by remember(post.id) { mutableStateOf<File?>(null) }
+    var loadingVideo by remember(post.id) { mutableStateOf(false) }
+
+    LaunchedEffect(post.id, playVideo) {
+        if (post.mediaType == "VIDEO" && playVideo && resolvedVideoFile == null && !loadingVideo) {
+            loadingVideo = true
+            resolvedVideoFile = resolveVideoFile(post).getOrNull()
+            loadingVideo = false
+        }
+    }
+
+    Card(
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("feed_post_card_${post.id}")
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onOpenAuthor)
+                ) {
+                    ProfileAvatarImage(
+                        photoDataUrl = post.authorPhoto,
+                        displayName = post.authorName.ifBlank { "Member" },
+                        seed = post.userId,
+                        modifier = Modifier.size(42.dp),
+                        shape = CircleShape,
+                        initialsFontSizeSp = 15
+                    )
+                    Column {
+                        Text(
+                            text = buildString {
+                                append(post.authorName.ifBlank { "Kindred Member" })
+                                if (flag.isNotBlank()) append(" $flag")
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = buildString {
+                                if (!post.authorCity.isNullOrBlank()) {
+                                    append(post.authorCity)
+                                    append(" • ")
+                                }
+                                append(timeLabel)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (post.userId == currentUserId) {
+                    IconButton(onClick = onDeletePost) {
+                        Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete post")
+                    }
+                }
+            }
+
+            if (post.caption.isNotBlank()) {
+                Text(text = post.caption, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            if (post.mediaType == "PHOTO" && !post.mediaDataUrl.isNullOrBlank()) {
+                val bmp = remember(post.mediaDataUrl) {
+                    VerificationAnalyzer.decodeBase64DataUrl(post.mediaDataUrl)
+                }
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = "Post photo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                    )
+                }
+            } else if (post.mediaType == "VIDEO") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF141118))
+                        .clickable { playVideo = true }
+                ) {
+                    val file = resolvedVideoFile
+                    if (playVideo && file != null) {
+                        AndroidView(
+                            factory = { ctx ->
+                                VideoView(ctx).apply {
+                                    val videoView = this
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                    val ctrl = MediaController(ctx).apply { setAnchorView(videoView) }
+                                    setMediaController(ctrl)
+                                    setVideoURI(Uri.fromFile(file))
+                                    setOnPreparedListener { mp ->
+                                        mp.isLooping = true
+                                        start()
+                                    }
+                                }
+                            },
+                            onRelease = { runCatching { it.stopPlayback() } },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        val thumb = remember(post.thumbnailDataUrl) {
+                            post.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                        }
+                        if (thumb != null) {
+                            Image(
+                                bitmap = thumb,
+                                contentDescription = "Video preview",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        if (loadingVideo) {
+                            CircularProgressIndicator(color = CoralRose, modifier = Modifier.align(Alignment.Center))
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = "Play video",
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .align(Alignment.Center)
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onToggleLike,
+                        modifier = Modifier.testTag("feed_like_button_${post.id}")
+                    ) {
+                        Icon(
+                            imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = "Like post",
+                            tint = if (isLiked) CoralRose else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = "${post.likedByUids.size}",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    IconButton(
+                        onClick = onOpenComments,
+                        modifier = Modifier.testTag("feed_comment_button_${post.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ChatBubbleOutline,
+                            contentDescription = "Comments",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = "${post.commentCount}",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+
+                IconButton(
+                    onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "${post.authorName} shared on Kindred: ${post.caption.ifBlank { "Check out my post on Kindred!" }}"
+                            )
+                        }
+                        runCatching {
+                            context.startActivity(Intent.createChooser(shareIntent, "Share post"))
+                        }
+                    },
+                    modifier = Modifier.testTag("feed_share_button_${post.id}")
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = "Share post", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CreateFeedPostSheet(
+    onDismiss: () -> Unit,
+    onPublish: (caption: String, photoDataUrl: String?, preparedVideo: PreparedVideoUpload?) -> Unit,
+    onError: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var caption by remember { mutableStateOf("") }
+    var photoDataUrl by remember { mutableStateOf<String?>(null) }
+    var preparedVideo by remember { mutableStateOf<PreparedVideoUpload?>(null) }
+    var preparing by remember { mutableStateOf(false) }
+
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                preparing = true
+                val res = VerificationAnalyzer.compressUriToDataUrl(context, uri)
+                preparing = false
+                if (res != null) {
+                    preparedVideo = null
+                    photoDataUrl = res
+                } else {
+                    onError("Could not process photo")
+                }
+            }
+        }
+    }
+
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                preparing = true
+                VideoClipHelper.prepareVideoForUpload(context, uri)
+                    .onSuccess { clip ->
+                        photoDataUrl = null
+                        preparedVideo = clip
+                    }
+                    .onFailure { onError(it.localizedMessage ?: "Could not prepare video") }
+                preparing = false
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .padding(bottom = 24.dp)
+                .testTag("create_feed_post_sheet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Create Timeline Post", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = caption,
+                onValueChange = { if (it.length <= 500) caption = it },
+                label = { Text("What's on your mind?") },
+                minLines = 3,
+                maxLines = 5,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("create_post_caption_input")
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (photoDataUrl != null) "Photo ✓" else "Photo")
+                }
+                OutlinedButton(
+                    onClick = {
+                        videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.VideoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (preparedVideo != null) "Video ✓" else "Video")
+                }
+            }
+
+            if (preparing) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+
+            Button(
+                onClick = { onPublish(caption.trim(), photoDataUrl, preparedVideo) },
+                enabled = !preparing && (caption.isNotBlank() || photoDataUrl != null || preparedVideo != null),
+                colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("submit_feed_post_button")
+            ) {
+                Text("Publish Post", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FeedPostCommentsSheet(
+    post: FeedPost,
+    comments: List<FeedComment>,
+    currentUserId: String,
+    onDismiss: () -> Unit,
+    onAddComment: (text: String, onDone: () -> Unit) -> Unit,
+    onDeleteComment: (commentId: String) -> Unit,
+    onOpenAuthorProfile: (String) -> Unit
+) {
+    var commentDraft by remember(post.id) { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 20.dp)
+                .testTag("feed_comments_sheet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Comments (${comments.size})",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+
+            if (comments.isEmpty()) {
+                Text(
+                    text = "Be the first to leave a comment.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(comments, key = { it.id }) { comment ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            ProfileAvatarImage(
+                                photoDataUrl = comment.authorPhoto,
+                                displayName = comment.authorName.ifBlank { "Member" },
+                                seed = comment.userId,
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clickable {
+                                        onDismiss()
+                                        onOpenAuthorProfile(comment.userId)
+                                    },
+                                shape = CircleShape,
+                                initialsFontSizeSp = 13
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = comment.authorName.ifBlank { "Member" },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = comment.text,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            if (comment.userId == currentUserId) {
+                                IconButton(onClick = { onDeleteComment(comment.id) }) {
+                                    Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete comment", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = commentDraft,
+                    onValueChange = { if (it.length <= 400) commentDraft = it },
+                    placeholder = { Text("Write a comment…") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("feed_comment_input")
+                )
+                IconButton(
+                    onClick = {
+                        val txt = commentDraft.trim()
+                        if (txt.isNotEmpty()) {
+                            onAddComment(txt) { commentDraft = "" }
+                        }
+                    },
+                    enabled = commentDraft.isNotBlank(),
+                    modifier = Modifier.testTag("send_feed_comment_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send comment", tint = CoralRose)
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileDeckCard(
     candidate: DiscoveryCandidate,
+    friendStatus: FriendStatus = FriendStatus.NONE,
+    onOpenProfile: () -> Unit = {},
+    onFriendAction: () -> Unit = {},
     onReportClick: () -> Unit = {},
     onBlockClick: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -572,6 +1420,7 @@ private fun ProfileDeckCard(
         mutableStateOf(0)
     }
     val displayedPhoto = photos.getOrNull(activePhotoIndex.coerceIn(0, (photos.size - 1).coerceAtLeast(0)))
+    val flag = profile.flagEmoji()
 
     Card(
         modifier = modifier.testTag("discovery_profile_card"),
@@ -655,7 +1504,7 @@ private fun ProfileDeckCard(
                     }
                 }
 
-                // Top Badges Row: Location Distance + Verification Shield
+                // Top Badges Row: Location Distance + Add Friend / Verification / Report / Block
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -671,6 +1520,28 @@ private fun ProfileDeckCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        IconButton(
+                            onClick = onFriendAction,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("discover_add_friend_button")
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.55f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (friendStatus == FriendStatus.FRIENDS) Icons.Filled.Check else Icons.Filled.PersonAdd,
+                                        contentDescription = "Add friend",
+                                        tint = if (friendStatus == FriendStatus.FRIENDS) EmeraldMint else Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
                         VerifiedShieldBadge(
                             isVerified = profile.isProfileVerified,
                             score = profile.verificationScore.toInt()
@@ -723,19 +1594,24 @@ private fun ProfileDeckCard(
                 }
             }
 
-            // Bottom Profile Details Overlay
+            // Bottom Profile Details Overlay (clickable -> full UserProfileDetailScreen)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomStart)
+                    .clickable(onClick = onOpenProfile)
                     .padding(20.dp)
+                    .testTag("discover_card_open_profile_area")
             ) {
                 Row(
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "${profile.displayName}, ${profile.age}",
+                        text = buildString {
+                            append("${profile.displayName}, ${profile.age}")
+                            if (flag.isNotBlank()) append(" $flag")
+                        },
                         style = MaterialTheme.typography.displaySmall,
                         color = Color.White,
                         maxLines = 1,
@@ -981,6 +1857,7 @@ private fun DiscoveryFiltersBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 12.dp)
                 .padding(bottom = 24.dp)
         ) {

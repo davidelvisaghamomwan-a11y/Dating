@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
@@ -82,9 +83,9 @@ import com.example.model.ChatMessage
 import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
-import com.example.ui.theme.EmeraldMint
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.delay
+import java.io.File
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -470,6 +471,8 @@ internal fun UnmatchOrBlockDialog(
 @Composable
 internal fun MediaViewerDialog(
     message: ChatMessage,
+    resolveVideoFile: (suspend (ChatMessage) -> Result<File>)? = null,
+    onDownloadMedia: ((ChatMessage) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -483,13 +486,40 @@ internal fun MediaViewerDialog(
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
     }
-    val videoFile = remember(message.id, message.mediaDataUrl, isVideo) {
-        if (!isVideo) null
-        else VideoClipHelper.materializeVideoFile(
-            context = context,
-            messageId = message.id.ifBlank { "video_preview" },
-            mediaDataUrl = message.mediaDataUrl
+
+    var resolvedVideoFile by remember(message.id, message.mediaDataUrl, isVideo) {
+        mutableStateOf(
+            if (!isVideo) null
+            else VideoClipHelper.materializeVideoFile(
+                context = context,
+                messageId = message.id.ifBlank { "video_preview" },
+                mediaDataUrl = message.mediaDataUrl
+            )
         )
+    }
+    var isLoadingVideo by remember(message.id, isVideo) {
+        mutableStateOf(isVideo && resolvedVideoFile == null)
+    }
+    var videoLoadError by remember(message.id) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(message.id, isVideo) {
+        if (isVideo && resolvedVideoFile == null) {
+            if (resolveVideoFile != null) {
+                isLoadingVideo = true
+                resolveVideoFile(message)
+                    .onSuccess { file ->
+                        resolvedVideoFile = file
+                        isLoadingVideo = false
+                    }
+                    .onFailure { err ->
+                        videoLoadError = err.localizedMessage ?: "Unable to load video stream."
+                        isLoadingVideo = false
+                    }
+            } else {
+                isLoadingVideo = false
+                videoLoadError = "Video file unavailable."
+            }
+        }
     }
 
     var remainingSec by remember(message.id) { mutableLongStateOf(if (message.viewOnce) 10L else 0L) }
@@ -536,7 +566,7 @@ internal fun MediaViewerDialog(
                         isVideo -> {
                             Surface(shape = CircleShape, color = CoralRose.copy(alpha = 0.25f)) {
                                 Text(
-                                    text = "Short Video • ${VideoClipHelper.formatDurationLabel(message.mediaDurationSec)}",
+                                    text = "Video • ${VideoClipHelper.formatDurationLabel(message.mediaDurationSec)}",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
@@ -545,11 +575,39 @@ internal fun MediaViewerDialog(
                         }
                         else -> Spacer(modifier = Modifier.width(1.dp))
                     }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close preview", tint = Color.White)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (onDownloadMedia != null && !message.viewOnce) {
+                            IconButton(
+                                onClick = { onDownloadMedia(message) },
+                                modifier = Modifier.testTag("viewer_download_media_button")
+                            ) {
+                                Icon(Icons.Filled.Download, contentDescription = "Save to device", tint = Color.White)
+                            }
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close preview", tint = Color.White)
+                        }
                     }
                 }
-                if (isVideo && videoFile != null) {
+                if (isVideo && isLoadingVideo) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(260.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(color = CoralRose)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Preparing high-resolution video…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
+                } else if (isVideo && resolvedVideoFile != null) {
+                    val fileToPlay = resolvedVideoFile!!
                     AndroidView(
                         factory = { ctx ->
                             VideoView(ctx).apply {
@@ -561,7 +619,7 @@ internal fun MediaViewerDialog(
                                     setAnchorView(this@apply)
                                 }
                                 setMediaController(controller)
-                                setVideoURI(Uri.fromFile(videoFile))
+                                setVideoURI(Uri.fromFile(fileToPlay))
                                 setOnPreparedListener { mp ->
                                     mp.isLooping = true
                                     start()
@@ -588,7 +646,7 @@ internal fun MediaViewerDialog(
                     )
                 } else if (isVideo) {
                     Text(
-                        text = "Unable to decode short video clip.",
+                        text = videoLoadError ?: "Unable to decode video clip.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.8f),
                         modifier = Modifier.padding(vertical = 32.dp)

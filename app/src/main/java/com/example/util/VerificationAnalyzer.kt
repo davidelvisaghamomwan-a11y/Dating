@@ -424,14 +424,14 @@ object VerificationAnalyzer {
 
     fun compressBitmapToDataUrl(bitmap: Bitmap): String {
         val resized = resizeToMaxDim(bitmap, maxDim = 420)
-        var quality = 82
+        var quality = 78
         var bytes: ByteArray
         do {
             val out = ByteArrayOutputStream()
             resized.compress(Bitmap.CompressFormat.JPEG, quality, out)
             bytes = out.toByteArray()
             quality -= 8
-        } while (bytes.size > 95_000 && quality >= 38)
+        } while (bytes.size > 52_000 && quality >= 30)
 
         val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
         return "data:image/jpeg;base64,$encoded"

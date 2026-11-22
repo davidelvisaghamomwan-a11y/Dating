@@ -28,6 +28,8 @@ object KindredNotificationHelper {
     const val TYPE_NEW_MESSAGE = "NEW_MESSAGE"
     const val TYPE_INCOMING_CALL = "INCOMING_CALL"
     const val TYPE_APP_UPDATE = "APP_UPDATE"
+    const val TYPE_FRIEND_REQUEST = "FRIEND_REQUEST"
+    const val TYPE_PROFILE_LIKE = "PROFILE_LIKE"
 
     const val EXTRA_MATCH_ID = "extra_match_id"
     const val EXTRA_CALL_ID = "extra_call_id"
@@ -204,6 +206,41 @@ object KindredNotificationHelper {
         postNotificationSafely(
             context = context,
             notificationId = ("msg_${matchId ?: senderName}").hashCode(),
+            notification = notification
+        )
+    }
+
+    fun showSocialNotification(
+        context: Context,
+        title: String,
+        body: String,
+        notificationType: String,
+        tagKey: String
+    ) {
+        if (!hasNotificationPermission(context)) return
+        ensureChannels(context)
+
+        val contentIntent = buildLaunchIntent(context, null, notificationType)
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            ("social_$tagKey").hashCode(),
+            contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_MATCHES)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        postNotificationSafely(
+            context = context,
+            notificationId = ("social_$tagKey").hashCode(),
             notification = notification
         )
     }

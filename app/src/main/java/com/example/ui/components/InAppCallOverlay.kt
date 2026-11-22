@@ -2,11 +2,20 @@ package com.example.ui.components
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
+import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
+import android.util.Base64
 import android.util.Log
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -16,6 +25,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +38,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -65,6 +74,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -81,11 +92,15 @@ import com.example.communication.CallRingtoneController
 import com.example.communication.LiveCallAudioEngine
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
+import com.example.model.CallVideoFrame
 import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import kotlinx.coroutines.delay
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 private const val TAG = "InAppCallOverlay"
 
@@ -99,6 +114,7 @@ internal fun IncomingCallBanner(
 ) {
     val isVideo = session.callType == "VIDEO"
     val callerName = partner?.displayName ?: "Kindred Match"
+    val flag = partner?.flagEmoji().orEmpty()
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -124,11 +140,19 @@ internal fun IncomingCallBanner(
                 initialsFontSizeSp = 18
             )
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = callerName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = callerName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (flag.isNotBlank()) {
+                        Text(text = flag, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
                 Text(
                     text = if (isVideo) "Incoming in-app video call…" else "Incoming in-app voice call…",
                     style = MaterialTheme.typography.bodySmall,
@@ -170,6 +194,7 @@ internal fun FullscreenIncomingCallDialog(
 ) {
     val isVideo = session.callType == "VIDEO"
     val callerName = partner?.displayName ?: "Kindred Match"
+    val flag = partner?.flagEmoji().orEmpty()
     val locationLabel = partner?.formattedLocation()?.takeIf { it.isNotBlank() }
 
     val pulseTransition = rememberInfiniteTransition(label = "incomingRingPulse")
@@ -240,12 +265,20 @@ internal fun FullscreenIncomingCallDialog(
 
                 Spacer(modifier = Modifier.height(28.dp))
 
-                Text(
-                    text = callerName,
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = callerName,
+                        style = MaterialTheme.typography.displaySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    if (flag.isNotBlank()) {
+                        Text(text = flag, style = MaterialTheme.typography.headlineMedium)
+                    }
+                }
 
                 if (locationLabel != null) {
                     Spacer(modifier = Modifier.height(6.dp))
@@ -360,7 +393,9 @@ internal fun InAppCallOverlay(
     currentUserId: String,
     partner: PublicProfile?,
     incomingAudioChunks: List<CallAudioChunk> = emptyList(),
+    incomingVideoFrames: List<CallVideoFrame> = emptyList(),
     onSendAudioChunk: (seq: Long, sampleRateHz: Int, audioBase64: String) -> Unit = { _, _, _ -> },
+    onSendVideoFrame: (seq: Long, frameBase64: String) -> Unit = { _, _ -> },
     onToggleMute: () -> Unit,
     onToggleCamera: () -> Unit,
     onEndCall: (durationSeconds: Long) -> Unit
@@ -370,8 +405,10 @@ internal fun InAppCallOverlay(
     val isCaller = session.callerUid == currentUserId
     val isMuted = if (isCaller) session.callerMuted else session.calleeMuted
     val isMyCameraOn = if (isCaller) session.callerCameraOn else session.calleeCameraOn
+    val isPartnerCameraOn = if (isCaller) session.calleeCameraOn else session.callerCameraOn
     val isPartnerMuted = if (isCaller) session.calleeMuted else session.callerMuted
     val partnerName = partner?.displayName ?: "Kindred Match"
+    val partnerFlag = partner?.flagEmoji().orEmpty()
 
     var useFrontCamera by remember { mutableStateOf(true) }
     var speakerOn by remember { mutableStateOf(isVideo) }
@@ -381,10 +418,24 @@ internal fun InAppCallOverlay(
     val ringtoneController = remember(context) { CallRingtoneController(context.applicationContext) }
     val playedChunkKeys = remember(session.id) { linkedSetOf<String>() }
     val latestOnSendAudioChunk by rememberUpdatedState(onSendAudioChunk)
+    val latestOnSendVideoFrame by rememberUpdatedState(onSendVideoFrame)
 
     val localMicLevel by audioEngine.localMicLevel.collectAsStateWithLifecycle()
     val remoteAudioLevel by audioEngine.remoteAudioLevel.collectAsStateWithLifecycle()
     val isAudioHardwareActive by audioEngine.isAudioHardwareActive.collectAsStateWithLifecycle()
+
+    val latestRemoteFrame = remember(incomingVideoFrames, currentUserId) {
+        incomingVideoFrames
+            .filter { it.senderUid != currentUserId && it.frameBase64.isNotBlank() }
+            .maxByOrNull { it.seq }
+    }
+    val remoteVideoBitmap = remember(latestRemoteFrame?.seq, latestRemoteFrame?.frameBase64) {
+        val raw = latestRemoteFrame?.frameBase64 ?: return@remember null
+        runCatching {
+            val bytes = Base64.decode(raw, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }.getOrNull()
+    }
 
     val requiredPerms = remember(isVideo) {
         if (isVideo) {
@@ -498,7 +549,7 @@ internal fun InAppCallOverlay(
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 28.dp),
+                    .padding(top = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Surface(
@@ -520,13 +571,21 @@ internal fun InAppCallOverlay(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                     )
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = partnerName,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = partnerName,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    if (partnerFlag.isNotBlank()) {
+                        Text(text = partnerFlag, style = MaterialTheme.typography.titleLarge)
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = buildString {
@@ -578,41 +637,115 @@ internal fun InAppCallOverlay(
                 }
             }
 
-            // Center visual stage + optional CameraX local feed
+            // Center Video Stage: Remote partner video full-size + Local camera Picture-in-Picture
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .padding(vertical = 84.dp),
                 contentAlignment = Alignment.Center
             ) {
-                if (isVideo && isMyCameraOn && hasCallPermissions) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                if (isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(410.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xFF0E0B14))
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(width = 240.dp, height = 310.dp)
-                                .clip(RoundedCornerShape(24.dp))
-                                .background(Color.Black)
-                        ) {
-                            CallCameraPreview(
-                                useFrontCamera = useFrontCamera,
-                                modifier = Modifier.fillMaxSize()
+                        if (session.status == "ACTIVE" && remoteVideoBitmap != null && isPartnerCameraOn) {
+                            Image(
+                                bitmap = remoteVideoBitmap,
+                                contentDescription = "$partnerName video stream",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("remote_call_video_feed")
                             )
                             Surface(
                                 shape = CircleShape,
                                 color = Color.Black.copy(alpha = 0.55f),
                                 modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(10.dp)
+                                    .align(Alignment.TopStart)
+                                    .padding(12.dp)
                             ) {
                                 Text(
-                                    text = "Your Camera",
+                                    text = partnerName,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color.White,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                 )
+                            }
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(20.dp)
+                                    .testTag("remote_video_placeholder"),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ProfileAvatarImage(
+                                    photoDataUrl = partner?.photoDataUrl,
+                                    displayName = partnerName,
+                                    seed = partner?.avatarSeed ?: session.calleeUid,
+                                    modifier = Modifier.size(104.dp),
+                                    initialsFontSizeSp = 36
+                                )
+                                Text(
+                                    text = when {
+                                        session.status != "ACTIVE" -> "Waiting for $partnerName to answer…"
+                                        !isPartnerCameraOn -> "$partnerName's camera is off"
+                                        else -> "Receiving $partnerName's video stream…"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.78f)
+                                )
+                                if (!hasCallPermissions) {
+                                    Button(
+                                        onClick = { permissionLauncher.launch(requiredPerms) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
+                                    ) {
+                                        Text("Grant Mic & Camera Access")
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isMyCameraOn && hasCallPermissions) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(12.dp)
+                                    .size(width = 112.dp, height = 152.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color.Black)
+                                    .border(1.5.dp, Color.White.copy(alpha = 0.75f), RoundedCornerShape(16.dp))
+                                    .testTag("local_call_pip_preview")
+                            ) {
+                                CallCameraPreview(
+                                    useFrontCamera = useFrontCamera,
+                                    streamFrames = session.status == "ACTIVE",
+                                    onSendVideoFrame = { seq, b64 ->
+                                        latestOnSendVideoFrame(seq, b64)
+                                    },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.6f),
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(6.dp)
+                                ) {
+                                    Text(
+                                        text = "You",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -631,7 +764,7 @@ internal fun InAppCallOverlay(
                                 onClick = { permissionLauncher.launch(requiredPerms) },
                                 colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
                             ) {
-                                Text("Grant Mic & Camera Access")
+                                Text("Grant Mic Access")
                             }
                         }
                     }
@@ -646,7 +779,7 @@ internal fun InAppCallOverlay(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(bottom = 18.dp)
+                    .padding(bottom = 14.dp)
             ) {
                 Row(
                     modifier = Modifier
@@ -741,15 +874,29 @@ private fun CallControlIcon(
 @Composable
 private fun CallCameraPreview(
     useFrontCamera: Boolean,
+    streamFrames: Boolean,
+    onSendVideoFrame: (seq: Long, frameBase64: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var cameraBindError by remember { mutableIntStateOf(0) }
+    val latestOnSend by rememberUpdatedState(onSendVideoFrame)
+    val latestStreamFrames by rememberUpdatedState(streamFrames)
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
+    val frameSeq = remember { AtomicLong(0L) }
+    val lastSentMs = remember { AtomicLong(0L) }
+    var lastBoundKey by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { analysisExecutor.shutdownNow() }
+        }
+    }
 
     if (cameraBindError > 0) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            Text("Camera preview unavailable", style = MaterialTheme.typography.labelSmall, color = Color.White)
+            Text("Camera unavailable", style = MaterialTheme.typography.labelSmall, color = Color.White)
         }
         return
     }
@@ -765,6 +912,10 @@ private fun CallCameraPreview(
             }
         },
         update = { previewView ->
+            val bindKey = "${useFrontCamera}_$streamFrames"
+            if (lastBoundKey == bindKey) return@AndroidView
+            lastBoundKey = bindKey
+
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
             cameraProviderFuture.addListener(
                 {
@@ -779,7 +930,30 @@ private fun CallCameraPreview(
                             CameraSelector.DEFAULT_BACK_CAMERA
                         }
                         cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+                        if (streamFrames) {
+                            val analyzer = ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+                            analyzer.setAnalyzer(analysisExecutor) { imageProxy ->
+                                try {
+                                    val now = System.currentTimeMillis()
+                                    if (latestStreamFrames && (now - lastSentMs.get()) >= 250L) {
+                                        lastSentMs.set(now)
+                                        encodeImageProxyToBase64(imageProxy)?.let { encoded ->
+                                            val seq = frameSeq.incrementAndGet()
+                                            latestOnSend(seq, encoded)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Frame analyze error", e)
+                                } finally {
+                                    imageProxy.close()
+                                }
+                            }
+                            cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, analyzer)
+                        } else {
+                            cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Call camera preview failed to bind", e)
                         cameraBindError += 1
@@ -790,4 +964,55 @@ private fun CallCameraPreview(
         },
         modifier = modifier
     )
+}
+
+private fun encodeImageProxyToBase64(image: ImageProxy): String? {
+    if (image.format != ImageFormat.YUV_420_888 || image.planes.size < 3) return null
+    val yBuffer = image.planes[0].buffer
+    val uBuffer = image.planes[1].buffer
+    val vBuffer = image.planes[2].buffer
+
+    val ySize = yBuffer.remaining()
+    val uSize = uBuffer.remaining()
+    val vSize = vBuffer.remaining()
+    val nv21 = ByteArray(ySize + uSize + vSize)
+
+    yBuffer.get(nv21, 0, ySize)
+    vBuffer.get(nv21, ySize, vSize)
+    uBuffer.get(nv21, ySize + vSize, uSize)
+
+    val yuv = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+    val rawOut = ByteArrayOutputStream()
+    yuv.compressToJpeg(Rect(0, 0, image.width, image.height), 58, rawOut)
+    val jpegBytes = rawOut.toByteArray()
+    val decoded = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size) ?: return null
+
+    val rotation = image.imageInfo.rotationDegrees
+    val rotated = if (rotation != 0) {
+        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+            .also { decoded.recycle() }
+    } else {
+        decoded
+    }
+
+    val maxDim = 280
+    val scale = minOf(maxDim.toFloat() / rotated.width.coerceAtLeast(1), maxDim.toFloat() / rotated.height.coerceAtLeast(1), 1f)
+    val finalBmp = if (scale < 1f) {
+        Bitmap.createScaledBitmap(
+            rotated,
+            (rotated.width * scale).toInt().coerceAtLeast(1),
+            (rotated.height * scale).toInt().coerceAtLeast(1),
+            true
+        ).also { rotated.recycle() }
+    } else {
+        rotated
+    }
+
+    val finalOut = ByteArrayOutputStream()
+    finalBmp.compress(Bitmap.CompressFormat.JPEG, 52, finalOut)
+    finalBmp.recycle()
+    val compressed = finalOut.toByteArray()
+    if (compressed.size > 110_000) return null
+    return Base64.encodeToString(compressed, Base64.NO_WRAP)
 }

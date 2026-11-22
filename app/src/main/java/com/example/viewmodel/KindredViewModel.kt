@@ -1,36 +1,55 @@
 package com.example.viewmodel
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
 import com.example.data.KindredRepository
+import com.example.data.SocialAndMediaRepository
+import com.example.model.ActiveMemberPresenceItem
 import com.example.model.BlockRecord
 import com.example.model.BlockedUserItem
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
+import com.example.model.CallVideoFrame
 import com.example.model.ChatMessage
 import com.example.model.DiscoveryCandidate
+import com.example.model.FavoriteRecord
+import com.example.model.FeedComment
+import com.example.model.FeedPost
+import com.example.model.FriendRequestRecord
+import com.example.model.FriendshipRecord
 import com.example.model.KindredConstants
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
 import com.example.model.PrivateUser
+import com.example.model.ProfileLikeRecord
+import com.example.model.ProfileVideoItem
+import com.example.model.ProfileViewRecord
 import com.example.model.PublicProfile
+import com.example.model.ReportRecord
+import com.example.model.StoryItem
+import com.example.model.SuggestedFriendItem
 import com.example.model.SwipeRecord
 import com.example.model.TypingStatus
 import com.example.model.UiState
 import com.example.model.UserPresence
 import com.example.model.VerificationChallenge
 import com.example.model.VerificationRecord
+import com.example.model.VideoPost
 import com.example.service.GeoHashMatchingService
 import com.example.service.GeoHashSpatialSnapshot
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
+import com.example.util.PreparedVideoUpload
+import com.example.util.PresenceUtils
 import com.example.util.ResolvedDeviceLocation
 import com.example.util.VerificationAnalyzer
 import com.google.firebase.Timestamp
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
@@ -52,6 +71,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.File
 import java.util.UUID
 
 sealed interface KindredPushAlert {
@@ -63,6 +83,8 @@ sealed interface KindredPushAlert {
         val callerName: String,
         val callType: String
     ) : KindredPushAlert
+    data class FriendRequestAlert(val fromUid: String, val fromName: String) : KindredPushAlert
+    data class ProfileLikeAlert(val fromUid: String, val fromName: String) : KindredPushAlert
 }
 
 data class IncomingCallAlert(
@@ -110,7 +132,8 @@ class KindredViewModel(
     val userEmail: String?,
     val defaultDisplayName: String?,
     val isEmailVerified: Boolean,
-    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService()
+    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService(),
+    private val socialRepo: SocialAndMediaRepository = repository.socialRepository
 ) : ViewModel() {
 
     private fun <T> Flow<T>.asFirestoreUiState(label: String): StateFlow<UiState<T>> =
@@ -275,9 +298,9 @@ class KindredViewModel(
                     cellMap[legacy.userId] = legacy
                 }
             }
-            cellMap.values.toList()
+            cellMap.values.filter { !it.suspended }
         } else {
-            spatialSnapshot?.profiles ?: allProfiles
+            (spatialSnapshot?.profiles ?: allProfiles).filter { !it.suspended }
         }
 
         val candidates = geoService.rankAndFilterCandidates(
@@ -305,6 +328,7 @@ class KindredViewModel(
                 profile.userId.isNotBlank() &&
                     profile.userId != currentUserId &&
                     profile.discoverable &&
+                    !profile.suspended &&
                     profile.userId !in blockedIds
             }
             .map { profile ->
@@ -575,6 +599,311 @@ class KindredViewModel(
             initialValue = emptyList()
         )
 
+    val activeCallVideoFrames: StateFlow<List<CallVideoFrame>> = combine(
+        activeMatchCallSession,
+        globalCallSession
+    ) { selectedCall, globalCall ->
+        val call = selectedCall ?: globalCall
+        call?.takeIf { it.status == "ACTIVE" }
+    }
+        .distinctUntilChanged { a, b -> a?.id == b?.id && a?.status == b?.status }
+        .flatMapLatest { session ->
+            if (session == null) {
+                flowOf(emptyList())
+            } else {
+                repository.observeCallVideoFrames(session.matchId, session.id, currentUserId)
+                    .map { frames -> frames.filter { it.senderUid != currentUserId } }
+                    .catch { error ->
+                        if (error is CancellationException) throw error
+                        emit(emptyList())
+                    }
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    // --- Live Presence Directory (Online Now & Recently Left) ---
+
+    val allPresenceState: StateFlow<List<UserPresence>> = socialRepo.observeAllPresence(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val activeMembersState: StateFlow<List<ActiveMemberPresenceItem>> = combine(
+        allPresenceState,
+        allProfilesFlow,
+        blockingStateFlow
+    ) { presences, profiles, blocking ->
+        val blockedIds = blocking.allBlockedIds
+        val presenceByUid = presences.associateBy { it.userId }
+        val now = System.currentTimeMillis()
+        profiles
+            .filter { p ->
+                p.userId.isNotBlank() &&
+                    p.userId != currentUserId &&
+                    p.discoverable &&
+                    !p.suspended &&
+                    p.userId !in blockedIds
+            }
+            .mapNotNull { profile ->
+                val presence = presenceByUid[profile.userId] ?: return@mapNotNull null
+                if (profile.hideOnlineStatus || presence.hideOnlineStatus) return@mapNotNull null
+                val display = PresenceUtils.resolvePresenceDisplay(presence, now)
+                ActiveMemberPresenceItem(
+                    profile = profile,
+                    presence = presence,
+                    isOnline = display.isOnline,
+                    isRecentlyLeft = display.isRecentlyLeft,
+                    statusLabel = display.label
+                )
+            }
+            .sortedWith(
+                compareByDescending<ActiveMemberPresenceItem> { it.isOnline }
+                    .thenByDescending { it.isRecentlyLeft }
+                    .thenByDescending { it.presence.lastSeenAt?.toDate()?.time ?: 0L }
+            )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    // --- Friend Requests, Friendships & Suggested Friends ---
+
+    val friendRequestsState: StateFlow<List<FriendRequestRecord>> = socialRepo.observeFriendRequestsForUser(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val friendshipsState: StateFlow<List<FriendshipRecord>> = socialRepo.observeAllFriendships(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val suggestedFriendsState: StateFlow<List<SuggestedFriendItem>> = combine(
+        dashboardState,
+        friendshipsState,
+        friendRequestsState
+    ) { dashUi, friendships, requests ->
+        val snap = (dashUi as? UiState.Success)?.data ?: return@combine emptyList()
+        val myProfile = snap.myProfile
+        val myInterests = myProfile?.interests.orEmpty()
+        val myCity = myProfile?.cityLabel.orEmpty()
+        val myCountry = myProfile?.country.orEmpty()
+
+        val connectedIds = friendships
+            .filter { currentUserId in it.participantUids }
+            .flatMap { it.participantUids }
+            .toSet()
+        val pendingIds = requests
+            .filter { it.status == "PENDING" }
+            .flatMap { listOf(it.fromUid, it.toUid) }
+            .toSet()
+
+        snap.searchableProfiles
+            .filter { c ->
+                c.profile.userId !in connectedIds && c.profile.userId !in pendingIds
+            }
+            .map { candidate ->
+                val p = candidate.profile
+                val shared = p.interests.filter { i -> myInterests.any { m -> m.equals(i, ignoreCase = true) } }
+                val sameCity = myCity.isNotBlank() && p.cityLabel.equals(myCity, ignoreCase = true)
+                val sameCountry = myCountry.isNotBlank() && p.country.equals(myCountry, ignoreCase = true)
+                val score = (shared.size * 20) +
+                    (if (sameCity) 25 else 0) +
+                    (if (sameCountry) 10 else 0) +
+                    (50 - candidate.distanceKm.toInt().coerceIn(0, 50))
+                SuggestedFriendItem(
+                    profile = p,
+                    sharedInterests = shared,
+                    sameCity = sameCity,
+                    sameCountry = sameCountry,
+                    distanceKm = candidate.distanceKm,
+                    score = score
+                )
+            }
+            .sortedByDescending { it.score }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    // --- Profile Views, Likes, Who Likes Me & Favorites ---
+
+    val profileViewsState: StateFlow<List<ProfileViewRecord>> = socialRepo.observeIncomingProfileViews(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    private val incomingSwipesFlow = socialRepo.observeIncomingSwipes(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+
+    val profileLikesState: StateFlow<List<ProfileLikeRecord>> = socialRepo.observeProfileLikes(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val whoLikedMeState: StateFlow<List<DiscoveryCandidate>> = combine(
+        dashboardState,
+        incomingSwipesFlow,
+        profileLikesState
+    ) { dashUi, incomingSwipes, profileLikes ->
+        val snap = (dashUi as? UiState.Success)?.data ?: return@combine emptyList()
+        val matchedPartnerIds = snap.matches.map { it.partnerId }.toSet()
+        val swipeLikers = incomingSwipes.filter { it.direction == "LIKE" }.map { it.fromUserId }.toSet()
+        val profileLikers = profileLikes.filter { it.toUid == currentUserId }.map { it.fromUid }.toSet()
+        val allLikerIds = (swipeLikers + profileLikers) - matchedPartnerIds
+        snap.searchableProfiles
+            .filter { it.profile.userId in allLikerIds }
+            .sortedByDescending { it.profile.userId in swipeLikers }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    val favoritesState: StateFlow<List<FavoriteRecord>> = socialRepo.observeFavorites(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    // --- 24h Stories & Video Feed ---
+
+    val activeStoriesState: StateFlow<List<StoryItem>> = combine(
+        socialRepo.observeActiveStories(currentUserId).catch { emit(emptyList()) },
+        blockingStateFlow
+    ) { stories, blocking ->
+        val blocked = blocking.allBlockedIds
+        stories.filter { it.userId !in blocked }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    val videoFeedState: StateFlow<List<VideoPost>> = combine(
+        socialRepo.observeVideoFeed(currentUserId).catch { emit(emptyList()) },
+        blockingStateFlow
+    ) { posts, blocking ->
+        val blocked = blocking.allBlockedIds
+        posts.filter { it.userId !in blocked }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    // --- Social Timeline Feed Posts & Comments ---
+
+    val feedPostsState: StateFlow<List<FeedPost>> = combine(
+        socialRepo.observeFeedPosts(currentUserId).catch { emit(emptyList()) },
+        blockingStateFlow
+    ) { posts, blocking ->
+        val blocked = blocking.allBlockedIds
+        posts.filter { it.userId !in blocked }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    val friendsFeedPostsState: StateFlow<List<FeedPost>> = combine(
+        feedPostsState,
+        friendshipsState
+    ) { posts, friendships ->
+        val friendIds = friendships
+            .filter { currentUserId in it.participantUids }
+            .flatMap { it.participantUids }
+            .toSet() + currentUserId
+        val friendPosts = posts.filter { it.userId in friendIds }
+        if (friendPosts.isNotEmpty()) friendPosts else posts
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    fun observeFeedComments(postId: String): Flow<List<FeedComment>> =
+        socialRepo.observePostComments(postId, currentUserId).catch { emit(emptyList()) }
+
+    // --- Admin Moderation ---
+
+    private val _isAdminUser = MutableStateFlow(
+        userEmail?.equals(KindredConstants.ADMIN_EMAIL, ignoreCase = true) == true
+    )
+    val isAdminUser: StateFlow<Boolean> = _isAdminUser.asStateFlow()
+
+    val adminReportsState: StateFlow<List<ReportRecord>> = _isAdminUser
+        .flatMapLatest { isAdmin ->
+            socialRepo.observeAdminReports(currentUserId, isAdmin)
+        }
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val adminAllProfilesState: StateFlow<List<PublicProfile>> = _isAdminUser
+        .flatMapLatest { isAdmin ->
+            socialRepo.observeAllProfilesForAdmin(currentUserId, isAdmin)
+        }
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
     private val _actionStatusMessage = MutableStateFlow<String?>(null)
     val actionStatusMessage: StateFlow<String?> = _actionStatusMessage.asStateFlow()
 
@@ -594,6 +923,10 @@ class KindredViewModel(
     val pushAlerts: SharedFlow<KindredPushAlert> = _pushAlerts.asSharedFlow()
 
     init {
+        viewModelScope.launch {
+            _isAdminUser.value = socialRepo.checkIsAdmin(userEmail)
+        }
+
         viewModelScope.launch {
             var initialized = false
             val knownMatchIds = mutableSetOf<String>()
@@ -691,6 +1024,41 @@ class KindredViewModel(
                         }
                 }
         }
+
+        // Friend request & profile like alert emitters
+        viewModelScope.launch {
+            var initializedSocial = false
+            val seenReqIds = mutableSetOf<String>()
+            val seenLikeIds = mutableSetOf<String>()
+            combine(
+                socialRepo.observeFriendRequestsForUser(currentUserId).catch { emit(emptyList()) },
+                socialRepo.observeProfileLikes(currentUserId).catch { emit(emptyList()) },
+                allProfilesFlow
+            ) { reqs, likes, profiles ->
+                Triple(reqs, likes, profiles.associateBy { it.userId })
+            }.collect { (reqs, likes, profileMap) ->
+                val incomingReqs = reqs.filter { it.toUid == currentUserId && it.status == "PENDING" }
+                val incomingLikes = likes.filter { it.toUid == currentUserId }
+                if (!initializedSocial) {
+                    incomingReqs.forEach { seenReqIds += it.id }
+                    incomingLikes.forEach { seenLikeIds += it.id }
+                    initializedSocial = true
+                    return@collect
+                }
+                incomingReqs.forEach { req ->
+                    if (seenReqIds.add(req.id)) {
+                        val name = profileMap[req.fromUid]?.displayName ?: "Kindred Member"
+                        _pushAlerts.tryEmit(KindredPushAlert.FriendRequestAlert(req.fromUid, name))
+                    }
+                }
+                incomingLikes.forEach { like ->
+                    if (seenLikeIds.add(like.id)) {
+                        val name = profileMap[like.fromUid]?.displayName ?: "Kindred Member"
+                        _pushAlerts.tryEmit(KindredPushAlert.ProfileLikeAlert(like.fromUid, name))
+                    }
+                }
+            }
+        }
     }
 
     fun selectMatch(matchId: String?) {
@@ -731,13 +1099,20 @@ class KindredViewModel(
         _chatRetryNonce.value += 1
     }
 
+    private fun isHideOnlinePreferred(): Boolean {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        return (snap?.myProfile?.hideOnlineStatus == true) || (snap?.privateUser?.hideOnlineStatus == true)
+    }
+
     suspend fun updatePresenceNow(online: Boolean) {
-        repository.updatePresence(online)
+        val hidden = isHideOnlinePreferred()
+        repository.updatePresence(online = online && !hidden, hideOnlineStatus = hidden)
     }
 
     fun setPresenceOnline(online: Boolean) {
         viewModelScope.launch {
-            repository.updatePresence(online)
+            val hidden = isHideOnlinePreferred()
+            repository.updatePresence(online = online && !hidden, hideOnlineStatus = hidden)
         }
     }
 
@@ -920,7 +1295,12 @@ class KindredViewModel(
         mediaGifId: String? = null,
         mediaDurationSec: Long = 0L,
         disappearingSeconds: Long = 0L,
-        viewOnce: Boolean = false
+        viewOnce: Boolean = false,
+        preparedVideo: PreparedVideoUpload? = null,
+        replyToMessageId: String? = null,
+        replyToSenderId: String? = null,
+        replyToText: String? = null,
+        replyToType: String? = null
     ) {
         viewModelScope.launch {
             val result = repository.sendMessage(
@@ -932,7 +1312,12 @@ class KindredViewModel(
                 mediaGifId = mediaGifId,
                 mediaDurationSec = mediaDurationSec,
                 disappearingSeconds = disappearingSeconds,
-                viewOnce = viewOnce
+                viewOnce = viewOnce,
+                preparedVideo = preparedVideo,
+                replyToMessageId = replyToMessageId,
+                replyToSenderId = replyToSenderId,
+                replyToText = replyToText,
+                replyToType = replyToType
             )
             result.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to send message"
@@ -957,6 +1342,38 @@ class KindredViewModel(
         viewModelScope.launch {
             repository.deleteMessage(matchId, messageId)
         }
+    }
+
+    fun deleteMessageForMe(matchId: String, messageId: String) {
+        viewModelScope.launch {
+            repository.deleteMessageForMe(matchId, messageId)
+                .onSuccess { _actionStatusMessage.value = "Message deleted for you" }
+                .onFailure { err -> _actionStatusMessage.value = err.localizedMessage ?: "Delete failed" }
+        }
+    }
+
+    fun unsendMessage(matchId: String, messageId: String, isLastMessage: Boolean = false) {
+        viewModelScope.launch {
+            repository.unsendMessage(matchId, messageId, isLastMessage)
+                .onSuccess { _actionStatusMessage.value = "Message unsent" }
+                .onFailure { err -> _actionStatusMessage.value = err.localizedMessage ?: "Unsend failed" }
+        }
+    }
+
+    suspend fun searchMessagesAcrossMatches(query: String): List<Pair<String, ChatMessage>> {
+        val snap = (dashboardState.value as? UiState.Success)?.data ?: return emptyList()
+        val matchIds = snap.matches.map { it.match.id }
+        return repository.searchMessagesAcrossMatches(currentUserId, matchIds, query)
+    }
+
+    suspend fun resolveChatVideoFile(context: Context, message: ChatMessage): Result<File> {
+        return socialRepo.resolveVideoToFile(
+            context = context,
+            cacheKey = message.id.ifBlank { "msg_video" },
+            inlineDataUrl = message.mediaDataUrl,
+            chunkCount = message.mediaChunkCount,
+            chunksCollection = socialRepo.messageMediaChunksRef(message.matchId, message.id)
+        )
     }
 
     fun updateDisappearingTimer(matchId: String, ttlSeconds: Long) {
@@ -1080,6 +1497,18 @@ class KindredViewModel(
                 seq = seq,
                 sampleRateHz = sampleRateHz,
                 audioBase64 = audioBase64
+            )
+        }
+    }
+
+    fun sendCallVideoFrame(session: CallSession, seq: Long, frameBase64: String) {
+        viewModelScope.launch {
+            repository.sendCallVideoFrame(
+                matchId = session.matchId,
+                callId = session.id,
+                participantUids = session.participantUids,
+                seq = seq,
+                frameBase64 = frameBase64
             )
         }
     }
@@ -1209,6 +1638,8 @@ class KindredViewModel(
         maxAgePref: Int,
         maxDistanceKm: Int,
         verifiedOnlyFilter: Boolean,
+        dateOfBirth: String = "",
+        profileCompleted: Boolean = true,
         onComplete: () -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -1231,7 +1662,9 @@ class KindredViewModel(
                 minAgePref = minAgePref,
                 maxAgePref = maxAgePref,
                 maxDistanceKm = maxDistanceKm,
-                verifiedOnlyFilter = verifiedOnlyFilter
+                verifiedOnlyFilter = verifiedOnlyFilter,
+                dateOfBirth = dateOfBirth,
+                profileCompleted = profileCompleted
             )
             _isBusy.value = false
             result.onSuccess {
@@ -1249,6 +1682,10 @@ class KindredViewModel(
         profilePhotos: List<String>,
         cityLabel: String? = null,
         country: String? = null,
+        displayName: String? = null,
+        gender: String? = null,
+        dateOfBirth: String? = null,
+        computedAge: Int? = null,
         onComplete: () -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -1260,7 +1697,11 @@ class KindredViewModel(
                 interests = interests,
                 profilePhotos = profilePhotos,
                 cityLabel = cityLabel,
-                country = country
+                country = country,
+                displayName = displayName,
+                gender = gender,
+                dateOfBirth = dateOfBirth,
+                computedAge = computedAge
             )
             _isBusy.value = false
             result.onSuccess {
@@ -1345,6 +1786,360 @@ class KindredViewModel(
                 _actionStatusMessage.value = "Profile verified! Trust score: $score/100"
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Verification failed"
+            }
+        }
+    }
+
+    // --- Privacy & Online Visibility ---
+
+    fun updatePrivacyAndHideOnline(
+        hideOnlineStatus: Boolean,
+        photosVisibility: String,
+        videosVisibility: String,
+        infoVisibility: String
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.updatePrivacyAndHideOnline(
+                hideOnlineStatus = hideOnlineStatus,
+                photosVisibility = photosVisibility,
+                videosVisibility = videosVisibility,
+                infoVisibility = infoVisibility
+            )
+            _isBusy.value = false
+            result.onSuccess {
+                _actionStatusMessage.value = "Privacy & online settings updated"
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to update privacy"
+            }
+        }
+    }
+
+    // --- Friend Requests & Friends ---
+
+    fun sendFriendRequest(targetUid: String) {
+        viewModelScope.launch {
+            socialRepo.sendFriendRequest(targetUid)
+                .onSuccess { _actionStatusMessage.value = "Friend request sent" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not send friend request" }
+        }
+    }
+
+    fun cancelFriendRequest(targetUid: String) {
+        viewModelScope.launch {
+            socialRepo.cancelFriendRequest(targetUid)
+                .onSuccess { _actionStatusMessage.value = "Friend request canceled" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not cancel request" }
+        }
+    }
+
+    fun acceptFriendRequest(fromUid: String) {
+        viewModelScope.launch {
+            socialRepo.acceptFriendRequest(fromUid)
+                .onSuccess { _actionStatusMessage.value = "Friend added!" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not accept request" }
+        }
+    }
+
+    fun rejectFriendRequest(fromUid: String) {
+        viewModelScope.launch {
+            socialRepo.rejectFriendRequest(fromUid)
+                .onSuccess { _actionStatusMessage.value = "Request declined" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not decline request" }
+        }
+    }
+
+    fun removeFriend(targetUid: String) {
+        viewModelScope.launch {
+            socialRepo.removeFriend(targetUid)
+                .onSuccess { _actionStatusMessage.value = "Removed from friends" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not remove friend" }
+        }
+    }
+
+    // --- Profile Likes, Who Likes Me, Views & Favorites ---
+
+    fun toggleProfileLike(targetUid: String) {
+        viewModelScope.launch {
+            socialRepo.toggleProfileLike(targetUid)
+                .onSuccess { liked ->
+                    _actionStatusMessage.value = if (liked) "Profile liked" else "Removed profile like"
+                }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not update like" }
+        }
+    }
+
+    fun likeBackUser(
+        candidate: DiscoveryCandidate,
+        onOpenedChat: (String) -> Unit = {}
+    ) {
+        val targetId = candidate.profile.userId
+        viewModelScope.launch {
+            _isBusy.value = true
+            val swipeRes = repository.recordSwipe(targetId, "LIKE")
+            val matchId = swipeRes.getOrNull() ?: repository.createOrOpenDirectMatch(targetId).getOrNull()
+            _isBusy.value = false
+            if (!matchId.isNullOrBlank()) {
+                val thread = MatchThreadItem(
+                    match = MatchRecord(
+                        id = matchId,
+                        participantUids = listOf(currentUserId, targetId).sorted(),
+                        createdBy = currentUserId
+                    ),
+                    partnerId = targetId,
+                    partnerProfile = candidate.profile,
+                    distanceKm = candidate.distanceKm
+                )
+                _newMatchPopup.value = thread
+                _actionStatusMessage.value = "Matched with ${candidate.profile.displayName}!"
+                onOpenedChat(matchId)
+            } else {
+                _actionStatusMessage.value = swipeRes.exceptionOrNull()?.localizedMessage ?: "Unable to match"
+            }
+        }
+    }
+
+    fun toggleFavorite(profile: PublicProfile) {
+        viewModelScope.launch {
+            socialRepo.toggleFavorite(profile)
+                .onSuccess { saved ->
+                    _actionStatusMessage.value = if (saved) {
+                        "Saved ${profile.displayName} to Favorites"
+                    } else {
+                        "Removed ${profile.displayName} from Favorites"
+                    }
+                }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not update favorites" }
+        }
+    }
+
+    fun recordProfileView(targetUid: String) {
+        if (targetUid.isBlank() || targetUid == currentUserId) return
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        val myName = snap?.myProfile?.displayName ?: defaultDisplayName ?: "Kindred Member"
+        val myPhoto = snap?.myProfile?.allProfilePhotos()?.firstOrNull()
+        viewModelScope.launch {
+            socialRepo.recordProfileView(targetUid, myName, myPhoto)
+        }
+    }
+
+    // --- Profile Showcase Videos ---
+
+    fun observeUserVideos(targetUserId: String): Flow<List<ProfileVideoItem>> =
+        socialRepo.observeUserVideos(targetUserId, currentUserId).catch { emit(emptyList()) }
+
+    fun uploadProfileVideo(caption: String, prepared: PreparedVideoUpload) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = socialRepo.uploadProfileVideo(caption, prepared)
+            _isBusy.value = false
+            res.onSuccess { _actionStatusMessage.value = "Showcase video uploaded" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Video upload failed" }
+        }
+    }
+
+    fun deleteProfileVideo(ownerUid: String, videoId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteProfileVideo(ownerUid, videoId)
+                .onSuccess { _actionStatusMessage.value = "Video deleted" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+        }
+    }
+
+    suspend fun resolveProfileVideoFile(context: Context, ownerUid: String, video: ProfileVideoItem): Result<File> {
+        return socialRepo.resolveVideoToFile(
+            context = context,
+            cacheKey = "pvid_${ownerUid}_${video.id}",
+            inlineDataUrl = video.mediaDataUrl,
+            chunkCount = video.chunkCount,
+            chunksCollection = socialRepo.profileVideoChunksRef(ownerUid, video.id)
+        )
+    }
+
+    // --- 24-Hour Stories ---
+
+    fun postPhotoStory(photoDataUrl: String, caption: String) {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = socialRepo.postPhotoStory(snap?.myProfile, defaultDisplayName, photoDataUrl, caption)
+            _isBusy.value = false
+            res.onSuccess { _actionStatusMessage.value = "Story shared for 24 hours!" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not share story" }
+        }
+    }
+
+    fun postVideoStory(prepared: PreparedVideoUpload, caption: String) {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = socialRepo.postVideoStory(snap?.myProfile, defaultDisplayName, prepared, caption)
+            _isBusy.value = false
+            res.onSuccess { _actionStatusMessage.value = "Video story shared for 24 hours!" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not share story" }
+        }
+    }
+
+    fun markStoryViewed(storyId: String) {
+        viewModelScope.launch { socialRepo.markStoryViewed(storyId) }
+    }
+
+    fun deleteStory(storyId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteStory(storyId)
+                .onSuccess { _actionStatusMessage.value = "Story removed" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not remove story" }
+        }
+    }
+
+    suspend fun resolveStoryVideoFile(context: Context, story: StoryItem): Result<File> {
+        return socialRepo.resolveVideoToFile(
+            context = context,
+            cacheKey = "story_${story.id}",
+            inlineDataUrl = story.mediaDataUrl,
+            chunkCount = story.chunkCount,
+            chunksCollection = socialRepo.storyChunksRef(story.id)
+        )
+    }
+
+    // --- Video Feed ---
+
+    fun publishVideoPost(caption: String, prepared: PreparedVideoUpload) {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = socialRepo.publishVideoPost(snap?.myProfile, defaultDisplayName, caption, prepared)
+            _isBusy.value = false
+            res.onSuccess { _actionStatusMessage.value = "Video posted to Kindred Feed!" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not publish video" }
+        }
+    }
+
+    fun toggleVideoPostLike(postId: String, currentlyLiked: Boolean) {
+        viewModelScope.launch { socialRepo.toggleVideoPostLike(postId, currentlyLiked) }
+    }
+
+    fun deleteVideoPost(postId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteVideoPost(postId)
+                .onSuccess { _actionStatusMessage.value = "Video post deleted" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+        }
+    }
+
+    suspend fun resolveVideoPostFile(context: Context, post: VideoPost): Result<File> {
+        return socialRepo.resolveVideoToFile(
+            context = context,
+            cacheKey = "vpost_${post.id}",
+            inlineDataUrl = post.mediaDataUrl,
+            chunkCount = post.chunkCount,
+            chunksCollection = socialRepo.videoPostChunksRef(post.id)
+        )
+    }
+
+    // --- Social Timeline Feed Posts & Comments ---
+
+    fun publishFeedPost(
+        caption: String,
+        photoDataUrl: String? = null,
+        preparedVideo: PreparedVideoUpload? = null,
+        onComplete: () -> Unit = {}
+    ) {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = socialRepo.publishFeedPost(
+                authorProfile = snap?.myProfile,
+                fallbackName = defaultDisplayName,
+                caption = caption,
+                photoDataUrl = photoDataUrl,
+                preparedVideo = preparedVideo
+            )
+            _isBusy.value = false
+            res.onSuccess {
+                _actionStatusMessage.value = "Shared to your timeline!"
+                onComplete()
+            }.onFailure {
+                _actionStatusMessage.value = it.localizedMessage ?: "Could not publish post"
+            }
+        }
+    }
+
+    fun toggleFeedPostLike(postId: String, currentlyLiked: Boolean) {
+        viewModelScope.launch { socialRepo.toggleFeedPostLike(postId, currentlyLiked) }
+    }
+
+    fun addFeedPostComment(postId: String, text: String, onDone: () -> Unit = {}) {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        viewModelScope.launch {
+            socialRepo.addFeedPostComment(postId, snap?.myProfile, defaultDisplayName, text)
+                .onSuccess { onDone() }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not post comment" }
+        }
+    }
+
+    fun deleteFeedPostComment(postId: String, commentId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteFeedPostComment(postId, commentId)
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+        }
+    }
+
+    fun deleteFeedPost(postId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteFeedPost(postId)
+                .onSuccess { _actionStatusMessage.value = "Post deleted" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+        }
+    }
+
+    suspend fun resolveFeedPostVideoFile(context: Context, post: FeedPost): Result<File> {
+        return socialRepo.resolveVideoToFile(
+            context = context,
+            cacheKey = "fpost_${post.id}",
+            inlineDataUrl = post.mediaDataUrl,
+            chunkCount = post.chunkCount,
+            chunksCollection = socialRepo.feedPostChunksRef(post.id)
+        )
+    }
+
+    // --- Admin & Account Deletion ---
+
+    fun updateReportStatus(reportId: String, status: String) {
+        viewModelScope.launch {
+            socialRepo.updateReportStatus(reportId, status)
+                .onSuccess { _actionStatusMessage.value = "Report marked $status" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not update report" }
+        }
+    }
+
+    fun setUserSuspended(targetUserId: String, suspended: Boolean) {
+        viewModelScope.launch {
+            socialRepo.setUserSuspendedByAdmin(targetUserId, suspended)
+                .onSuccess {
+                    _actionStatusMessage.value = if (suspended) "User suspended" else "User reinstated"
+                }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Action failed" }
+        }
+    }
+
+    fun deleteAccountAndData(
+        onDeleted: () -> Unit,
+        onRequiresRecentLogin: () -> Unit
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val res = socialRepo.deleteAccountAndData()
+            _isBusy.value = false
+            res.onSuccess {
+                onDeleted()
+            }.onFailure { err ->
+                if (err is FirebaseAuthRecentLoginRequiredException) {
+                    _actionStatusMessage.value = "For security, please sign out and sign back in right before deleting your account."
+                    onRequiresRecentLogin()
+                } else {
+                    _actionStatusMessage.value = err.localizedMessage ?: "Failed to delete account"
+                }
             }
         }
     }

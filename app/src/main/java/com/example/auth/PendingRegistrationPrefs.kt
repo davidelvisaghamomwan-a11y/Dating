@@ -4,7 +4,7 @@ import android.content.Context
 
 data class PendingRegistrationData(
     val displayName: String = "",
-    val age: Int = 26,
+    val age: Int? = null,
     val gender: String = "Woman"
 )
 
@@ -15,24 +15,29 @@ object PendingRegistrationPrefs {
     private const val KEY_GENDER = "gender"
     private const val KEY_HAS_PENDING = "has_pending"
 
-    fun save(context: Context, displayName: String, age: Int, gender: String) {
-        context.applicationContext
+    fun save(context: Context, displayName: String, age: Int?, gender: String) {
+        val editor = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_DISPLAY_NAME, displayName.trim().take(40))
-            .putInt(KEY_AGE, age.coerceIn(18, 99))
             .putString(KEY_GENDER, gender)
             .putBoolean(KEY_HAS_PENDING, true)
-            .apply()
+        if (age != null && age in 18..99) {
+            editor.putInt(KEY_AGE, age)
+        } else {
+            editor.remove(KEY_AGE)
+        }
+        editor.apply()
     }
 
     fun get(context: Context): PendingRegistrationData? {
         val prefs = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_HAS_PENDING, false)) return null
+        val savedAge = if (prefs.contains(KEY_AGE)) prefs.getInt(KEY_AGE, -1).takeIf { it in 18..99 } else null
         return PendingRegistrationData(
             displayName = prefs.getString(KEY_DISPLAY_NAME, "").orEmpty(),
-            age = prefs.getInt(KEY_AGE, 26).coerceIn(18, 99),
+            age = savedAge,
             gender = prefs.getString(KEY_GENDER, "Woman") ?: "Woman"
         )
     }

@@ -93,7 +93,7 @@ fun AuthScreen(
 
     var authMode by remember { mutableStateOf(AuthMode.SIGN_IN) }
     var signUpDisplayName by remember { mutableStateOf("") }
-    var signUpAgeText by remember { mutableStateOf("26") }
+    var signUpAgeText by remember { mutableStateOf("") }
     var signUpGender by remember { mutableStateOf("Woman") }
 
     var isLoading by remember { mutableStateOf(false) }
@@ -115,12 +115,13 @@ fun AuthScreen(
         errorMessage = null
         if (authMode == AuthMode.SIGN_UP) {
             val trimmedName = signUpDisplayName.trim()
-            val parsedAge = signUpAgeText.toIntOrNull()
+            val trimmedAge = signUpAgeText.trim()
+            val parsedAge = if (trimmedAge.isNotEmpty()) trimmedAge.toIntOrNull() else null
             if (trimmedName.length < 2) {
                 errorMessage = "Enter a display name (at least 2 characters) to create your account."
                 return
             }
-            if (parsedAge == null || parsedAge !in 18..99) {
+            if (trimmedAge.isNotEmpty() && (parsedAge == null || parsedAge !in 18..99)) {
                 errorMessage = "You must be 18 or older (18–99) to register on Kindred."
                 return
             }

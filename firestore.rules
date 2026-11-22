@@ -11,6 +11,13 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        ('email' in request.auth.token && request.auth.token.email == 'davidelvisaghamomwan@gmail.com')
+      );
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -39,6 +46,10 @@ service cloud.firestore {
       return ts is timestamp && ts <= request.time;
     }
 
+    function isValidVisibility(val) {
+      return val in ['EVERYONE', 'MATCHES_AND_FRIENDS', 'FRIENDS_ONLY'];
+    }
+
     // --- Entity Validation Helpers ---
     function isValidPrivateUser(data) {
       return data.userId is string && isValidId(data.userId) &&
@@ -48,6 +59,7 @@ service cloud.firestore {
              data.maxAgePref is int && data.maxAgePref >= data.minAgePref && data.maxAgePref <= 99 &&
              data.maxDistanceKm is int && data.maxDistanceKm >= 5 && data.maxDistanceKm <= 500 &&
              data.verifiedOnlyFilter is bool &&
+             (!('hideOnlineStatus' in data) || data.hideOnlineStatus is bool) &&
              (!('exactLatitude' in data) || (data.exactLatitude is number && data.exactLatitude >= -90.0 && data.exactLatitude <= 90.0)) &&
              (!('exactLongitude' in data) || (data.exactLongitude is number && data.exactLongitude >= -180.0 && data.exactLongitude <= 180.0));
     }
@@ -62,7 +74,7 @@ service cloud.firestore {
              data.photoSha256 is string && data.photoSha256.size() == 64 && data.photoSha256.matches('^[a-f0-9]{64}$') &&
              data.locationVerified is bool &&
              data.googleVerified is bool &&
-             data.comparedPhotoCount is int && data.comparedPhotoCount >= 1 && data.comparedPhotoCount <= 10 &&
+             data.comparedPhotoCount is int && data.comparedPhotoCount >= 1 && data.comparedPhotoCount <= 12 &&
              data.photoSimilarityScore is number && data.photoSimilarityScore >= 0.65 && data.photoSimilarityScore <= 1.0 &&
              data.livenessPassed == true &&
              data.faceMatchPassed == true;
@@ -81,9 +93,16 @@ service cloud.firestore {
              data.interests is list && data.interests.size() <= 8 &&
              (data.interests.size() == 0 || (data.interests[0] is string && data.interests[0].size() <= 40)) &&
              (!('photoDataUrl' in data) || (data.photoDataUrl is string && data.photoDataUrl.size() <= 180000)) &&
-             (!('profilePhotos' in data) || (data.profilePhotos is list && data.profilePhotos.size() <= 4 && (data.profilePhotos.size() == 0 || (data.profilePhotos[0] is string && data.profilePhotos[0].size() <= 180000)))) &&
+             (!('profilePhotos' in data) || (data.profilePhotos is list && data.profilePhotos.size() <= 12 && (data.profilePhotos.size() == 0 || (data.profilePhotos[0] is string && data.profilePhotos[0].size() <= 180000)))) &&
              data.avatarSeed is string && data.avatarSeed.size() >= 1 && data.avatarSeed.size() <= 40 &&
              data.discoverable is bool &&
+             (!('suspended' in data) || data.suspended is bool) &&
+             (!('hideOnlineStatus' in data) || data.hideOnlineStatus is bool) &&
+             (!('photosVisibility' in data) || isValidVisibility(data.photosVisibility)) &&
+             (!('videosVisibility' in data) || isValidVisibility(data.videosVisibility)) &&
+             (!('infoVisibility' in data) || isValidVisibility(data.infoVisibility)) &&
+             (!('dateOfBirth' in data) || (data.dateOfBirth is string && data.dateOfBirth.size() <= 16)) &&
+             (!('profileCompleted' in data) || data.profileCompleted is bool) &&
              data.verificationStatus in ['UNVERIFIED', 'VERIFIED'] &&
              data.verificationScore is int && data.verificationScore >= 0 && data.verificationScore <= 100 &&
              (!('verificationId' in data) || (data.verificationId is string && data.verificationId.size() <= 128)) &&
@@ -152,8 +171,19 @@ service cloud.firestore {
              data.messageType in ['TEXT', 'ICEBREAKER', 'PHOTO', 'VIDEO', 'VOICE', 'GIF', 'CALL'] &&
              (data.text.size() >= 1 || data.messageType in ['PHOTO', 'VIDEO', 'VOICE', 'GIF']) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
+             (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
+             (!('mediaMimeType' in data) || (data.mediaMimeType is string && data.mediaMimeType.size() <= 80)) &&
+             (!('mediaChunkCount' in data) || (data.mediaChunkCount is int && data.mediaChunkCount >= 0 && data.mediaChunkCount <= 1000)) &&
+             (!('mediaByteSize' in data) || (data.mediaByteSize is int && data.mediaByteSize >= 0)) &&
              (!('mediaGifId' in data) || (data.mediaGifId is string && data.mediaGifId.size() <= 300)) &&
-             (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0 && data.mediaDurationSec <= 120)) &&
+             (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0)) &&
+             (!('replyToMessageId' in data) || (data.replyToMessageId is string && data.replyToMessageId.size() <= 128)) &&
+             (!('replyToSenderId' in data) || (data.replyToSenderId is string && isValidId(data.replyToSenderId))) &&
+             (!('replyToText' in data) || (data.replyToText is string && data.replyToText.size() <= 300)) &&
+             (!('replyToType' in data) || (data.replyToType is string && data.replyToType.size() <= 24)) &&
+             (!('deletedForUids' in data) || (data.deletedForUids is list && data.deletedForUids.size() <= 2)) &&
+             (!('unsent' in data) || data.unsent is bool) &&
+             (!('unsentAt' in data) || isValidTimestamp(data.unsentAt)) &&
              (!('readByUids' in data) || (data.readByUids is list && data.readByUids.size() <= 2)) &&
              (!('readAt' in data) || isValidTimestamp(data.readAt)) &&
              (!('disappearingSeconds' in data) || (data.disappearingSeconds is int && data.disappearingSeconds >= 0 && data.disappearingSeconds <= 604800)) &&
@@ -165,6 +195,7 @@ service cloud.firestore {
     function isValidUserPresence(data) {
       return data.userId is string && isValidId(data.userId) &&
              data.online is bool &&
+             (!('hideOnlineStatus' in data) || data.hideOnlineStatus is bool) &&
              isValidTimestamp(data.lastSeenAt) &&
              isValidTimestamp(data.updatedAt);
     }
@@ -195,12 +226,29 @@ service cloud.firestore {
              data.reporterUid != data.reportedUid &&
              data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 100 &&
              (!('details' in data) || (data.details is string && data.details.size() <= 500)) &&
-             data.sourceSurface in ['DISCOVER', 'SEARCH', 'CHAT', 'PROFILE'] &&
+             data.sourceSurface in ['DISCOVER', 'SEARCH', 'CHAT', 'PROFILE', 'VIDEO_FEED', 'STORY', 'FEED_POST'] &&
              (!('matchId' in data) || isValidId(data.matchId)) &&
+             (!('status' in data) || data.status in ['OPEN', 'RESOLVED', 'DISMISSED']) &&
+             (!('resolvedBy' in data) || isValidId(data.resolvedBy)) &&
+             (!('resolvedAt' in data) || isValidTimestamp(data.resolvedAt)) &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidMediaChunk(data) {
+      return data.ownerUid is string && isValidId(data.ownerUid) &&
+             (!('participantUids' in data) || (data.participantUids is list && data.participantUids.size() == 2)) &&
+             data.seq is int && data.seq >= 0 && data.seq <= 1000 &&
+             data.dataBase64 is string && data.dataBase64.size() >= 1 && data.dataBase64.size() <= 920000 &&
              isValidTimestamp(data.createdAt);
     }
 
     // --- Collection Rules ---
+
+    // 0. Admin role lookup documents
+    match /admins/{adminUid} {
+      allow get: if isOwner(adminUid);
+      allow list, write: if false;
+    }
 
     // 1. Private User Account & Preferences (Owner-only PII isolation)
     match /users/{userId} {
@@ -210,7 +258,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'exactLatitude', 'exactLongitude', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'hideOnlineStatus', 'exactLatitude', 'exactLongitude', 'createdAt', 'updatedAt']) &&
                        isValidPrivateUser(incoming()) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt);
@@ -221,7 +269,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'exactLatitude', 'exactLongitude', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'hideOnlineStatus', 'exactLatitude', 'exactLongitude', 'updatedAt']);
 
       allow delete: if isOwner(userId) && isValidId(userId);
 
@@ -238,7 +286,8 @@ service cloud.firestore {
                          isValidVerificationRecord(incoming()) &&
                          isValidTimestamp(incoming().createdAt);
 
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(userId);
       }
 
       // 2b. Device FCM Push Notification Tokens
@@ -255,19 +304,37 @@ service cloud.firestore {
 
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(tokenId);
       }
+
+      // 2c. Owner-only Saved Favorites
+      match /favorites/{targetUid} {
+        allow get, list: if isOwner(userId);
+
+        allow create, update: if isOwner(userId) &&
+                                 isValidId(userId) &&
+                                 isValidId(targetUid) &&
+                                 incoming().userId == request.auth.uid &&
+                                 incoming().targetUid == targetUid &&
+                                 incoming().displayName is string && incoming().displayName.size() <= 40 &&
+                                 incoming().keys().hasAll(['userId', 'targetUid', 'displayName', 'createdAt']) &&
+                                 incoming().keys().hasOnly(['userId', 'targetUid', 'displayName', 'age', 'cityLabel', 'country', 'photoDataUrl', 'createdAt']) &&
+                                 isValidTimestamp(incoming().createdAt);
+
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(targetUid);
+      }
     }
 
-    // 3. Public Discovery Profiles (Coarse coordinates, GeoHash index & verification proof)
+    // 3. Public Discovery Profiles (Coarse coordinates, GeoHash index, up to 12 photos & verification proof)
     match /publicProfiles/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || existing().discoverable == true);
-      allow list: if isSignedIn() && existing().discoverable == true;
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || existing().discoverable == true || isAdmin());
+      allow list: if isSignedIn() && (existing().discoverable == true || isAdmin());
 
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationScore', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
                        isValidPublicProfile(incoming()) &&
+                       !incoming().get('suspended', false) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt) &&
                        (
@@ -278,22 +345,68 @@ service cloud.firestore {
                          )
                        );
 
-      allow update: if isOwner(userId) &&
+      allow update: if (
+                       isOwner(userId) &&
                        isValidId(userId) &&
                        isValidPublicProfile(incoming()) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
+                       incoming().get('suspended', false) == existing().get('suspended', false) &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
                        (
                          incoming().verificationStatus == 'UNVERIFIED' ||
                          (
                            existsAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)) &&
                            getAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)).data.photoSha256 == incoming().verificationHash
                          )
-                       );
+                       )
+                     ) || (
+                       isAdmin() &&
+                       isValidId(userId) &&
+                       isValidPublicProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['suspended', 'discoverable', 'updatedAt']) &&
+                       isValidTimestamp(incoming().updatedAt)
+                     );
 
       allow delete: if isOwner(userId) && isValidId(userId);
+
+      // 3b. Profile Showcase Videos (/publicProfiles/{userId}/videos/{videoId})
+      match /videos/{videoId} {
+        allow get, list: if isSignedIn() && isValidId(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(videoId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().caption is string && incoming().caption.size() <= 300 &&
+                         incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0 &&
+                         incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000 &&
+                         (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                         (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
+                         (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
+                         (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
+                         incoming().keys().hasAll(['userId', 'caption', 'mediaDurationSec', 'chunkCount', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'createdAt']) &&
+                         isValidTimestamp(incoming().createdAt);
+
+        allow update: if false;
+        allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(videoId);
+
+        match /mediaChunks/{chunkId} {
+          allow get, list: if isSignedIn() && isValidId(userId) && isValidId(videoId);
+          allow create: if isOwner(userId) &&
+                           isValidId(userId) &&
+                           isValidId(videoId) &&
+                           isValidId(chunkId) &&
+                           incoming().ownerUid == request.auth.uid &&
+                           incoming().keys().hasAll(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                           incoming().keys().hasOnly(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                           isValidMediaChunk(incoming());
+          allow update: if false;
+          allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(videoId);
+        }
+      }
     }
 
     // 4. GeoHash Spatial Buckets (/geoCells/{cellId}/profiles/{userId})
@@ -306,7 +419,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationScore', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
                        isValidGeoCellProfile(incoming(), cellId) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt) &&
@@ -325,7 +438,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
                        (
                          incoming().verificationStatus == 'UNVERIFIED' ||
                          (
@@ -357,7 +470,7 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(swipeId) && existing().fromUserId == request.auth.uid;
     }
 
-    // 6. Mutual Matches (sorted {uid1}_{uid2})
+    // 6. Mutual Matches & Direct Conversations (sorted {uid1}_{uid2})
     match /matches/{matchId} {
       allow get: if isSignedIn() && isValidId(matchId) && request.auth.uid in existing().participantUids;
       allow list: if isSignedIn() && request.auth.uid in existing().participantUids;
@@ -416,7 +529,14 @@ service cloud.firestore {
                          incoming().senderId == request.auth.uid &&
                          request.auth.uid in incoming().participantUids &&
                          incoming().keys().hasAll(['matchId', 'senderId', 'participantUids', 'text', 'messageType', 'createdAt']) &&
-                         incoming().keys().hasOnly(['matchId', 'senderId', 'participantUids', 'text', 'messageType', 'mediaDataUrl', 'mediaGifId', 'mediaDurationSec', 'readByUids', 'disappearingSeconds', 'viewOnce', 'openedByRecipient', 'expiresAtMs', 'createdAt']) &&
+                         incoming().keys().hasOnly([
+                           'matchId', 'senderId', 'participantUids', 'text', 'messageType',
+                           'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaChunkCount', 'mediaByteSize',
+                           'mediaGifId', 'mediaDurationSec',
+                           'replyToMessageId', 'replyToSenderId', 'replyToText', 'replyToType',
+                           'deletedForUids', 'unsent', 'unsentAt',
+                           'readByUids', 'disappearingSeconds', 'viewOnce', 'openedByRecipient', 'expiresAtMs', 'createdAt'
+                         ]) &&
                          isValidTimestamp(incoming().createdAt) &&
                          isNotBlockedBetween(incoming().participantUids[0], incoming().participantUids[1]) &&
                          exists(/databases/$(database)/documents/matches/$(matchId)) &&
@@ -430,13 +550,34 @@ service cloud.firestore {
                          incoming().matchId == existing().matchId &&
                          incoming().senderId == existing().senderId &&
                          incoming().participantUids == existing().participantUids &&
-                         incoming().text == existing().text &&
                          incoming().messageType == existing().messageType &&
                          incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly(['readByUids', 'readAt', 'openedByRecipient', 'expiresAtMs']) &&
-                         ('readByUids' in incoming()) &&
-                         request.auth.uid in incoming().readByUids &&
-                         existing().senderId in incoming().readByUids;
+                         (
+                           (
+                             incoming().text == existing().text &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['readByUids', 'readAt', 'openedByRecipient', 'expiresAtMs']) &&
+                             ('readByUids' in incoming()) &&
+                             request.auth.uid in incoming().readByUids &&
+                             existing().senderId in incoming().readByUids
+                           ) ||
+                           (
+                             incoming().text == existing().text &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['deletedForUids']) &&
+                             ('deletedForUids' in incoming()) &&
+                             request.auth.uid in incoming().deletedForUids &&
+                             incoming().deletedForUids.hasAll(existing().get('deletedForUids', []))
+                           ) ||
+                           (
+                             existing().senderId == request.auth.uid &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['unsent', 'unsentAt', 'text', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaGifId']) &&
+                             incoming().unsent == true &&
+                             isValidTimestamp(incoming().unsentAt) &&
+                             incoming().text == 'Message unsent' &&
+                             !('mediaDataUrl' in incoming()) &&
+                             !('thumbnailDataUrl' in incoming()) &&
+                             !('mediaGifId' in incoming())
+                           )
+                         );
 
         allow delete: if isSignedIn() &&
                          isValidId(matchId) &&
@@ -447,6 +588,31 @@ service cloud.firestore {
                            (('expiresAtMs' in existing()) && existing().expiresAtMs is int) ||
                            (('disappearingSeconds' in existing()) && existing().disappearingSeconds > 0)
                          );
+
+        // 7a. Chunked High-Res Chat Video Data
+        match /mediaChunks/{chunkId} {
+          allow get, list: if isSignedIn() &&
+                            isValidId(matchId) &&
+                            isValidId(messageId) &&
+                            request.auth.uid in existing().participantUids;
+
+          allow create: if isSignedIn() &&
+                           isValidId(matchId) &&
+                           isValidId(messageId) &&
+                           isValidId(chunkId) &&
+                           isMatchParticipant(matchId) &&
+                           incoming().ownerUid == request.auth.uid &&
+                           ('participantUids' in incoming()) &&
+                           incoming().participantUids == get(/databases/$(database)/documents/matches/$(matchId)).data.participantUids &&
+                           incoming().keys().hasAll(['ownerUid', 'participantUids', 'seq', 'dataBase64', 'createdAt']) &&
+                           incoming().keys().hasOnly(['ownerUid', 'participantUids', 'seq', 'dataBase64', 'createdAt']) &&
+                           isValidMediaChunk(incoming());
+
+          allow update: if false;
+          allow delete: if isSignedIn() &&
+                           isValidId(matchId) &&
+                           request.auth.uid in existing().participantUids;
+        }
       }
 
       // 7b. Real-Time Typing Indicators (/matches/{matchId}/typing/{typingUserId})
@@ -547,26 +713,57 @@ service cloud.firestore {
                            isValidId(matchId) &&
                            request.auth.uid in existing().participantUids;
         }
+
+        // 7e. Live In-App Call Video Frames (/matches/{matchId}/calls/{callId}/videoFrames/{frameId})
+        match /videoFrames/{frameId} {
+          allow get, list: if isSignedIn() &&
+                            isValidId(matchId) &&
+                            isValidId(callId) &&
+                            request.auth.uid in existing().participantUids;
+
+          allow create, update: if isSignedIn() &&
+                                   isValidId(matchId) &&
+                                   isValidId(callId) &&
+                                   isValidId(frameId) &&
+                                   isMatchParticipant(matchId) &&
+                                   incoming().matchId == matchId &&
+                                   incoming().callId == callId &&
+                                   incoming().senderUid == request.auth.uid &&
+                                   request.auth.uid in incoming().participantUids &&
+                                   incoming().participantUids == get(/databases/$(database)/documents/matches/$(matchId)).data.participantUids &&
+                                   incoming().seq is int &&
+                                   incoming().seq >= 0 &&
+                                   incoming().frameBase64 is string &&
+                                   incoming().frameBase64.size() >= 1 &&
+                                   incoming().frameBase64.size() <= 160000 &&
+                                   incoming().keys().hasAll(['matchId', 'callId', 'senderUid', 'participantUids', 'seq', 'frameBase64', 'createdAt']) &&
+                                   incoming().keys().hasOnly(['matchId', 'callId', 'senderUid', 'participantUids', 'seq', 'frameBase64', 'createdAt']) &&
+                                   isValidTimestamp(incoming().createdAt);
+
+          allow delete: if isSignedIn() &&
+                           isValidId(matchId) &&
+                           request.auth.uid in existing().participantUids;
+        }
       }
     }
 
     // 8. Real-Time User Presence (/presence/{userId})
     match /presence/{userId} {
       allow get: if isSignedIn() && isValidId(userId);
-      allow list: if false;
+      allow list: if isSignedIn();
 
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'online', 'lastSeenAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'online', 'lastSeenAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'online', 'hideOnlineStatus', 'lastSeenAt', 'updatedAt']) &&
                        isValidUserPresence(incoming());
 
       allow update: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == existing().userId &&
                        isValidUserPresence(incoming()) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['online', 'lastSeenAt', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['online', 'hideOnlineStatus', 'lastSeenAt', 'updatedAt']);
 
       allow delete: if isOwner(userId) && isValidId(userId);
     }
@@ -590,17 +787,291 @@ service cloud.firestore {
 
     // 10. User Moderation Reports (/reports/{reportId})
     match /reports/{reportId} {
-      allow get, list: if isSignedIn() && existing().reporterUid == request.auth.uid;
+      allow get, list: if isAdmin() || (isSignedIn() && existing().reporterUid == request.auth.uid);
 
       allow create: if isSignedIn() &&
                        isValidId(reportId) &&
                        incoming().reporterUid == request.auth.uid &&
                        incoming().keys().hasAll(['reporterUid', 'reportedUid', 'reason', 'sourceSurface', 'createdAt']) &&
-                       incoming().keys().hasOnly(['reporterUid', 'reportedUid', 'reason', 'details', 'sourceSurface', 'matchId', 'createdAt']) &&
+                       incoming().keys().hasOnly(['reporterUid', 'reportedUid', 'reason', 'details', 'sourceSurface', 'matchId', 'status', 'createdAt']) &&
                        isValidReportRecord(incoming()) &&
+                       incoming().get('status', 'OPEN') == 'OPEN' &&
                        exists(/databases/$(database)/documents/publicProfiles/$(incoming().reportedUid));
 
-      allow update, delete: if false;
+      allow update: if isAdmin() &&
+                       isValidId(reportId) &&
+                       isValidReportRecord(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolvedBy', 'resolvedAt']);
+
+      allow delete: if isAdmin() && isValidId(reportId);
+    }
+
+    // 11. Friend Requests (/friendRequests/{requestId}) keyed by {fromUid}_{toUid}
+    match /friendRequests/{requestId} {
+      allow get, list: if isSignedIn() && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(requestId) &&
+                       incoming().fromUid == request.auth.uid &&
+                       incoming().fromUid != incoming().toUid &&
+                       requestId == (incoming().fromUid + '_' + incoming().toUid) &&
+                       incoming().status == 'PENDING' &&
+                       incoming().keys().hasAll(['fromUid', 'toUid', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['fromUid', 'toUid', 'status', 'createdAt', 'updatedAt']) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isValidTimestamp(incoming().updatedAt) &&
+                       isNotBlockedBetween(incoming().fromUid, incoming().toUid);
+
+      allow update: if isSignedIn() &&
+                       isValidId(requestId) &&
+                       incoming().fromUid == existing().fromUid &&
+                       incoming().toUid == existing().toUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+                       isValidTimestamp(incoming().updatedAt) &&
+                       (
+                         (existing().toUid == request.auth.uid && incoming().status in ['ACCEPTED', 'REJECTED']) ||
+                         (existing().fromUid == request.auth.uid && incoming().status in ['PENDING', 'CANCELED'])
+                       );
+
+      allow delete: if isSignedIn() &&
+                       isValidId(requestId) &&
+                       (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+    }
+
+    // 12. Connected Friendships (/friendships/{friendshipId}) keyed by sorted {uid1}_{uid2}
+    match /friendships/{friendshipId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(friendshipId) &&
+                       incoming().participantUids is list &&
+                       incoming().participantUids.size() == 2 &&
+                       incoming().participantUids[0] is string && isValidId(incoming().participantUids[0]) &&
+                       incoming().participantUids[1] is string && isValidId(incoming().participantUids[1]) &&
+                       incoming().participantUids[0] < incoming().participantUids[1] &&
+                       friendshipId == (incoming().participantUids[0] + '_' + incoming().participantUids[1]) &&
+                       request.auth.uid in incoming().participantUids &&
+                       incoming().createdBy == request.auth.uid &&
+                       incoming().keys().hasAll(['participantUids', 'createdBy', 'createdAt']) &&
+                       incoming().keys().hasOnly(['participantUids', 'createdBy', 'createdAt']) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isNotBlockedBetween(incoming().participantUids[0], incoming().participantUids[1]);
+
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(friendshipId) && request.auth.uid in existing().participantUids;
+    }
+
+    // 13. Profile Views (/profileViews/{viewId}) keyed by {viewerUid}_{targetUid}
+    match /profileViews/{viewId} {
+      allow get, list: if isSignedIn() && (existing().targetUid == request.auth.uid || existing().viewerUid == request.auth.uid);
+
+      allow create, update: if isSignedIn() &&
+                               isValidId(viewId) &&
+                               incoming().viewerUid == request.auth.uid &&
+                               incoming().viewerUid != incoming().targetUid &&
+                               isValidId(incoming().targetUid) &&
+                               viewId == (incoming().viewerUid + '_' + incoming().targetUid) &&
+                               incoming().viewerName is string && incoming().viewerName.size() >= 1 && incoming().viewerName.size() <= 40 &&
+                               (!('viewerPhoto' in incoming()) || (incoming().viewerPhoto is string && incoming().viewerPhoto.size() <= 180000)) &&
+                               incoming().keys().hasAll(['viewerUid', 'targetUid', 'viewerName', 'viewedAt']) &&
+                               incoming().keys().hasOnly(['viewerUid', 'targetUid', 'viewerName', 'viewerPhoto', 'viewedAt']) &&
+                               isValidTimestamp(incoming().viewedAt);
+
+      allow delete: if isSignedIn() && isValidId(viewId) && (existing().viewerUid == request.auth.uid || existing().targetUid == request.auth.uid);
+    }
+
+    // 14. Profile Likes (/profileLikes/{likeId}) keyed by {fromUid}_{toUid}
+    match /profileLikes/{likeId} {
+      allow get, list: if isSignedIn() && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(likeId) &&
+                       incoming().fromUid == request.auth.uid &&
+                       incoming().fromUid != incoming().toUid &&
+                       isValidId(incoming().toUid) &&
+                       likeId == (incoming().fromUid + '_' + incoming().toUid) &&
+                       incoming().keys().hasAll(['fromUid', 'toUid', 'createdAt']) &&
+                       incoming().keys().hasOnly(['fromUid', 'toUid', 'createdAt']) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isNotBlockedBetween(incoming().fromUid, incoming().toUid);
+
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(likeId) && existing().fromUid == request.auth.uid;
+    }
+
+    // 15. 24-Hour Ephemeral Stories (/stories/{storyId} + mediaChunks)
+    match /stories/{storyId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(storyId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
+                       incoming().mediaType in ['PHOTO', 'VIDEO'] &&
+                       (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
+                       (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
+                       (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                       (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
+                       (!('caption' in incoming()) || (incoming().caption is string && incoming().caption.size() <= 300)) &&
+                       (!('mediaDurationSec' in incoming()) || (incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0)) &&
+                       (!('chunkCount' in incoming()) || (incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000)) &&
+                       (!('viewerUids' in incoming()) || (incoming().viewerUids is list && incoming().viewerUids.size() <= 500)) &&
+                       incoming().expiresAtMs is int && incoming().expiresAtMs > 0 &&
+                       incoming().keys().hasAll(['userId', 'authorName', 'mediaType', 'expiresAtMs', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAtMs', 'createdAt']) &&
+                       isValidTimestamp(incoming().createdAt);
+
+      allow update: if isSignedIn() &&
+                       isValidId(storyId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isOwner(existing().userId) ||
+                         isAdmin() ||
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly(['viewerUids']) &&
+                           request.auth.uid in incoming().viewerUids &&
+                           incoming().viewerUids.hasAll(existing().get('viewerUids', []))
+                         )
+                       );
+
+      allow delete: if isSignedIn() && isValidId(storyId) && (isOwner(existing().userId) || isAdmin());
+
+      match /mediaChunks/{chunkId} {
+        allow get, list: if isSignedIn() && isValidId(storyId);
+        allow create: if isSignedIn() &&
+                         isValidId(storyId) &&
+                         isValidId(chunkId) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         incoming().keys().hasAll(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                         incoming().keys().hasOnly(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                         isValidMediaChunk(incoming());
+        allow update: if false;
+        allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isAdmin());
+      }
+    }
+
+    // 16. Video Feed Posts (/videoPosts/{postId} + mediaChunks)
+    match /videoPosts/{postId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(postId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
+                       incoming().caption is string && incoming().caption.size() <= 300 &&
+                       (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
+                       (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
+                       (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                       (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
+                       (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
+                       incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0 &&
+                       (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
+                       incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000 &&
+                       (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
+                       incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaDurationSec', 'chunkCount', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
+                       isValidTimestamp(incoming().createdAt);
+
+      allow update: if isSignedIn() &&
+                       isValidId(postId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isOwner(existing().userId) ||
+                         isAdmin() ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['likedByUids'])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(postId) && (isOwner(existing().userId) || isAdmin());
+
+      match /mediaChunks/{chunkId} {
+        allow get, list: if isSignedIn() && isValidId(postId);
+        allow create: if isSignedIn() &&
+                         isValidId(postId) &&
+                         isValidId(chunkId) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         incoming().keys().hasAll(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                         incoming().keys().hasOnly(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                         isValidMediaChunk(incoming());
+        allow update: if false;
+        allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isAdmin());
+      }
+    }
+
+    // 17. Discover Social Timeline Feed Posts (/feedPosts/{postId} + mediaChunks + comments/{commentId})
+    match /feedPosts/{postId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(postId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
+                       incoming().caption is string && incoming().caption.size() <= 500 &&
+                       incoming().mediaType in ['NONE', 'PHOTO', 'VIDEO'] &&
+                       (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
+                       (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
+                       (!('authorCity' in incoming()) || (incoming().authorCity is string && incoming().authorCity.size() <= 80)) &&
+                       (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                       (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
+                       (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
+                       (!('mediaDurationSec' in incoming()) || (incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0)) &&
+                       (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
+                       (!('chunkCount' in incoming()) || (incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000)) &&
+                       (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
+                       (!('commentCount' in incoming()) || (incoming().commentCount is int && incoming().commentCount >= 0)) &&
+                       incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaType', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'commentCount', 'createdAt']) &&
+                       isValidTimestamp(incoming().createdAt);
+
+      allow update: if isSignedIn() &&
+                       isValidId(postId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         isOwner(existing().userId) ||
+                         isAdmin() ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['likedByUids', 'commentCount'])
+                       );
+
+      allow delete: if isSignedIn() && isValidId(postId) && (isOwner(existing().userId) || isAdmin());
+
+      match /mediaChunks/{chunkId} {
+        allow get, list: if isSignedIn() && isValidId(postId);
+        allow create: if isSignedIn() &&
+                         isValidId(postId) &&
+                         isValidId(chunkId) &&
+                         incoming().ownerUid == request.auth.uid &&
+                         incoming().keys().hasAll(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                         incoming().keys().hasOnly(['ownerUid', 'seq', 'dataBase64', 'createdAt']) &&
+                         isValidMediaChunk(incoming());
+        allow update: if false;
+        allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isAdmin());
+      }
+
+      match /comments/{commentId} {
+        allow get, list: if isSignedIn() && isValidId(postId);
+
+        allow create: if isSignedIn() &&
+                         isValidId(postId) &&
+                         isValidId(commentId) &&
+                         incoming().postId == postId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
+                         (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
+                         incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
+                         incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'createdAt']) &&
+                         isValidTimestamp(incoming().createdAt);
+
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(postId) && isValidId(commentId) && (
+          isOwner(existing().userId) ||
+          isAdmin() ||
+          get(/databases/$(database)/documents/feedPosts/$(postId)).data.userId == request.auth.uid
+        );
+      }
     }
   }
 }

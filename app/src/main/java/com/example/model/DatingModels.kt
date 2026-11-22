@@ -1,6 +1,7 @@
 package com.example.model
 
 import androidx.annotation.Keep
+import com.example.util.CountryFlagHelper
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
@@ -17,6 +18,7 @@ data class PrivateUser(
     val maxAgePref: Long = 45L,
     val maxDistanceKm: Long = 50L,
     val verifiedOnlyFilter: Boolean = false,
+    val hideOnlineStatus: Boolean = false,
     val exactLatitude: Double? = null,
     val exactLongitude: Double? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -30,6 +32,7 @@ data class PublicProfile(
     val userId: String = "",
     val displayName: String = "",
     val age: Long = 25L,
+    val dateOfBirth: String = "",
     val gender: String = "Woman",
     val bio: String = "",
     val cityLabel: String = "San Francisco",
@@ -44,6 +47,12 @@ data class PublicProfile(
     val profilePhotos: List<String> = emptyList(),
     val avatarSeed: String = "kindred",
     val discoverable: Boolean = true,
+    val profileCompleted: Boolean = true,
+    val suspended: Boolean = false,
+    val hideOnlineStatus: Boolean = false,
+    val photosVisibility: String = VisibilityLevel.EVERYONE,
+    val videosVisibility: String = VisibilityLevel.EVERYONE,
+    val infoVisibility: String = VisibilityLevel.EVERYONE,
     val verificationStatus: String = "UNVERIFIED",
     val verificationId: String? = null,
     val verificationScore: Long = 30L,
@@ -60,7 +69,12 @@ data class PublicProfile(
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
-            .take(4)
+            .take(KindredConstants.MAX_PROFILE_PHOTOS)
+
+    fun flagEmoji(): String = CountryFlagHelper.flagEmojiForCountry(country)
+
+    fun formattedNameAgeWithFlag(): String =
+        CountryFlagHelper.nameAgeWithFlag(displayName, age, country)
 
     fun formattedLocation(): String {
         val cleanCity = cityLabel.trim()
@@ -72,6 +86,18 @@ data class PublicProfile(
             cleanCountry.isNotBlank() -> cleanCountry
             else -> "Nearby"
         }
+    }
+}
+
+object VisibilityLevel {
+    const val EVERYONE = "EVERYONE"
+    const val MATCHES_AND_FRIENDS = "MATCHES_AND_FRIENDS"
+    const val FRIENDS_ONLY = "FRIENDS_ONLY"
+
+    fun labelFor(level: String): String = when (level) {
+        FRIENDS_ONLY -> "Friends Only"
+        MATCHES_AND_FRIENDS -> "Matches & Friends"
+        else -> "Everyone"
     }
 }
 
@@ -138,8 +164,19 @@ data class ChatMessage(
     val text: String = "",
     val messageType: String = "TEXT",
     val mediaDataUrl: String? = null,
+    val thumbnailDataUrl: String? = null,
+    val mediaMimeType: String? = null,
+    val mediaChunkCount: Long = 0L,
+    val mediaByteSize: Long = 0L,
     val mediaGifId: String? = null,
     val mediaDurationSec: Long = 0L,
+    val replyToMessageId: String? = null,
+    val replyToSenderId: String? = null,
+    val replyToText: String? = null,
+    val replyToType: String? = null,
+    val deletedForUids: List<String> = emptyList(),
+    val unsent: Boolean = false,
+    val unsentAt: Timestamp? = null,
     val readByUids: List<String> = emptyList(),
     val readAt: Timestamp? = null,
     val disappearingSeconds: Long = 0L,
@@ -149,6 +186,8 @@ data class ChatMessage(
     @ServerTimestamp val createdAt: Timestamp? = null
 ) {
     fun isReadBy(uid: String): Boolean = uid.isNotBlank() && uid in readByUids
+
+    fun isDeletedFor(uid: String): Boolean = uid.isNotBlank() && uid in deletedForUids
 
     fun isExpiredAt(nowMs: Long = System.currentTimeMillis()): Boolean {
         val exp = expiresAtMs
@@ -214,6 +253,174 @@ data class CallAudioChunk(
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+@Keep
+@IgnoreExtraProperties
+data class CallVideoFrame(
+    @DocumentId val id: String = "",
+    val matchId: String = "",
+    val callId: String = "",
+    val senderUid: String = "",
+    val participantUids: List<String> = emptyList(),
+    val seq: Long = 0L,
+    val frameBase64: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class MediaChunkRecord(
+    @DocumentId val id: String = "",
+    val ownerUid: String = "",
+    val participantUids: List<String> = emptyList(),
+    val seq: Long = 0L,
+    val dataBase64: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class ProfileVideoItem(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val caption: String = "",
+    val mediaDataUrl: String? = null,
+    val thumbnailDataUrl: String? = null,
+    val mediaMimeType: String? = null,
+    val mediaDurationSec: Long = 0L,
+    val mediaByteSize: Long = 0L,
+    val chunkCount: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class FriendRequestRecord(
+    @DocumentId val id: String = "",
+    val fromUid: String = "",
+    val toUid: String = "",
+    val status: String = "PENDING",
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class FriendshipRecord(
+    @DocumentId val id: String = "",
+    val participantUids: List<String> = emptyList(),
+    val createdBy: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class ProfileViewRecord(
+    @DocumentId val id: String = "",
+    val viewerUid: String = "",
+    val targetUid: String = "",
+    val viewerName: String = "",
+    val viewerPhoto: String? = null,
+    @ServerTimestamp val viewedAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class ProfileLikeRecord(
+    @DocumentId val id: String = "",
+    val fromUid: String = "",
+    val toUid: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class FavoriteRecord(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val targetUid: String = "",
+    val displayName: String = "",
+    val age: Long = 25L,
+    val cityLabel: String = "",
+    val country: String = "",
+    val photoDataUrl: String? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class StoryItem(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val authorName: String = "",
+    val authorPhoto: String? = null,
+    val authorCountry: String? = null,
+    val mediaType: String = "PHOTO",
+    val mediaDataUrl: String? = null,
+    val thumbnailDataUrl: String? = null,
+    val caption: String? = null,
+    val mediaDurationSec: Long = 0L,
+    val chunkCount: Long = 0L,
+    val viewerUids: List<String> = emptyList(),
+    val expiresAtMs: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null
+) {
+    fun isExpiredAt(nowMs: Long = System.currentTimeMillis()): Boolean =
+        expiresAtMs in 1 until nowMs
+}
+
+@Keep
+@IgnoreExtraProperties
+data class VideoPost(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val authorName: String = "",
+    val authorPhoto: String? = null,
+    val authorCountry: String? = null,
+    val caption: String = "",
+    val mediaDataUrl: String? = null,
+    val thumbnailDataUrl: String? = null,
+    val mediaMimeType: String? = null,
+    val mediaDurationSec: Long = 0L,
+    val mediaByteSize: Long = 0L,
+    val chunkCount: Long = 0L,
+    val likedByUids: List<String> = emptyList(),
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class FeedPost(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val authorName: String = "",
+    val authorPhoto: String? = null,
+    val authorCountry: String? = null,
+    val authorCity: String? = null,
+    val caption: String = "",
+    val mediaType: String = "NONE",
+    val mediaDataUrl: String? = null,
+    val thumbnailDataUrl: String? = null,
+    val mediaMimeType: String? = null,
+    val mediaDurationSec: Long = 0L,
+    val mediaByteSize: Long = 0L,
+    val chunkCount: Long = 0L,
+    val likedByUids: List<String> = emptyList(),
+    val commentCount: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
+data class FeedComment(
+    @DocumentId val id: String = "",
+    val postId: String = "",
+    val userId: String = "",
+    val authorName: String = "",
+    val authorPhoto: String? = null,
+    val text: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
 data class IcebreakerSuggestion(
     val prompt: String,
     val tone: String,
@@ -226,6 +433,7 @@ data class UserPresence(
     @DocumentId val id: String = "",
     val userId: String = "",
     val online: Boolean = false,
+    val hideOnlineStatus: Boolean = false,
     @ServerTimestamp val lastSeenAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
@@ -260,6 +468,9 @@ data class ReportRecord(
     val details: String? = null,
     val sourceSurface: String = "PROFILE",
     val matchId: String? = null,
+    val status: String = "OPEN",
+    val resolvedBy: String? = null,
+    val resolvedAt: Timestamp? = null,
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
@@ -274,6 +485,30 @@ data class BlockedUserItem(
     val displayName: String,
     val reason: String? = null
 )
+
+data class ActiveMemberPresenceItem(
+    val profile: PublicProfile,
+    val presence: UserPresence,
+    val isOnline: Boolean,
+    val isRecentlyLeft: Boolean,
+    val statusLabel: String
+)
+
+data class SuggestedFriendItem(
+    val profile: PublicProfile,
+    val sharedInterests: List<String>,
+    val sameCity: Boolean,
+    val sameCountry: Boolean,
+    val distanceKm: Double,
+    val score: Int
+)
+
+enum class FriendStatus {
+    NONE,
+    OUTGOING_PENDING,
+    INCOMING_PENDING,
+    FRIENDS
+}
 
 data class DiscoveryCandidate(
     val profile: PublicProfile,
@@ -344,6 +579,9 @@ data class LivenessAnalysisResult(
 )
 
 object KindredConstants {
+    const val MAX_PROFILE_PHOTOS = 12
+    const val ADMIN_EMAIL = "davidelvisaghamomwan@gmail.com"
+
     val INTEREST_OPTIONS = listOf(
         "Coffee", "Hiking", "Architecture", "Live Music",
         "Cooking", "Photography", "Travel", "Art Museums",

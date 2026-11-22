@@ -10,9 +10,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,13 +23,17 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,20 +41,30 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Gif
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Timer
@@ -56,6 +72,7 @@ import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +87,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,13 +99,18 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import com.example.communication.GifCatalog
 import com.example.model.ChatMessage
+import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -193,6 +216,7 @@ internal fun PartnerTypingBubble(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ChatBubble(
     message: ChatMessage,
@@ -200,11 +224,19 @@ internal fun ChatBubble(
     showPartnerAvatar: Boolean,
     partner: PublicProfile?,
     partnerId: String,
+    currentUserId: String = "",
     nowMillis: Long = System.currentTimeMillis(),
     playingVoiceMessageId: String? = null,
     onOpenMedia: (ChatMessage) -> Unit = {},
-    onToggleVoicePlayback: (ChatMessage) -> Unit = {}
+    onToggleVoicePlayback: (ChatMessage) -> Unit = {},
+    onMessageActions: (ChatMessage) -> Unit = {},
+    onReplyMessage: (ChatMessage) -> Unit = {},
+    onDownloadMedia: (ChatMessage) -> Unit = {}
 ) {
+    if (currentUserId.isNotBlank() && message.isDeletedFor(currentUserId)) {
+        return
+    }
+
     if (message.messageType == "CALL") {
         val isVideo = message.text.contains("Video", ignoreCase = true)
         Box(
@@ -248,6 +280,7 @@ internal fun ChatBubble(
     }
     val remainingSec = message.remainingSecondsAt(nowMillis)
     val isReadByPartner = isMine && partnerId.isNotBlank() && message.isReadBy(partnerId)
+    val senderLabel = if (isMine) "You" else (partner?.displayName?.ifBlank { "Match" } ?: "Match")
 
     Row(
         modifier = Modifier
@@ -280,12 +313,20 @@ internal fun ChatBubble(
 
         Surface(
             shape = bubbleShape,
-            color = if (isMine) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = if (isMine) null else BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+            color = when {
+                message.unsent -> MaterialTheme.colorScheme.surfaceContainerHigh
+                isMine -> Color.Transparent
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+            border = when {
+                message.unsent -> BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+                isMine -> null
+                else -> BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            },
             modifier = Modifier
-                .widthIn(max = 296.dp)
+                .widthIn(max = 304.dp)
                 .then(
-                    if (isMine) {
+                    if (isMine && !message.unsent) {
                         Modifier.background(
                             brush = Brush.linearGradient(
                                 colors = listOf(CoralRose, CoralRose.copy(alpha = 0.86f))
@@ -296,63 +337,191 @@ internal fun ChatBubble(
                         Modifier
                     }
                 )
+                .clip(bubbleShape)
+                .combinedClickable(
+                    onClick = {
+                        if (!message.unsent && (message.messageType == "PHOTO" || message.messageType == "VIDEO")) {
+                            onOpenMedia(message)
+                        } else {
+                            onMessageActions(message)
+                        }
+                    },
+                    onLongClick = { onMessageActions(message) }
+                )
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (message.messageType == "ICEBREAKER") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = senderLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = when {
+                            message.unsent -> MaterialTheme.colorScheme.onSurfaceVariant
+                            isMine -> Color.White.copy(alpha = 0.86f)
+                            else -> CoralRose
+                        },
+                        modifier = Modifier.testTag("bubble_sender_${message.id}")
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.padding(bottom = 4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = null,
-                            tint = if (isMine) Color.White.copy(alpha = 0.9f) else ChampagneGold,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "Icebreaker",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isMine) Color.White.copy(alpha = 0.9f) else ChampagneGold
-                        )
+                        if (!message.unsent) {
+                            IconButton(
+                                onClick = { onReplyMessage(message) },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("reply_msg_button_${message.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Reply,
+                                    contentDescription = "Reply to message",
+                                    tint = if (isMine) Color.White.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { onMessageActions(message) },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("more_msg_actions_${message.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.MoreVert,
+                                contentDescription = "Message options",
+                                tint = if (isMine && !message.unsent) Color.White.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
                     }
                 }
 
-                when (message.messageType) {
-                    "PHOTO" -> PhotoMessageBody(
-                        message = message,
-                        isMine = isMine,
-                        onOpenMedia = onOpenMedia
-                    )
-
-                    "VIDEO" -> VideoMessageBody(
-                        message = message,
-                        onOpenMedia = onOpenMedia
-                    )
-
-                    "VOICE" -> VoiceMessageBody(
-                        message = message,
-                        isMine = isMine,
-                        isPlaying = playingVoiceMessageId == message.id,
-                        onTogglePlayback = { onToggleVoicePlayback(message) }
-                    )
-
-                    "GIF" -> GifMessageBody(
-                        message = message,
-                        isMine = isMine
-                    )
-                }
-
-                if (message.text.isNotBlank()) {
-                    if (message.messageType in setOf("PHOTO", "VIDEO", "VOICE", "GIF")) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                    }
+                if (message.unsent) {
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = message.text,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (isMine) Color.White else MaterialTheme.colorScheme.onSurface
+                        text = "This message was unsent",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("unsent_label_${message.id}")
                     )
+                } else {
+                    if (!message.replyToMessageId.isNullOrBlank()) {
+                        val replyAuthor = when {
+                            message.replyToSenderId == currentUserId && currentUserId.isNotBlank() -> "You"
+                            message.replyToSenderId == partnerId -> partner?.displayName ?: "Match"
+                            else -> if (isMine) "Match" else "You"
+                        }
+                        val replySnippet = message.replyToText?.takeIf { it.isNotBlank() }
+                            ?: when (message.replyToType) {
+                                "PHOTO" -> "Photo"
+                                "VIDEO" -> "Video"
+                                "VOICE" -> "Voice note"
+                                "GIF" -> "GIF"
+                                else -> "Message"
+                            }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isMine) Color.White.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp, bottom = 6.dp)
+                                .testTag("reply_quote_${message.id}")
+                        ) {
+                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(3.dp)
+                                        .height(28.dp)
+                                        .background(
+                                            if (isMine) Color.White else CoralRose,
+                                            RoundedCornerShape(2.dp)
+                                        )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = replyAuthor,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isMine) Color.White else CoralRose
+                                    )
+                                    Text(
+                                        text = replySnippet,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (isMine) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (message.messageType == "ICEBREAKER") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.AutoAwesome,
+                                contentDescription = null,
+                                tint = if (isMine) Color.White.copy(alpha = 0.9f) else ChampagneGold,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = "Icebreaker",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isMine) Color.White.copy(alpha = 0.9f) else ChampagneGold
+                            )
+                        }
+                    }
+
+                    when (message.messageType) {
+                        "PHOTO" -> PhotoMessageBody(
+                            message = message,
+                            isMine = isMine,
+                            onOpenMedia = onOpenMedia,
+                            onDownloadMedia = onDownloadMedia
+                        )
+
+                        "VIDEO" -> VideoMessageBody(
+                            message = message,
+                            onOpenMedia = onOpenMedia,
+                            onDownloadMedia = onDownloadMedia
+                        )
+
+                        "VOICE" -> VoiceMessageBody(
+                            message = message,
+                            isMine = isMine,
+                            isPlaying = playingVoiceMessageId == message.id,
+                            onTogglePlayback = { onToggleVoicePlayback(message) }
+                        )
+
+                        "GIF" -> GifMessageBody(
+                            message = message,
+                            isMine = isMine
+                        )
+                    }
+
+                    if (message.text.isNotBlank()) {
+                        if (message.messageType in setOf("PHOTO", "VIDEO", "VOICE", "GIF")) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                        } else {
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                        Text(
+                            text = message.text,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (isMine) Color.White else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -361,7 +530,7 @@ internal fun ChatBubble(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    if (message.viewOnce || remainingSec != null || message.disappearingSeconds > 0L) {
+                    if (!message.unsent && (message.viewOnce || remainingSec != null || message.disappearingSeconds > 0L)) {
                         Icon(
                             imageVector = Icons.Filled.Timer,
                             contentDescription = "Disappearing timer",
@@ -382,13 +551,13 @@ internal fun ChatBubble(
                     Text(
                         text = timeLabel,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (isMine) {
+                        color = if (isMine && !message.unsent) {
                             Color.White.copy(alpha = 0.78f)
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
-                    if (isMine) {
+                    if (isMine && !message.unsent) {
                         Icon(
                             imageVector = if (isReadByPartner) Icons.Filled.DoneAll else Icons.Filled.Done,
                             contentDescription = if (isReadByPartner) "Read" else "Sent",
@@ -408,7 +577,8 @@ internal fun ChatBubble(
 private fun PhotoMessageBody(
     message: ChatMessage,
     isMine: Boolean,
-    onOpenMedia: (ChatMessage) -> Unit
+    onOpenMedia: (ChatMessage) -> Unit,
+    onDownloadMedia: (ChatMessage) -> Unit
 ) {
     if (message.viewOnce && !isMine && !message.openedByRecipient) {
         Surface(
@@ -448,33 +618,61 @@ private fun PhotoMessageBody(
         }.getOrNull()
     }
 
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap,
-            contentDescription = "Shared chat photo",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(190.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .clickable { onOpenMedia(message) }
-                .testTag("photo_bubble_image_${message.id}")
-        )
-    } else {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color.Black.copy(alpha = 0.16f),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpenMedia(message) }
-                .padding(4.dp)
-        ) {
-            Text(
-                text = "📷 Shared photo",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (isMine) Color.White else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(12.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Shared chat photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(190.dp)
+                    .clickable { onOpenMedia(message) }
+                    .testTag("photo_bubble_image_${message.id}")
             )
+        } else {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color.Black.copy(alpha = 0.16f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenMedia(message) }
+            ) {
+                Text(
+                    text = "Shared photo",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (isMine) Color.White else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(14.dp)
+                )
+            }
+        }
+
+        if (!message.viewOnce && !message.mediaDataUrl.isNullOrBlank()) {
+            Surface(
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.62f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+            ) {
+                IconButton(
+                    onClick = { onDownloadMedia(message) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("download_media_${message.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Download,
+                        contentDescription = "Download photo",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -482,14 +680,23 @@ private fun PhotoMessageBody(
 @Composable
 private fun VideoMessageBody(
     message: ChatMessage,
-    onOpenMedia: (ChatMessage) -> Unit
+    onOpenMedia: (ChatMessage) -> Unit,
+    onDownloadMedia: (ChatMessage) -> Unit
 ) {
     val context = LocalContext.current
-    var thumbnailBitmap by remember(message.id, message.mediaDataUrl) { mutableStateOf<Bitmap?>(null) }
+    val embeddedThumbnail = remember(message.thumbnailDataUrl) {
+        val raw = message.thumbnailDataUrl ?: return@remember null
+        runCatching {
+            val base64 = raw.substringAfter("base64,", raw)
+            val bytes = Base64.decode(base64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+    var extractedBitmap by remember(message.id, message.mediaDataUrl) { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(message.id, message.mediaDataUrl) {
-        if (!message.mediaDataUrl.isNullOrBlank()) {
-            thumbnailBitmap = VideoClipHelper.extractVideoThumbnail(
+    LaunchedEffect(message.id, message.mediaDataUrl, embeddedThumbnail) {
+        if (embeddedThumbnail == null && !message.mediaDataUrl.isNullOrBlank()) {
+            extractedBitmap = VideoClipHelper.extractVideoThumbnail(
                 context = context,
                 messageId = message.id.ifBlank { "video_msg" },
                 mediaDataUrl = message.mediaDataUrl
@@ -497,6 +704,7 @@ private fun VideoMessageBody(
         }
     }
 
+    val thumb = embeddedThumbnail ?: extractedBitmap
     val durationLabel = remember(message.mediaDurationSec) {
         VideoClipHelper.formatDurationLabel(message.mediaDurationSec)
     }
@@ -510,11 +718,10 @@ private fun VideoMessageBody(
             .clickable { onOpenMedia(message) }
             .testTag("video_bubble_${message.id}")
     ) {
-        val thumb = thumbnailBitmap
         if (thumb != null) {
             Image(
                 bitmap = thumb.asImageBitmap(),
-                contentDescription = "Short video thumbnail",
+                contentDescription = "Video thumbnail",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
@@ -536,7 +743,7 @@ private fun VideoMessageBody(
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Filled.PlayArrow,
-                    contentDescription = "Play short video",
+                    contentDescription = "Play video",
                     tint = Color.White,
                     modifier = Modifier.size(32.dp)
                 )
@@ -562,9 +769,31 @@ private fun VideoMessageBody(
                     modifier = Modifier.size(13.dp)
                 )
                 Text(
-                    text = "Short Video",
+                    text = "Video",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White
+                )
+            }
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = Color.Black.copy(alpha = 0.65f),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+        ) {
+            IconButton(
+                onClick = { onDownloadMedia(message) },
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("download_media_${message.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Download,
+                    contentDescription = "Download video",
+                    tint = Color.White,
+                    modifier = Modifier.size(17.dp)
                 )
             }
         }
@@ -718,7 +947,7 @@ private fun GifMessageBody(
         )
     } else {
         Text(
-            text = "🎞️ Animated GIF",
+            text = "Animated GIF",
             style = MaterialTheme.typography.bodyMedium,
             color = if (isMine) Color.White else MaterialTheme.colorScheme.onSurface
         )
@@ -741,11 +970,21 @@ internal fun PartnerProfileQuickSheet(
     onMessageClick: (() -> Unit)? = null,
     onUnmatchClick: (() -> Unit)? = null,
     onReportClick: (() -> Unit)? = null,
-    onBlockClick: (() -> Unit)? = null
+    onBlockClick: (() -> Unit)? = null,
+    isBlocked: Boolean = false,
+    onUnblockClick: (() -> Unit)? = null,
+    onOpenFullProfile: (() -> Unit)? = null,
+    friendStatus: FriendStatus = FriendStatus.NONE,
+    onFriendAction: (() -> Unit)? = null,
+    isLiked: Boolean = false,
+    onToggleLike: (() -> Unit)? = null,
+    isFavorited: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null
 ) {
     val photos = remember(partner.userId, partner.photoDataUrl, partner.profilePhotos) {
         partner.allProfilePhotos()
     }
+    val flag = partner.flagEmoji()
     var galleryStartIndex by remember(partner.userId) { mutableStateOf<Int?>(null) }
 
     Column(
@@ -776,10 +1015,22 @@ internal fun PartnerProfileQuickSheet(
                 )
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "${partner.displayName}, ${partner.age}",
-                    style = MaterialTheme.typography.headlineSmall
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "${partner.displayName}, ${partner.age}",
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    if (flag.isNotBlank()) {
+                        Text(
+                            text = flag,
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.testTag("partner_sheet_country_flag")
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -904,8 +1155,90 @@ internal fun PartnerProfileQuickSheet(
             }
         }
 
+        if (onOpenFullProfile != null) {
+            FilledTonalButton(
+                onClick = onOpenFullProfile,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("sheet_view_full_profile_button")
+            ) {
+                Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Open Full Profile, Videos & Friends")
+            }
+        }
+
+        if (onFriendAction != null || onToggleLike != null || onToggleFavorite != null) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (onFriendAction != null) {
+                    val friendLabel = when (friendStatus) {
+                        FriendStatus.NONE -> "Add Friend"
+                        FriendStatus.OUTGOING_PENDING -> "Request Sent"
+                        FriendStatus.INCOMING_PENDING -> "Accept Friend"
+                        FriendStatus.FRIENDS -> "Friends ✓"
+                    }
+                    OutlinedButton(
+                        onClick = onFriendAction,
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("sheet_friend_button")
+                    ) {
+                        Icon(
+                            imageVector = if (friendStatus == FriendStatus.FRIENDS) Icons.Filled.Check else Icons.Filled.PersonAdd,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(friendLabel, maxLines = 1)
+                    }
+                }
+                if (onToggleLike != null) {
+                    OutlinedButton(
+                        onClick = onToggleLike,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (isLiked) CoralRose else MaterialTheme.colorScheme.onSurface
+                        ),
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("sheet_like_profile_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (isLiked) "Liked" else "Like", maxLines = 1)
+                    }
+                }
+                if (onToggleFavorite != null) {
+                    OutlinedButton(
+                        onClick = onToggleFavorite,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (isFavorited) ChampagneGold else MaterialTheme.colorScheme.onSurface
+                        ),
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("sheet_favorite_profile_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isFavorited) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (isFavorited) "Saved" else "Favorite", maxLines = 1)
+                    }
+                }
+            }
+        }
+
         if (onMessageClick != null) {
-            Spacer(modifier = Modifier.height(6.dp))
             Button(
                 onClick = onMessageClick,
                 colors = ButtonDefaults.buttonColors(
@@ -927,17 +1260,18 @@ internal fun PartnerProfileQuickSheet(
             }
         }
 
-        if (onUnmatchClick != null || onReportClick != null || onBlockClick != null) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+        if (onUnmatchClick != null || onReportClick != null || onBlockClick != null || (isBlocked && onUnblockClick != null)) {
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("sheet_safety_actions_row"),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (onUnmatchClick != null) {
                     OutlinedButton(
                         onClick = onUnmatchClick,
                         modifier = Modifier
-                            .weight(1f)
                             .height(48.dp)
                             .testTag("sheet_unmatch_user_button")
                     ) {
@@ -947,7 +1281,7 @@ internal fun PartnerProfileQuickSheet(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Unmatch")
+                        Text("Unmatch", maxLines = 1)
                     }
                 }
                 if (onReportClick != null) {
@@ -956,7 +1290,6 @@ internal fun PartnerProfileQuickSheet(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = ChampagneGold),
                         border = BorderStroke(1.dp, ChampagneGold.copy(alpha = 0.6f)),
                         modifier = Modifier
-                            .weight(1f)
                             .height(48.dp)
                             .testTag("sheet_report_user_button")
                     ) {
@@ -966,16 +1299,32 @@ internal fun PartnerProfileQuickSheet(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Report")
+                        Text("Report", maxLines = 1)
                     }
                 }
-                if (onBlockClick != null) {
+                if (isBlocked && onUnblockClick != null) {
+                    OutlinedButton(
+                        onClick = onUnblockClick,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = EmeraldMint),
+                        border = BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.6f)),
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("sheet_unblock_user_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Unblock", maxLines = 1)
+                    }
+                } else if (!isBlocked && onBlockClick != null) {
                     OutlinedButton(
                         onClick = onBlockClick,
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
                         modifier = Modifier
-                            .weight(1f)
                             .height(48.dp)
                             .testTag("sheet_block_user_button")
                     ) {
@@ -985,7 +1334,7 @@ internal fun PartnerProfileQuickSheet(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Block")
+                        Text("Block", maxLines = 1)
                     }
                 }
             }
@@ -1003,17 +1352,45 @@ internal fun PartnerProfileQuickSheet(
     }
 }
 
+private sealed interface GalleryMediaEntry {
+    data class Photo(val dataUrl: String) : GalleryMediaEntry
+    data class Video(val item: com.example.model.ProfileVideoItem) : GalleryMediaEntry
+}
+
 @Composable
 internal fun PartnerPhotoGalleryDialog(
     photos: List<String>,
     initialIndex: Int = 0,
     partnerName: String,
+    videos: List<com.example.model.ProfileVideoItem> = emptyList(),
+    resolveVideoFile: (suspend (com.example.model.ProfileVideoItem) -> Result<java.io.File>)? = null,
     onDismiss: () -> Unit
 ) {
-    var activeIndex by remember(photos, initialIndex) {
-        mutableIntStateOf(initialIndex.coerceIn(0, (photos.size - 1).coerceAtLeast(0)))
+    val items = remember(photos, videos) {
+        buildList<GalleryMediaEntry> {
+            photos.forEach { add(GalleryMediaEntry.Photo(it)) }
+            videos.forEach { add(GalleryMediaEntry.Video(it)) }
+        }
     }
-    val activePhoto = photos.getOrNull(activeIndex)
+    if (items.isEmpty()) {
+        onDismiss()
+        return
+    }
+    val startIdx = initialIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+        initialPage = startIdx,
+        pageCount = { items.size }
+    )
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val activeIndex = pagerState.currentPage
+    val isMixedOrVideo = videos.isNotEmpty()
+    val titleLabel = if (isMixedOrVideo) "$partnerName's Gallery" else "$partnerName's Photos"
+    val counterLabel = if (isMixedOrVideo) {
+        "Media ${activeIndex + 1} of ${items.size}"
+    } else {
+        "Photo ${activeIndex + 1} of ${items.size}"
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1022,8 +1399,9 @@ internal fun PartnerPhotoGalleryDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.95f))
-                .padding(16.dp)
+                .background(Color.Black.copy(alpha = 0.96f))
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .testTag("partner_photo_gallery_dialog")
         ) {
             Row(
@@ -1035,15 +1413,15 @@ internal fun PartnerPhotoGalleryDialog(
             ) {
                 Column {
                     Text(
-                        text = "$partnerName's Photos",
+                        text = titleLabel,
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Photo ${activeIndex + 1} of ${photos.size}",
+                        text = counterLabel,
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.78f),
+                        color = Color.White.copy(alpha = 0.8f),
                         modifier = Modifier.testTag("gallery_counter_label")
                     )
                 }
@@ -1062,57 +1440,155 @@ internal fun PartnerPhotoGalleryDialog(
                 }
             }
 
-            Box(
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(vertical = 72.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                val decodedBitmap = remember(activePhoto) {
-                    com.example.util.VerificationAnalyzer.decodeBase64DataUrl(activePhoto)
-                }
-                if (decodedBitmap != null) {
-                    Image(
-                        bitmap = decodedBitmap,
-                        contentDescription = "$partnerName photo ${activeIndex + 1}",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(18.dp))
-                    )
-                } else if (!activePhoto.isNullOrBlank() && activePhoto.startsWith("http")) {
-                    AsyncImage(
-                        model = activePhoto,
-                        contentDescription = "$partnerName photo ${activeIndex + 1}",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(18.dp))
-                    )
-                } else {
-                    ProfileAvatarImage(
-                        photoDataUrl = activePhoto,
-                        displayName = partnerName,
-                        seed = partnerName,
-                        modifier = Modifier.size(220.dp),
-                        shape = RoundedCornerShape(24.dp),
-                        initialsFontSizeSp = 64
-                    )
+                    .padding(top = 64.dp, bottom = 76.dp)
+                    .testTag("gallery_horizontal_pager")
+            ) { pageIndex ->
+                when (val entry = items[pageIndex]) {
+                    is GalleryMediaEntry.Photo -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val activePhoto = entry.dataUrl
+                            val decodedBitmap = remember(activePhoto) {
+                                com.example.util.VerificationAnalyzer.decodeBase64DataUrl(activePhoto)
+                            }
+                            if (decodedBitmap != null) {
+                                Image(
+                                    bitmap = decodedBitmap,
+                                    contentDescription = "$partnerName photo ${pageIndex + 1}",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(18.dp))
+                                )
+                            } else if (activePhoto.startsWith("http")) {
+                                AsyncImage(
+                                    model = activePhoto,
+                                    contentDescription = "$partnerName photo ${pageIndex + 1}",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(18.dp))
+                                )
+                            } else {
+                                ProfileAvatarImage(
+                                    photoDataUrl = activePhoto,
+                                    displayName = partnerName,
+                                    seed = partnerName,
+                                    modifier = Modifier.size(220.dp),
+                                    shape = RoundedCornerShape(24.dp),
+                                    initialsFontSizeSp = 64
+                                )
+                            }
+                        }
+                    }
+
+                    is GalleryMediaEntry.Video -> {
+                        val videoItem = entry.item
+                        var resolvedFile by remember(videoItem.id) { mutableStateOf<java.io.File?>(null) }
+                        var loadingVideo by remember(videoItem.id) { mutableStateOf(false) }
+                        var loadError by remember(videoItem.id) { mutableStateOf<String?>(null) }
+                        val isCurrentPage = pagerState.currentPage == pageIndex
+
+                        LaunchedEffect(videoItem.id, isCurrentPage) {
+                            if (isCurrentPage && resolvedFile == null && resolveVideoFile != null && !loadingVideo) {
+                                loadingVideo = true
+                                loadError = null
+                                resolveVideoFile(videoItem)
+                                    .onSuccess { resolvedFile = it }
+                                    .onFailure { loadError = it.localizedMessage ?: "Unable to load video" }
+                                loadingVideo = false
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color(0xFF141118)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val ready = resolvedFile
+                            if (ready != null && isCurrentPage) {
+                                AndroidView(
+                                    factory = { ctx ->
+                                        android.widget.VideoView(ctx).apply {
+                                            setVideoURI(android.net.Uri.fromFile(ready))
+                                            setOnPreparedListener { mp ->
+                                                mp.isLooping = true
+                                                start()
+                                            }
+                                            setOnClickListener {
+                                                if (isPlaying) pause() else start()
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                val thumb = remember(videoItem.thumbnailDataUrl) {
+                                    com.example.util.VerificationAnalyzer.decodeBase64DataUrl(videoItem.thumbnailDataUrl)
+                                }
+                                if (thumb != null) {
+                                    Image(
+                                        bitmap = thumb,
+                                        contentDescription = videoItem.caption.ifBlank { "Video preview" },
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .padding(16.dp)
+                                ) {
+                                    if (loadingVideo) {
+                                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(28.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Buffering video…", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Filled.Videocam,
+                                            contentDescription = "Video item",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(36.dp)
+                                        )
+                                        if (loadError != null) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(loadError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                                        } else if (videoItem.caption.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(videoItem.caption, color = Color.White, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            if (photos.size > 1) {
+            if (items.size > 1) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
                         .padding(bottom = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     FilledTonalButton(
                         onClick = {
-                            activeIndex = if (activeIndex > 0) activeIndex - 1 else photos.lastIndex
+                            val target = if (activeIndex > 0) activeIndex - 1 else items.lastIndex
+                            coroutineScope.launch { pagerState.animateScrollToPage(target) }
                         },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
@@ -1120,7 +1596,7 @@ internal fun PartnerPhotoGalleryDialog(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Previous photo",
+                            contentDescription = "Previous media",
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -1129,7 +1605,8 @@ internal fun PartnerPhotoGalleryDialog(
 
                     FilledTonalButton(
                         onClick = {
-                            activeIndex = (activeIndex + 1) % photos.size
+                            val target = (activeIndex + 1) % items.size
+                            coroutineScope.launch { pagerState.animateScrollToPage(target) }
                         },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
@@ -1139,7 +1616,7 @@ internal fun PartnerPhotoGalleryDialog(
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Next photo",
+                            contentDescription = "Next media",
                             modifier = Modifier.size(18.dp)
                         )
                     }

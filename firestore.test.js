@@ -410,19 +410,21 @@ test("Swipes, atomic mutual matches, and real-time chat isolation", async () => 
   );
 });
 
-test("Presence tracking enforces owner-only writes, targeted get reads, and blocks mass listing", async () => {
+test("Presence tracking enforces owner-only writes, hides status flag, allows signed-in active listing, and denies unauth", async () => {
   const unauthDb = testEnv.unauthenticatedContext().firestore();
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
 
   await assertFails(unauthDb.collection("presence").doc(ALICE_UID).get());
-  await assertFails(bobDb.collection("presence").get());
+  await assertFails(unauthDb.collection("presence").get());
+  await assertSucceeds(bobDb.collection("presence").get());
 
   // Alice creates her online presence document
   await assertSucceeds(
     aliceDb.collection("presence").doc(ALICE_UID).set({
       userId: ALICE_UID,
       online: true,
+      hideOnlineStatus: false,
       lastSeenAt: pastDate(1000),
       updatedAt: pastDate(1000),
     })
@@ -441,11 +443,12 @@ test("Presence tracking enforces owner-only writes, targeted get reads, and bloc
     })
   );
 
-  // Alice transitions offline via set() overwrite (hits update rule)
+  // Alice transitions offline and toggles hideOnlineStatus
   await assertSucceeds(
     aliceDb.collection("presence").doc(ALICE_UID).set({
       userId: ALICE_UID,
       online: false,
+      hideOnlineStatus: true,
       lastSeenAt: pastDate(200),
       updatedAt: pastDate(200),
     })
@@ -677,45 +680,110 @@ test("Chat read receipts, typing indicators, disappearing timers, and call signa
     charlieDb.collection("matches").doc(matchId).collection("calls").doc("call_001").collection("audioChunks").doc("chunk_alice_0").get()
   );
 
-  // Alice can attach a short video clip (<=20s); >920KB base64 is rejected
+  // Alice can attach long/high-resolution video clips via chunked subcollections
   await assertSucceeds(
-    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_1").set({
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_long").set({
       matchId,
       senderId: ALICE_UID,
       participantUids: [ALICE_UID, BOB_UID],
-      text: "Quick cafe clip",
+      text: "Full concert clip",
       messageType: "VIDEO",
-      mediaDataUrl: "data:video/mp4;base64,AAAAIGZ0eXBpc29t",
-      mediaDurationSec: 12,
+      thumbnailDataUrl: "data:image/jpeg;base64,THUMB",
+      mediaMimeType: "video/mp4",
+      mediaDurationSec: 185,
+      mediaChunkCount: 3,
+      mediaByteSize: 1500000,
       readByUids: [ALICE_UID],
       createdAt: pastDate(50),
     })
   );
+  await assertSucceeds(
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_long")
+      .collection("mediaChunks").doc("0").set({
+        ownerUid: ALICE_UID,
+        participantUids: [ALICE_UID, BOB_UID],
+        seq: 0,
+        dataBase64: "AAAAIGZ0eXBpc29t",
+        createdAt: pastDate(45),
+      })
+  );
   await assertFails(
-    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_too_big").set({
+    charlieDb.collection("matches").doc(matchId).collection("messages").doc("msg_video_long")
+      .collection("mediaChunks").doc("0").get()
+  );
+
+  // Replies, Delete for Me, Unsend for Everyone, and Call videoFrames streaming
+  await assertSucceeds(
+    bobDb.collection("matches").doc(matchId).collection("messages").doc("msg_reply_1").set({
       matchId,
-      senderId: ALICE_UID,
+      senderId: BOB_UID,
       participantUids: [ALICE_UID, BOB_UID],
-      text: "Too large",
-      messageType: "VIDEO",
-      mediaDataUrl: "x".repeat(930000),
-      mediaDurationSec: 15,
-      readByUids: [ALICE_UID],
-      createdAt: pastDate(40),
+      text: "That view looks unreal!",
+      messageType: "TEXT",
+      replyToMessageId: "msg_photo_1",
+      replyToSenderId: ALICE_UID,
+      replyToText: "Sunset coffee view",
+      replyToType: "PHOTO",
+      readByUids: [BOB_UID],
+      createdAt: pastDate(35),
     })
+  );
+  await assertSucceeds(
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_reply_1").update({
+      deletedForUids: [ALICE_UID],
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("matches").doc(matchId).collection("messages").doc("msg_reply_1").update({
+      unsent: true,
+      unsentAt: pastDate(10),
+      text: "Message unsent",
+    })
+  );
+  // Alice cannot unsend Bob's message
+  await assertFails(
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_reply_1").update({
+      unsent: true,
+      unsentAt: pastDate(5),
+      text: "Message unsent",
+    })
+  );
+
+  // Live Call Video Frame streaming
+  await assertSucceeds(
+    aliceDb.collection("matches").doc(matchId).collection("calls").doc("call_001")
+      .collection("videoFrames").doc(`${ALICE_UID}_latest`).set({
+        matchId,
+        callId: "call_001",
+        senderUid: ALICE_UID,
+        participantUids: [ALICE_UID, BOB_UID],
+        seq: 1,
+        frameBase64: "AQIDBAUG",
+        createdAt: pastDate(10),
+      })
+  );
+  await assertSucceeds(
+    bobDb.collection("matches").doc(matchId).collection("calls").doc("call_001")
+      .collection("videoFrames").doc(`${ALICE_UID}_latest`).get()
+  );
+  await assertFails(
+    charlieDb.collection("matches").doc(matchId).collection("calls").doc("call_001")
+      .collection("videoFrames").doc(`${ALICE_UID}_latest`).get()
   );
 });
 
-test("Moderation reports enforce reporter identity, disallow self-reporting, and remain immutable", async () => {
+test("Moderation reports enforce reporter identity, disallow self-reporting, and allow admin resolution", async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const adminDb = context.firestore();
     const created = pastDate(20000);
     await adminDb.collection("publicProfiles").doc(ALICE_UID).set(makePublicProfile(ALICE_UID, created));
     await adminDb.collection("publicProfiles").doc(BOB_UID).set(makePublicProfile(BOB_UID, created));
+    await adminDb.collection("admins").doc(CHARLIE_UID).set({ role: "admin" });
   });
 
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieAdminDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
 
   const reportId = "rep_001";
   await assertSucceeds(
@@ -726,6 +794,7 @@ test("Moderation reports enforce reporter identity, disallow self-reporting, and
       details: "Sent unsolicited inappropriate message.",
       sourceSurface: "CHAT",
       matchId: `${ALICE_UID}_${BOB_UID}`,
+      status: "OPEN",
       createdAt: pastDate(500),
     })
   );
@@ -745,4 +814,153 @@ test("Moderation reports enforce reporter identity, disallow self-reporting, and
   await assertSucceeds(aliceDb.collection("reports").where("reporterUid", "==", ALICE_UID).get());
   await assertFails(bobDb.collection("reports").doc(reportId).get());
   await assertFails(aliceDb.collection("reports").doc(reportId).delete());
+
+  // Admin can resolve reports and suspend/reinstate reported profile
+  await assertSucceeds(charlieAdminDb.collection("reports").get());
+  await assertSucceeds(
+    charlieAdminDb.collection("reports").doc(reportId).update({
+      status: "RESOLVED",
+      resolvedBy: CHARLIE_UID,
+      resolvedAt: pastDate(100),
+    })
+  );
+  await assertSucceeds(
+    charlieAdminDb.collection("publicProfiles").doc(BOB_UID).update({
+      suspended: true,
+      discoverable: false,
+      updatedAt: pastDate(100),
+    })
+  );
+});
+
+test("Social features: up to 12 photos, friends, views, likes, favorites, stories, and video posts", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    const created = pastDate(20000);
+    await adminDb.collection("publicProfiles").doc(ALICE_UID).set(makePublicProfile(ALICE_UID, created));
+    await adminDb.collection("publicProfiles").doc(BOB_UID).set(makePublicProfile(BOB_UID, created));
+  });
+
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  // Up to 12 profile photos + privacy settings
+  const sixPhotos = Array.from({ length: 6 }, (_, i) => `data:image/jpeg;base64,PHOTO_${i}`);
+  await assertSucceeds(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).update({
+      profilePhotos: sixPhotos,
+      photosVisibility: "MATCHES_AND_FRIENDS",
+      videosVisibility: "EVERYONE",
+      infoVisibility: "FRIENDS_ONLY",
+      updatedAt: pastDate(1000),
+    })
+  );
+
+  // Profile showcase video
+  await assertSucceeds(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).collection("videos").doc("vid_1").set({
+      userId: ALICE_UID,
+      caption: "Hike at sunrise",
+      mediaDataUrl: "data:video/mp4;base64,AAA",
+      mediaDurationSec: 45,
+      chunkCount: 0,
+      createdAt: pastDate(900),
+    })
+  );
+
+  // Friend request -> Accept -> Friendship -> Remove friend
+  const reqId = `${ALICE_UID}_${BOB_UID}`;
+  const friendId = `${ALICE_UID}_${BOB_UID}`;
+  await assertSucceeds(
+    aliceDb.collection("friendRequests").doc(reqId).set({
+      fromUid: ALICE_UID,
+      toUid: BOB_UID,
+      status: "PENDING",
+      createdAt: pastDate(800),
+      updatedAt: pastDate(800),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("friendRequests").doc(reqId).update({
+      status: "ACCEPTED",
+      updatedAt: pastDate(700),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("friendships").doc(friendId).set({
+      participantUids: [ALICE_UID, BOB_UID],
+      createdBy: BOB_UID,
+      createdAt: pastDate(700),
+    })
+  );
+  await assertSucceeds(aliceDb.collection("friendships").doc(friendId).delete());
+
+  // Profile views, likes, and owner-only favorites
+  await assertSucceeds(
+    aliceDb.collection("profileViews").doc(`${ALICE_UID}_${BOB_UID}`).set({
+      viewerUid: ALICE_UID,
+      targetUid: BOB_UID,
+      viewerName: "Alice",
+      viewedAt: pastDate(600),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("profileViews").where("targetUid", "==", BOB_UID).get()
+  );
+  await assertSucceeds(
+    aliceDb.collection("profileLikes").doc(`${ALICE_UID}_${BOB_UID}`).set({
+      fromUid: ALICE_UID,
+      toUid: BOB_UID,
+      createdAt: pastDate(500),
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("favorites").doc(BOB_UID).set({
+      userId: ALICE_UID,
+      targetUid: BOB_UID,
+      displayName: "Bob",
+      createdAt: pastDate(400),
+    })
+  );
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("favorites").doc(BOB_UID).get()
+  );
+
+  // Stories & Video Feed Posts
+  await assertSucceeds(
+    aliceDb.collection("stories").doc("story_1").set({
+      userId: ALICE_UID,
+      authorName: "Alice",
+      mediaType: "PHOTO",
+      mediaDataUrl: "data:image/jpeg;base64,STORY",
+      caption: "Coffee stop",
+      mediaDurationSec: 0,
+      chunkCount: 0,
+      viewerUids: [ALICE_UID],
+      expiresAtMs: Date.now() + 86400000,
+      createdAt: pastDate(300),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("stories").doc("story_1").update({
+      viewerUids: [ALICE_UID, BOB_UID],
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("videoPosts").doc("post_1").set({
+      userId: ALICE_UID,
+      authorName: "Alice",
+      caption: "Weekend trail",
+      mediaDataUrl: "data:video/mp4;base64,AAA",
+      mediaDurationSec: 65,
+      chunkCount: 0,
+      likedByUids: [],
+      createdAt: pastDate(200),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("videoPosts").doc("post_1").update({
+      likedByUids: [BOB_UID],
+    })
+  );
 });

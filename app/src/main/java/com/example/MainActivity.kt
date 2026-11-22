@@ -2,6 +2,7 @@ package com.example
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -62,6 +63,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
@@ -72,12 +74,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.example.auth.GoogleAuthHelper
 import com.example.communication.CallRingtoneController
 import com.example.data.KindredRepository
+import com.example.model.FriendStatus
+import com.example.model.PublicProfile
 import com.example.model.UiState
 import com.example.notifications.KindredBackgroundService
 import com.example.notifications.KindredNotificationHelper
@@ -88,13 +95,20 @@ import com.example.ui.components.InAppCallOverlay
 import com.example.ui.components.LocationVerificationGate
 import com.example.ui.components.NewMatchCelebrationDialog
 import com.example.ui.components.ProfileSearchSheet
+import com.example.ui.screens.ActiveUsersScreen
+import com.example.ui.screens.AdminDashboardScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
+import com.example.ui.screens.FriendsHubScreen
 import com.example.ui.screens.MatchesAndChatScreen
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.ProfileSetupScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.UserProfileDetailScreen
 import com.example.ui.screens.VerificationScreen
+import com.example.ui.screens.VideoFeedScreen
+import com.example.ui.screens.WhoLikesMeScreen
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.KindredTheme
 import com.example.update.AppReleaseInfo
@@ -124,6 +138,12 @@ const val ROUTE_VERIFY = "verify"
 const val ROUTE_PROFILE = "profile"
 const val ROUTE_EDIT_PROFILE = "edit_profile"
 const val ROUTE_SETTINGS = "settings"
+const val ROUTE_USER_PROFILE = "user_profile/{uid}"
+const val ROUTE_ACTIVE_USERS = "active_users"
+const val ROUTE_VIDEO_FEED = "video_feed"
+const val ROUTE_WHO_LIKES_ME = "who_likes_me"
+const val ROUTE_FRIENDS_HUB = "friends_hub"
+const val ROUTE_ADMIN_DASHBOARD = "admin_dashboard"
 
 private data class NavTabItem(
     val route: String,
@@ -298,6 +318,25 @@ private fun MainKindredApp(
     val globalCallSession by viewModel.globalCallSession.collectAsStateWithLifecycle()
     val globalIncomingCallAlert by viewModel.globalIncomingCallAlert.collectAsStateWithLifecycle()
     val activeCallAudioChunks by viewModel.activeCallAudioChunks.collectAsStateWithLifecycle()
+    val activeCallVideoFrames by viewModel.activeCallVideoFrames.collectAsStateWithLifecycle()
+    val activeMembersState by viewModel.activeMembersState.collectAsStateWithLifecycle()
+    val allPresenceState by viewModel.allPresenceState.collectAsStateWithLifecycle()
+    val friendRequestsState by viewModel.friendRequestsState.collectAsStateWithLifecycle()
+    val friendshipsState by viewModel.friendshipsState.collectAsStateWithLifecycle()
+    val suggestedFriendsState by viewModel.suggestedFriendsState.collectAsStateWithLifecycle()
+    val profileViewsState by viewModel.profileViewsState.collectAsStateWithLifecycle()
+    val profileLikesState by viewModel.profileLikesState.collectAsStateWithLifecycle()
+    val whoLikedMeState by viewModel.whoLikedMeState.collectAsStateWithLifecycle()
+    val favoritesState by viewModel.favoritesState.collectAsStateWithLifecycle()
+    val activeStoriesState by viewModel.activeStoriesState.collectAsStateWithLifecycle()
+    val videoFeedState by viewModel.videoFeedState.collectAsStateWithLifecycle()
+    val friendsFeedPostsState by viewModel.friendsFeedPostsState.collectAsStateWithLifecycle()
+    val myShowcaseVideos by remember(user.uid) {
+        viewModel.observeUserVideos(user.uid)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val isAdminUser by viewModel.isAdminUser.collectAsStateWithLifecycle()
+    val adminReportsState by viewModel.adminReportsState.collectAsStateWithLifecycle()
+    val adminAllProfilesState by viewModel.adminAllProfilesState.collectAsStateWithLifecycle()
     val icebreakerAiState by viewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusMessage by viewModel.actionStatusMessage.collectAsStateWithLifecycle()
     val newMatchPopup by viewModel.newMatchPopup.collectAsStateWithLifecycle()
@@ -308,6 +347,7 @@ private fun MainKindredApp(
     var showSearchSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val credentialManager = remember(context) { CredentialManager.create(context) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val presenceScope = rememberCoroutineScope()
     var hasLocationPermission by remember {
@@ -489,6 +529,26 @@ private fun MainKindredApp(
                         callType = alert.callType
                     )
                 }
+
+                is KindredPushAlert.FriendRequestAlert -> {
+                    KindredNotificationHelper.showSocialNotification(
+                        context = context,
+                        title = "New Friend Request",
+                        body = "${alert.fromName} sent you a friend request on Kindred.",
+                        notificationType = "FRIEND_REQUEST",
+                        tagKey = "freq_${alert.fromUid}"
+                    )
+                }
+
+                is KindredPushAlert.ProfileLikeAlert -> {
+                    KindredNotificationHelper.showSocialNotification(
+                        context = context,
+                        title = "Someone Likes You!",
+                        body = "${alert.fromName} liked your Kindred profile.",
+                        notificationType = "PROFILE_LIKE",
+                        tagKey = "plike_${alert.fromUid}"
+                    )
+                }
             }
         }
     }
@@ -552,9 +612,97 @@ private fun MainKindredApp(
         return
     }
 
-    val matchCount = (dashboardState as? UiState.Success)?.data?.matches?.size ?: 0
-    val unreadInboxCount = (dashboardState as? UiState.Success)?.data?.matches
+    val successData = (dashboardState as? UiState.Success)?.data
+    val requiresProfileSetup = successData != null && (
+        successData.myProfile == null || !successData.myProfile.profileCompleted
+        )
+
+    if (requiresProfileSetup) {
+        val currentSnap = successData!!
+        ProfileSetupScreen(
+            existingProfile = currentSnap.myProfile,
+            defaultDisplayName = viewModel.defaultDisplayName,
+            latestLocation = latestLocation,
+            isBusy = isBusy,
+            onSaveSetup = { displayName, age, dob, gender, bio, cityLabel, country, lat, lng, interests, photos ->
+                viewModel.saveProfile(
+                    displayName = displayName,
+                    age = age,
+                    gender = gender,
+                    bio = bio,
+                    cityLabel = cityLabel,
+                    country = country,
+                    latitude = lat,
+                    longitude = lng,
+                    interests = interests,
+                    photoDataUrl = photos.firstOrNull(),
+                    profilePhotos = photos,
+                    discoverable = true,
+                    interestedIn = currentSnap.privateUser?.interestedIn ?: "Everyone",
+                    minAgePref = (currentSnap.privateUser?.minAgePref ?: 18L).toInt(),
+                    maxAgePref = (currentSnap.privateUser?.maxAgePref ?: 45L).toInt(),
+                    maxDistanceKm = (currentSnap.privateUser?.maxDistanceKm ?: 100L).toInt(),
+                    verifiedOnlyFilter = currentSnap.privateUser?.verifiedOnlyFilter ?: false,
+                    dateOfBirth = dob,
+                    profileCompleted = true
+                )
+            },
+            onSignOut = {
+                GoogleAuthHelper.signOut(
+                    credentialManager = credentialManager,
+                    scope = presenceScope,
+                    onBeforeSignOut = {
+                        KindredNotificationHelper.activeMatchIdInForeground = null
+                        KindredBackgroundService.stop(context)
+                        viewModel.unregisterFcmTokenOnSignOut()
+                        viewModel.updatePresenceNow(false)
+                    }
+                )
+            }
+        )
+        return
+    }
+
+    fun friendStatusForUid(targetUid: String): FriendStatus {
+        val myUid = viewModel.currentUserId
+        if (targetUid.isBlank() || targetUid == myUid) return FriendStatus.NONE
+        val isFriend = friendshipsState.any { myUid in it.participantUids && targetUid in it.participantUids }
+        if (isFriend) return FriendStatus.FRIENDS
+        val pendingOutgoing = friendRequestsState.any {
+            it.fromUid == myUid && it.toUid == targetUid && it.status == "PENDING"
+        }
+        if (pendingOutgoing) return FriendStatus.OUTGOING_PENDING
+        val pendingIncoming = friendRequestsState.any {
+            it.fromUid == targetUid && it.toUid == myUid && it.status == "PENDING"
+        }
+        if (pendingIncoming) return FriendStatus.INCOMING_PENDING
+        return FriendStatus.NONE
+    }
+
+    fun handleFriendAction(targetUid: String, currentStatus: FriendStatus) {
+        when (currentStatus) {
+            FriendStatus.FRIENDS -> viewModel.removeFriend(targetUid)
+            FriendStatus.INCOMING_PENDING -> viewModel.acceptFriendRequest(targetUid)
+            FriendStatus.OUTGOING_PENDING -> viewModel.cancelFriendRequest(targetUid)
+            FriendStatus.NONE -> viewModel.sendFriendRequest(targetUid)
+        }
+    }
+
+    fun openUserProfileRoute(uid: String) {
+        if (uid.isBlank()) return
+        navController.navigate("user_profile/${Uri.encode(uid)}") {
+            launchSingleTop = true
+        }
+    }
+
+    val matchCount = successData?.matches?.size ?: 0
+    val unreadInboxCount = successData?.matches
         ?.count { it.match.isUnreadFor(viewModel.currentUserId) } ?: 0
+    val activeOnlineCount = activeMembersState.count { it.isOnline }
+    val incomingFriendRequestCount = friendRequestsState.count {
+        it.toUid == viewModel.currentUserId && it.status == "PENDING"
+    }
+    val friendsCount = friendshipsState.count { viewModel.currentUserId in it.participantUids }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
@@ -562,7 +710,13 @@ private fun MainKindredApp(
         val hideBottomBar = !useRail && (
             isInFullScreenChat ||
                 currentRoute == ROUTE_EDIT_PROFILE ||
-                currentRoute == ROUTE_SETTINGS
+                currentRoute == ROUTE_SETTINGS ||
+                currentRoute == ROUTE_ACTIVE_USERS ||
+                currentRoute == ROUTE_VIDEO_FEED ||
+                currentRoute == ROUTE_WHO_LIKES_ME ||
+                currentRoute == ROUTE_FRIENDS_HUB ||
+                currentRoute == ROUTE_ADMIN_DASHBOARD ||
+                currentRoute.startsWith("user_profile")
             )
 
         Scaffold(
@@ -666,6 +820,35 @@ private fun MainKindredApp(
 
                         is UiState.Success -> {
                             val data = state.data
+                            val profilesByUid = remember(
+                                data.myProfile,
+                                data.searchableProfiles,
+                                data.matches,
+                                activeMembersState,
+                                adminAllProfilesState
+                            ) {
+                                buildMap<String, PublicProfile> {
+                                    data.myProfile?.let { put(it.userId, it) }
+                                    data.searchableProfiles.forEach { put(it.profile.userId, it.profile) }
+                                    data.matches.forEach { thread ->
+                                        thread.partnerProfile?.let { put(it.userId, it) }
+                                    }
+                                    activeMembersState.forEach { put(it.profile.userId, it.profile) }
+                                    adminAllProfilesState.forEach { put(it.userId, it) }
+                                }
+                            }
+                            val distanceByUid = remember(data.searchableProfiles, data.matches) {
+                                buildMap<String, Double> {
+                                    data.searchableProfiles.forEach { put(it.profile.userId, it.distanceKm) }
+                                    data.matches.forEach { t ->
+                                        t.distanceKm?.let { put(t.partnerId, it) }
+                                    }
+                                }
+                            }
+                            val presenceByUid = remember(allPresenceState) {
+                                allPresenceState.associateBy { it.userId }
+                            }
+
                             NavHost(
                                 navController = navController,
                                 startDestination = ROUTE_DISCOVER,
@@ -724,7 +907,68 @@ private fun MainKindredApp(
                                             hasLocationPermission = true
                                         },
                                         canUndoLastSwipe = canUndoLastSwipe,
-                                        onUndoSwipe = { viewModel.undoLastSwipe() }
+                                        onUndoSwipe = { viewModel.undoLastSwipe() },
+                                        activeOnlineCount = activeOnlineCount,
+                                        onOpenActiveUsers = {
+                                            navController.navigate(ROUTE_ACTIVE_USERS) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        stories = activeStoriesState,
+                                        onPostPhotoStory = { photoUrl, caption ->
+                                            viewModel.postPhotoStory(photoUrl, caption)
+                                        },
+                                        onPostVideoStory = { prepared, caption ->
+                                            viewModel.postVideoStory(prepared, caption)
+                                        },
+                                        onMarkStoryViewed = { storyId ->
+                                            viewModel.markStoryViewed(storyId)
+                                        },
+                                        onDeleteStory = { storyId ->
+                                            viewModel.deleteStory(storyId)
+                                        },
+                                        resolveStoryVideoFile = { story ->
+                                            viewModel.resolveStoryVideoFile(context, story)
+                                        },
+                                        onOpenVideoFeed = {
+                                            navController.navigate(ROUTE_VIDEO_FEED) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        suggestedProfiles = data.searchableProfiles,
+                                        feedPosts = friendsFeedPostsState,
+                                        currentUserId = viewModel.currentUserId,
+                                        friendStatusForUid = { uid -> friendStatusForUid(uid) },
+                                        onFriendAction = { profile ->
+                                            handleFriendAction(profile.userId, friendStatusForUid(profile.userId))
+                                        },
+                                        onOpenUserProfile = { profile ->
+                                            openUserProfileRoute(profile.userId)
+                                        },
+                                        onOpenUserProfileById = { uid ->
+                                            openUserProfileRoute(uid)
+                                        },
+                                        onPublishFeedPost = { caption, photoDataUrl, preparedVideo, onDone ->
+                                            viewModel.publishFeedPost(caption, photoDataUrl, preparedVideo, onDone)
+                                        },
+                                        onToggleFeedPostLike = { postId, currentlyLiked ->
+                                            viewModel.toggleFeedPostLike(postId, currentlyLiked)
+                                        },
+                                        observeFeedComments = { postId ->
+                                            viewModel.observeFeedComments(postId)
+                                        },
+                                        onAddFeedPostComment = { postId, text, onDone ->
+                                            viewModel.addFeedPostComment(postId, text, onDone)
+                                        },
+                                        onDeleteFeedPostComment = { postId, commentId ->
+                                            viewModel.deleteFeedPostComment(postId, commentId)
+                                        },
+                                        onDeleteFeedPost = { postId ->
+                                            viewModel.deleteFeedPost(postId)
+                                        },
+                                        resolveFeedPostVideoFile = { post ->
+                                            viewModel.resolveFeedPostVideoFile(context, post)
+                                        }
                                     )
                                 }
 
@@ -739,6 +983,7 @@ private fun MainKindredApp(
                                         activePartnerTyping = activePartnerTyping,
                                         activeCallSession = activeMatchCallSession,
                                         activeCallAudioChunks = activeCallAudioChunks,
+                                        activeCallVideoFrames = activeCallVideoFrames,
                                         icebreakerAiState = icebreakerAiState,
                                         onSelectMatch = { matchId ->
                                             selectedMatchId?.takeIf { it != matchId }?.let { prev ->
@@ -764,6 +1009,24 @@ private fun MainKindredApp(
                                                 viewOnce = viewOnce
                                             )
                                         },
+                                        onSendRichMessageWithReply = { matchId, participants, type, text, mediaDataUrl, mediaGifId, durationSec, disappearingSec, viewOnce, preparedVideo, replyTo ->
+                                            viewModel.sendMessage(
+                                                matchId = matchId,
+                                                participantUids = participants,
+                                                text = text,
+                                                messageType = type,
+                                                mediaDataUrl = mediaDataUrl,
+                                                mediaGifId = mediaGifId,
+                                                mediaDurationSec = durationSec,
+                                                disappearingSeconds = disappearingSec,
+                                                viewOnce = viewOnce,
+                                                preparedVideo = preparedVideo,
+                                                replyToMessageId = replyTo?.id,
+                                                replyToSenderId = replyTo?.senderId,
+                                                replyToText = replyTo?.text,
+                                                replyToType = replyTo?.messageType
+                                            )
+                                        },
                                         onMarkMessagesRead = { matchId, messageIds ->
                                             viewModel.markMessagesAsRead(matchId, messageIds)
                                         },
@@ -772,6 +1035,15 @@ private fun MainKindredApp(
                                         },
                                         onDeleteExpiredMessage = { matchId, messageId ->
                                             viewModel.deleteExpiredMessage(matchId, messageId)
+                                        },
+                                        onDeleteMessageForMe = { matchId, messageId ->
+                                            viewModel.deleteMessageForMe(matchId, messageId)
+                                        },
+                                        onUnsendMessage = { matchId, messageId, isLastMessage ->
+                                            viewModel.unsendMessage(matchId, messageId, isLastMessage)
+                                        },
+                                        onResolveVideoFile = { msg ->
+                                            viewModel.resolveChatVideoFile(context, msg)
                                         },
                                         onTypingChanged = { matchId, isTyping ->
                                             viewModel.setTypingStatus(matchId, isTyping)
@@ -799,6 +1071,9 @@ private fun MainKindredApp(
                                         },
                                         onSendCallAudioChunk = { session, seq, sr, b64 ->
                                             viewModel.sendCallAudioChunk(session, seq, sr, b64)
+                                        },
+                                        onSendCallVideoFrame = { session, seq, frameBase64 ->
+                                            viewModel.sendCallVideoFrame(session, seq, frameBase64)
                                         },
                                         onEndCall = { session, duration ->
                                             viewModel.endCall(session, duration)
@@ -828,6 +1103,9 @@ private fun MainKindredApp(
                                         },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
+                                        },
+                                        onOpenPartnerFullProfile = { partnerProfile ->
+                                            openUserProfileRoute(partnerProfile.userId)
                                         }
                                     )
                                 }
@@ -874,7 +1152,9 @@ private fun MainKindredApp(
                                                 minAgePref = minAge,
                                                 maxAgePref = maxAge,
                                                 maxDistanceKm = maxDist,
-                                                verifiedOnlyFilter = verifiedOnly
+                                                verifiedOnlyFilter = verifiedOnly,
+                                                dateOfBirth = data.myProfile?.dateOfBirth.orEmpty(),
+                                                profileCompleted = true
                                             )
                                         },
                                         onEditProfile = {
@@ -901,6 +1181,52 @@ private fun MainKindredApp(
                                             viewModel.unregisterFcmTokenOnSignOut()
                                             viewModel.updatePresenceNow(false)
                                         },
+                                        myVideos = myShowcaseVideos,
+                                        onUploadVideo = { caption, prepared ->
+                                            viewModel.uploadProfileVideo(caption, prepared)
+                                        },
+                                        onDeleteVideo = { videoId ->
+                                            viewModel.deleteProfileVideo(viewModel.currentUserId, videoId)
+                                        },
+                                        incomingFriendRequestCount = incomingFriendRequestCount,
+                                        friendsCount = friendsCount,
+                                        whoLikedMeCount = whoLikedMeState.size,
+                                        profileViewCount = profileViewsState.size,
+                                        activeOnlineCount = activeOnlineCount,
+                                        isAdmin = isAdminUser,
+                                        onOpenFriendsHub = {
+                                            navController.navigate(ROUTE_FRIENDS_HUB) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenWhoLikesMe = {
+                                            navController.navigate(ROUTE_WHO_LIKES_ME) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenActiveUsers = {
+                                            navController.navigate(ROUTE_ACTIVE_USERS) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenVideoFeed = {
+                                            navController.navigate(ROUTE_VIDEO_FEED) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenAdminDashboard = {
+                                            navController.navigate(ROUTE_ADMIN_DASHBOARD) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onUpdatePrivacy = { hideOnline, photosVis, videosVis, infoVis ->
+                                            viewModel.updatePrivacyAndHideOnline(
+                                                hideOnlineStatus = hideOnline,
+                                                photosVisibility = photosVis,
+                                                videosVisibility = videosVis,
+                                                infoVisibility = infoVis
+                                            )
+                                        },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         }
@@ -913,6 +1239,13 @@ private fun MainKindredApp(
                                         defaultDisplayName = viewModel.defaultDisplayName,
                                         isBusy = isBusy,
                                         latestLocation = latestLocation,
+                                        videos = myShowcaseVideos,
+                                        onUploadVideo = { caption, prepared ->
+                                            viewModel.uploadProfileVideo(caption, prepared)
+                                        },
+                                        onDeleteVideo = { videoId ->
+                                            viewModel.deleteProfileVideo(viewModel.currentUserId, videoId)
+                                        },
                                         onBack = { navController.popBackStack() },
                                         onSaveChanges = { bio, interests, photos, city, country ->
                                             viewModel.updateProfileContent(
@@ -921,6 +1254,20 @@ private fun MainKindredApp(
                                                 profilePhotos = photos,
                                                 cityLabel = city,
                                                 country = country,
+                                                onComplete = { navController.popBackStack() }
+                                            )
+                                        },
+                                        onSaveDetailedChanges = { name, gender, dob, age, bio, interests, photos, city, country ->
+                                            viewModel.updateProfileContent(
+                                                bio = bio,
+                                                interests = interests,
+                                                profilePhotos = photos,
+                                                cityLabel = city,
+                                                country = country,
+                                                displayName = name,
+                                                gender = gender,
+                                                dateOfBirth = dob,
+                                                computedAge = age,
                                                 onComplete = { navController.popBackStack() }
                                             )
                                         },
@@ -947,8 +1294,247 @@ private fun MainKindredApp(
                                                 discoverable = discoverable,
                                                 onComplete = { navController.popBackStack() }
                                             )
+                                        },
+                                        onUpdatePrivacy = { hideOnline, photosVis, videosVis, infoVis ->
+                                            viewModel.updatePrivacyAndHideOnline(
+                                                hideOnlineStatus = hideOnline,
+                                                photosVisibility = photosVis,
+                                                videosVisibility = videosVis,
+                                                infoVisibility = infoVis
+                                            )
+                                        },
+                                        onDeleteAccount = {
+                                            viewModel.deleteAccountAndData(
+                                                onDeleted = {
+                                                    KindredNotificationHelper.activeMatchIdInForeground = null
+                                                    KindredBackgroundService.stop(context)
+                                                    GoogleAuthHelper.signOut(
+                                                        credentialManager = credentialManager,
+                                                        scope = presenceScope
+                                                    )
+                                                },
+                                                onRequiresRecentLogin = {}
+                                            )
                                         }
                                     )
+                                }
+
+                                composable(
+                                    route = ROUTE_USER_PROFILE,
+                                    arguments = listOf(navArgument("uid") { type = NavType.StringType })
+                                ) { backStackEntry ->
+                                    val encodedUid = backStackEntry.arguments?.getString("uid").orEmpty()
+                                    val targetUid = remember(encodedUid) { Uri.decode(encodedUid) }
+                                    val targetProfile = profilesByUid[targetUid] ?: PublicProfile(
+                                        userId = targetUid,
+                                        displayName = "Kindred Member",
+                                        profileCompleted = true
+                                    )
+                                    val targetVideos by remember(targetUid) {
+                                        viewModel.observeUserVideos(targetUid)
+                                    }.collectAsStateWithLifecycle(initialValue = emptyList())
+                                    val targetFriendIds = remember(friendshipsState, targetUid) {
+                                        friendshipsState
+                                            .filter { targetUid in it.participantUids }
+                                            .mapNotNull { fs -> fs.participantUids.firstOrNull { it != targetUid } }
+                                    }
+                                    val targetFriends = remember(targetFriendIds, profilesByUid) {
+                                        targetFriendIds.mapNotNull { profilesByUid[it] }
+                                    }
+                                    val targetFriendStatus = friendStatusForUid(targetUid)
+                                    val isLiked = remember(profileLikesState, targetUid) {
+                                        profileLikesState.any {
+                                            it.fromUid == viewModel.currentUserId && it.toUid == targetUid
+                                        }
+                                    }
+                                    val isFavorited = remember(favoritesState, targetUid) {
+                                        favoritesState.any { it.targetUid == targetUid }
+                                    }
+                                    val isBlocked = remember(data.blockedUsers, targetUid) {
+                                        data.blockedUsers.any { it.blockedUid == targetUid }
+                                    }
+                                    val isMatched = remember(data.matches, targetUid) {
+                                        data.matches.any { it.partnerId == targetUid }
+                                    }
+
+                                    UserProfileDetailScreen(
+                                        profile = targetProfile,
+                                        currentUserId = viewModel.currentUserId,
+                                        videos = targetVideos,
+                                        friends = targetFriends,
+                                        friendStatus = targetFriendStatus,
+                                        presence = presenceByUid[targetUid],
+                                        distanceKm = distanceByUid[targetUid],
+                                        isLiked = isLiked,
+                                        isFavorited = isFavorited,
+                                        isBlocked = isBlocked,
+                                        isMatched = isMatched,
+                                        resolveVideoFile = { videoItem ->
+                                            viewModel.resolveProfileVideoFile(context, targetUid, videoItem)
+                                        },
+                                        onBack = { navController.popBackStack() },
+                                        onRecordProfileView = {
+                                            viewModel.recordProfileView(targetUid)
+                                        },
+                                        onOpenFriendProfile = { friend ->
+                                            openUserProfileRoute(friend.userId)
+                                        },
+                                        onMessageClick = { profileToMsg ->
+                                            viewModel.startDirectConversation(profileToMsg) {
+                                                navigateToTab(ROUTE_MATCHES)
+                                            }
+                                        },
+                                        onFriendAction = {
+                                            handleFriendAction(targetUid, targetFriendStatus)
+                                        },
+                                        onToggleLike = {
+                                            viewModel.toggleProfileLike(targetUid)
+                                        },
+                                        onToggleFavorite = {
+                                            viewModel.toggleFavorite(targetProfile)
+                                        },
+                                        onReportUser = { reason, details, alsoBlock ->
+                                            viewModel.reportUser(
+                                                reportedUid = targetUid,
+                                                displayName = targetProfile.displayName,
+                                                reason = reason,
+                                                details = details,
+                                                sourceSurface = "USER_PROFILE",
+                                                alsoBlock = alsoBlock,
+                                                onReported = {
+                                                    if (alsoBlock) navController.popBackStack()
+                                                }
+                                            )
+                                        },
+                                        onBlockUser = {
+                                            viewModel.blockUser(
+                                                targetUserId = targetUid,
+                                                displayName = targetProfile.displayName
+                                            )
+                                        },
+                                        onUnblockUser = {
+                                            viewModel.unblockUser(targetUid)
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_ACTIVE_USERS) {
+                                    ActiveUsersScreen(
+                                        activeMembers = activeMembersState,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenProfile = { memberProfile ->
+                                            openUserProfileRoute(memberProfile.userId)
+                                        },
+                                        onMessageProfile = { memberProfile ->
+                                            viewModel.startDirectConversation(memberProfile) {
+                                                navigateToTab(ROUTE_MATCHES)
+                                            }
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_VIDEO_FEED) {
+                                    VideoFeedScreen(
+                                        videoPosts = videoFeedState,
+                                        currentUserId = viewModel.currentUserId,
+                                        resolveVideoFile = { post ->
+                                            viewModel.resolveVideoPostFile(context, post)
+                                        },
+                                        onPublishVideoPost = { caption, prepared ->
+                                            viewModel.publishVideoPost(caption, prepared)
+                                        },
+                                        onToggleLike = { postId, currentlyLiked ->
+                                            viewModel.toggleVideoPostLike(postId, currentlyLiked)
+                                        },
+                                        onDeletePost = { postId ->
+                                            viewModel.deleteVideoPost(postId)
+                                        },
+                                        onOpenAuthorProfile = { authorUid ->
+                                            openUserProfileRoute(authorUid)
+                                        },
+                                        onBack = { navController.popBackStack() },
+                                        onStatusMessage = { msg ->
+                                            viewModel.postStatusMessage(msg)
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_WHO_LIKES_ME) {
+                                    WhoLikesMeScreen(
+                                        whoLikedMe = whoLikedMeState,
+                                        profileViews = profileViewsState,
+                                        favorites = favoritesState,
+                                        allProfilesByUid = profilesByUid,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenProfile = { target ->
+                                            openUserProfileRoute(target.userId)
+                                        },
+                                        onLikeBack = { candidate ->
+                                            viewModel.likeBackUser(candidate) {
+                                                navigateToTab(ROUTE_MATCHES)
+                                            }
+                                        },
+                                        onRemoveFavorite = { target ->
+                                            viewModel.toggleFavorite(target)
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_FRIENDS_HUB) {
+                                    FriendsHubScreen(
+                                        currentUserId = viewModel.currentUserId,
+                                        friendships = friendshipsState,
+                                        friendRequests = friendRequestsState,
+                                        suggestedFriends = suggestedFriendsState,
+                                        profilesByUid = profilesByUid,
+                                        onBack = { navController.popBackStack() },
+                                        onOpenProfile = { target ->
+                                            openUserProfileRoute(target.userId)
+                                        },
+                                        onMessageProfile = { target ->
+                                            viewModel.startDirectConversation(target) {
+                                                navigateToTab(ROUTE_MATCHES)
+                                            }
+                                        },
+                                        onAcceptRequest = { fromUid ->
+                                            viewModel.acceptFriendRequest(fromUid)
+                                        },
+                                        onRejectRequest = { fromUid ->
+                                            viewModel.rejectFriendRequest(fromUid)
+                                        },
+                                        onCancelRequest = { toUid ->
+                                            viewModel.cancelFriendRequest(toUid)
+                                        },
+                                        onSendFriendRequest = { targetUid ->
+                                            viewModel.sendFriendRequest(targetUid)
+                                        },
+                                        onRemoveFriend = { targetUid ->
+                                            viewModel.removeFriend(targetUid)
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_ADMIN_DASHBOARD) {
+                                    if (isAdminUser) {
+                                        AdminDashboardScreen(
+                                            reports = adminReportsState,
+                                            allProfiles = adminAllProfilesState,
+                                            onBack = { navController.popBackStack() },
+                                            onUpdateReportStatus = { reportId, status ->
+                                                viewModel.updateReportStatus(reportId, status)
+                                            },
+                                            onSetUserSuspended = { targetUid, suspended ->
+                                                viewModel.setUserSuspended(targetUid, suspended)
+                                            },
+                                            onOpenProfile = { target ->
+                                                openUserProfileRoute(target.userId)
+                                            }
+                                        )
+                                    } else {
+                                        LaunchedEffect(Unit) {
+                                            navController.popBackStack()
+                                        }
+                                    }
                                 }
                             }
                             if (showSearchSheet) {
@@ -976,6 +1562,14 @@ private fun MainKindredApp(
                                             targetUserId = targetProfile.userId,
                                             displayName = targetProfile.displayName
                                         )
+                                    },
+                                    friendStatusForUid = { uid -> friendStatusForUid(uid) },
+                                    onFriendAction = { targetProfile, status ->
+                                        handleFriendAction(targetProfile.userId, status)
+                                    },
+                                    onOpenFullProfile = { targetProfile ->
+                                        showSearchSheet = false
+                                        openUserProfileRoute(targetProfile.userId)
                                     },
                                     onDismiss = { showSearchSheet = false }
                                 )
@@ -1027,8 +1621,12 @@ private fun MainKindredApp(
             currentUserId = viewModel.currentUserId,
             partner = partnerProfile,
             incomingAudioChunks = activeCallAudioChunks,
+            incomingVideoFrames = activeCallVideoFrames,
             onSendAudioChunk = { seq, sr, b64 ->
                 viewModel.sendCallAudioChunk(ongoingGlobalCall, seq, sr, b64)
+            },
+            onSendVideoFrame = { seq, frameB64 ->
+                viewModel.sendCallVideoFrame(ongoingGlobalCall, seq, frameB64)
             },
             onToggleMute = { viewModel.toggleCallMute(ongoingGlobalCall) },
             onToggleCamera = { viewModel.toggleCallCamera(ongoingGlobalCall) },
