@@ -88,7 +88,7 @@ class SocialAndMediaRepository(
                     "createdAt" to FieldValue.serverTimestamp()
                 )
                 if (participantUids != null && participantUids.size == 2) {
-                    map["participantUids"] = participantUids
+                    map["participantUids"] = participantUids.sorted()
                 }
                 batch.set(chunkRef, map)
             }
@@ -183,6 +183,37 @@ class SocialAndMediaRepository(
         return try {
             val uid = requireUserId()
             require(targetUid.isNotBlank() && targetUid != uid) { "Invalid friend target." }
+            val sorted = listOf(uid, targetUid).sorted()
+            val friendId = "${sorted[0]}_${sorted[1]}"
+            val friendRef = db.collection("friendships").document(friendId)
+            if (friendRef.get().await().exists()) {
+                return Result.success(Unit)
+            }
+
+            // If target user already sent us a pending friend request, accept it cleanly.
+            val reverseRef = db.collection("friendRequests").document("${targetUid}_$uid")
+            val reverseSnap = reverseRef.get().await()
+            if (reverseSnap.exists() && reverseSnap.getString("status") == "PENDING") {
+                val batch = db.batch()
+                batch.update(
+                    reverseRef,
+                    mapOf(
+                        "status" to "ACCEPTED",
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                batch.set(
+                    friendRef,
+                    mapOf(
+                        "participantUids" to sorted,
+                        "createdBy" to uid,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                batch.commit().await()
+                return Result.success(Unit)
+            }
+
             val reqId = "${uid}_$targetUid"
             val reqRef = db.collection("friendRequests").document(reqId)
             docPath = reqRef.path
@@ -220,7 +251,9 @@ class SocialAndMediaRepository(
             val uid = requireUserId()
             val reqRef = db.collection("friendRequests").document("${uid}_$targetUid")
             docPath = reqRef.path
-            reqRef.delete().await()
+            if (reqRef.get().await().exists()) {
+                reqRef.delete().await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -239,8 +272,10 @@ class SocialAndMediaRepository(
             val reqRef = db.collection("friendRequests").document("${fromUid}_$uid")
             val friendRef = db.collection("friendships").document(friendId)
             docPath = friendRef.path
+            val reqExists = reqRef.get().await().exists()
+            val friendExists = friendRef.get().await().exists()
             val batch = db.batch()
-            if (reqRef.get().await().exists()) {
+            if (reqExists) {
                 batch.update(
                     reqRef,
                     mapOf(
@@ -249,15 +284,19 @@ class SocialAndMediaRepository(
                     )
                 )
             }
-            batch.set(
-                friendRef,
-                mapOf(
-                    "participantUids" to sorted,
-                    "createdBy" to uid,
-                    "createdAt" to FieldValue.serverTimestamp()
+            if (!friendExists) {
+                batch.set(
+                    friendRef,
+                    mapOf(
+                        "participantUids" to sorted,
+                        "createdBy" to uid,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
                 )
-            )
-            batch.commit().await()
+            }
+            if (reqExists || !friendExists) {
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -273,12 +312,14 @@ class SocialAndMediaRepository(
             val uid = requireUserId()
             val reqRef = db.collection("friendRequests").document("${fromUid}_$uid")
             docPath = reqRef.path
-            reqRef.update(
-                mapOf(
-                    "status" to "REJECTED",
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            if (reqRef.get().await().exists()) {
+                reqRef.update(
+                    mapOf(
+                        "status" to "REJECTED",
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -295,13 +336,18 @@ class SocialAndMediaRepository(
             val sorted = listOf(uid, targetUid).sorted()
             val friendRef = db.collection("friendships").document("${sorted[0]}_${sorted[1]}")
             docPath = friendRef.path
-            val batch = db.batch()
-            batch.delete(friendRef)
             val reqOut = db.collection("friendRequests").document("${uid}_$targetUid")
             val reqIn = db.collection("friendRequests").document("${targetUid}_$uid")
-            if (reqOut.get().await().exists()) batch.delete(reqOut)
-            if (reqIn.get().await().exists()) batch.delete(reqIn)
-            batch.commit().await()
+            val friendExists = friendRef.get().await().exists()
+            val outExists = reqOut.get().await().exists()
+            val inExists = reqIn.get().await().exists()
+            val batch = db.batch()
+            if (friendExists) batch.delete(friendRef)
+            if (outExists) batch.delete(reqOut)
+            if (inExists) batch.delete(reqIn)
+            if (friendExists || outExists || inExists) {
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -826,11 +872,21 @@ class SocialAndMediaRepository(
         fallbackName: String?,
         caption: String,
         photoDataUrl: String? = null,
+        photoUrls: List<String> = emptyList(),
         preparedVideo: PreparedVideoUpload? = null
     ): Result<String> {
         val cleanCaption = caption.trim().take(1000)
-        if (cleanCaption.isBlank() && photoDataUrl.isNullOrBlank() && preparedVideo == null) {
-            return Result.failure(IllegalArgumentException("Add text, a photo, or a video to share a post."))
+        val validPhotos = buildList {
+            photoUrls.forEach { url ->
+                val clean = url.trim()
+                if (clean.isNotBlank() && clean.length <= 180_000) add(clean)
+            }
+            val single = photoDataUrl?.trim().orEmpty()
+            if (single.isNotBlank() && single.length <= 920_000) add(single)
+        }.distinct().take(6)
+
+        if (cleanCaption.isBlank() && validPhotos.isEmpty() && preparedVideo == null) {
+            return Result.failure(IllegalArgumentException("Add text, photos, or a video to share a post."))
         }
         var docPath = "feedPosts"
         return try {
@@ -839,7 +895,7 @@ class SocialAndMediaRepository(
             docPath = postRef.path
             val mediaType = when {
                 preparedVideo != null -> "VIDEO"
-                !photoDataUrl.isNullOrBlank() -> "PHOTO"
+                validPhotos.isNotEmpty() -> "PHOTO"
                 else -> "TEXT"
             }
             val payload = mutableMapOf<String, Any>(
@@ -848,6 +904,7 @@ class SocialAndMediaRepository(
                 "mediaType" to mediaType,
                 "caption" to cleanCaption,
                 "likedByUids" to emptyList<String>(),
+                "savedByUids" to emptyList<String>(),
                 "commentCount" to 0L,
                 "createdAt" to FieldValue.serverTimestamp()
             )
@@ -857,6 +914,9 @@ class SocialAndMediaRepository(
             }
             if (!authorProfile?.country.isNullOrBlank()) {
                 payload["authorCountry"] = authorProfile!!.country.take(80)
+            }
+            if (!authorProfile?.cityLabel.isNullOrBlank()) {
+                payload["authorCity"] = authorProfile!!.cityLabel.take(80)
             }
             if (preparedVideo != null) {
                 payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
@@ -876,8 +936,9 @@ class SocialAndMediaRepository(
                         chunks = preparedVideo.chunkBase64List
                     )
                 }
-            } else if (!photoDataUrl.isNullOrBlank() && photoDataUrl.length <= 920_000) {
-                payload["photoDataUrl"] = photoDataUrl
+            } else if (validPhotos.isNotEmpty()) {
+                payload["mediaDataUrl"] = validPhotos.first()
+                payload["mediaUrls"] = validPhotos.filter { it.length <= 180_000 }
                 payload["chunkCount"] = 0L
             }
             postRef.set(payload).await()
@@ -898,6 +959,23 @@ class SocialAndMediaRepository(
             docPath = ref.path
             val op = if (currentlyLiked) FieldValue.arrayRemove(uid) else FieldValue.arrayUnion(uid)
             ref.update("likedByUids", op).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun toggleFeedPostSave(postId: String, currentlySaved: Boolean): Result<Unit> {
+        var docPath = "feedPosts/$postId"
+        return try {
+            val uid = requireUserId()
+            val ref = db.collection("feedPosts").document(postId)
+            docPath = ref.path
+            val op = if (currentlySaved) FieldValue.arrayRemove(uid) else FieldValue.arrayUnion(uid)
+            ref.update("savedByUids", op).await()
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e

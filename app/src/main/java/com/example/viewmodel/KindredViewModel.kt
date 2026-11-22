@@ -54,6 +54,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -838,6 +839,20 @@ class KindredViewModel(
 
     // --- Social Timeline Feed Posts & Comments ---
 
+    private val _isFeedRefreshing = MutableStateFlow(false)
+    val isFeedRefreshing: StateFlow<Boolean> = _isFeedRefreshing.asStateFlow()
+
+    fun refreshFeed() {
+        viewModelScope.launch {
+            _isFeedRefreshing.value = true
+            try {
+                delay(700L)
+            } finally {
+                _isFeedRefreshing.value = false
+            }
+        }
+    }
+
     val feedPostsState: StateFlow<List<FeedPost>> = combine(
         socialRepo.observeFeedPosts(currentUserId).catch { emit(emptyList()) },
         blockingStateFlow
@@ -858,8 +873,7 @@ class KindredViewModel(
             .filter { currentUserId in it.participantUids }
             .flatMap { it.participantUids }
             .toSet() + currentUserId
-        val friendPosts = posts.filter { it.userId in friendIds }
-        if (friendPosts.isNotEmpty()) friendPosts else posts
+        posts.filter { it.userId in friendIds }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -912,6 +926,9 @@ class KindredViewModel(
 
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
+
+    private val _isVideoUploading = MutableStateFlow(false)
+    val isVideoUploading: StateFlow<Boolean> = _isVideoUploading.asStateFlow()
 
     private val _activeChallenge = MutableStateFlow(KindredConstants.VERIFICATION_CHALLENGES.first())
     val activeChallenge: StateFlow<VerificationChallenge> = _activeChallenge.asStateFlow()
@@ -1928,13 +1945,23 @@ class KindredViewModel(
     fun observeUserVideos(targetUserId: String): Flow<List<ProfileVideoItem>> =
         socialRepo.observeUserVideos(targetUserId, currentUserId).catch { emit(emptyList()) }
 
-    fun uploadProfileVideo(caption: String, prepared: PreparedVideoUpload) {
+    fun uploadProfileVideo(
+        caption: String,
+        prepared: PreparedVideoUpload,
+        onComplete: () -> Unit = {}
+    ) {
         viewModelScope.launch {
             _isBusy.value = true
+            _isVideoUploading.value = true
             val res = socialRepo.uploadProfileVideo(caption, prepared)
+            _isVideoUploading.value = false
             _isBusy.value = false
-            res.onSuccess { _actionStatusMessage.value = "Showcase video uploaded" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Video upload failed" }
+            res.onSuccess {
+                _actionStatusMessage.value = "Showcase video uploaded and saved to your profile"
+                onComplete()
+            }.onFailure {
+                _actionStatusMessage.value = it.localizedMessage ?: "Video upload failed"
+            }
         }
     }
 
@@ -2004,14 +2031,24 @@ class KindredViewModel(
 
     // --- Video Feed ---
 
-    fun publishVideoPost(caption: String, prepared: PreparedVideoUpload) {
+    fun publishVideoPost(
+        caption: String,
+        prepared: PreparedVideoUpload,
+        onComplete: () -> Unit = {}
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
+            _isVideoUploading.value = true
             val res = socialRepo.publishVideoPost(snap?.myProfile, defaultDisplayName, caption, prepared)
+            _isVideoUploading.value = false
             _isBusy.value = false
-            res.onSuccess { _actionStatusMessage.value = "Video posted to Kindred Feed!" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not publish video" }
+            res.onSuccess {
+                _actionStatusMessage.value = "Video posted to Kindred Reels!"
+                onComplete()
+            }.onFailure {
+                _actionStatusMessage.value = it.localizedMessage ?: "Could not publish video"
+            }
         }
     }
 
@@ -2045,16 +2082,29 @@ class KindredViewModel(
         preparedVideo: PreparedVideoUpload? = null,
         onComplete: () -> Unit = {}
     ) {
+        publishFeedPost(caption, photoDataUrl, emptyList(), preparedVideo, onComplete)
+    }
+
+    fun publishFeedPost(
+        caption: String,
+        photoDataUrl: String? = null,
+        photoUrls: List<String> = emptyList(),
+        preparedVideo: PreparedVideoUpload? = null,
+        onComplete: () -> Unit = {}
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
+            if (preparedVideo != null) _isVideoUploading.value = true
             val res = socialRepo.publishFeedPost(
                 authorProfile = snap?.myProfile,
                 fallbackName = defaultDisplayName,
                 caption = caption,
                 photoDataUrl = photoDataUrl,
+                photoUrls = photoUrls,
                 preparedVideo = preparedVideo
             )
+            _isVideoUploading.value = false
             _isBusy.value = false
             res.onSuccess {
                 _actionStatusMessage.value = "Shared to your timeline!"
@@ -2067,6 +2117,15 @@ class KindredViewModel(
 
     fun toggleFeedPostLike(postId: String, currentlyLiked: Boolean) {
         viewModelScope.launch { socialRepo.toggleFeedPostLike(postId, currentlyLiked) }
+    }
+
+    fun toggleFeedPostSave(postId: String, currentlySaved: Boolean) {
+        viewModelScope.launch {
+            socialRepo.toggleFeedPostSave(postId, currentlySaved)
+                .onSuccess {
+                    _actionStatusMessage.value = if (!currentlySaved) "Saved post" else "Removed from saved"
+                }
+        }
     }
 
     fun addFeedPostComment(postId: String, text: String, onDone: () -> Unit = {}) {

@@ -399,15 +399,33 @@ data class FeedPost(
     val caption: String = "",
     val mediaType: String = "NONE",
     val mediaDataUrl: String? = null,
+    val mediaUrls: List<String> = emptyList(),
     val thumbnailDataUrl: String? = null,
     val mediaMimeType: String? = null,
     val mediaDurationSec: Long = 0L,
     val mediaByteSize: Long = 0L,
     val chunkCount: Long = 0L,
     val likedByUids: List<String> = emptyList(),
+    val savedByUids: List<String> = emptyList(),
     val commentCount: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null
-)
+) {
+    fun allPhotoUrls(): List<String> {
+        val list = buildList {
+            mediaUrls.forEach { url ->
+                val clean = url.trim()
+                if (clean.isNotBlank()) add(clean)
+            }
+            val single = mediaDataUrl?.trim().orEmpty()
+            if (single.isNotBlank() && single.startsWith("data:image")) {
+                add(single)
+            } else if (single.isNotBlank() && mediaType == "PHOTO" && isEmpty()) {
+                add(single)
+            }
+        }
+        return list.distinct().take(6)
+    }
+}
 
 @Keep
 @IgnoreExtraProperties

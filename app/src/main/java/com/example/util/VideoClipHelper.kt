@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 
 data class PreparedVideoUpload(
@@ -24,10 +25,11 @@ data class PreparedVideoUpload(
 }
 
 object VideoClipHelper {
-    // Firestore doc cap is 1 MiB. Keeping each raw chunk at 500 KB (~667 KB Base64)
-    // enables videos of unlimited file size and duration across ordered chunk docs.
+    // Firestore doc cap is 1 MiB and chunkCount rules cap at 1000 chunks (~500 MB max).
     const val CHUNK_RAW_BYTES = 500_000
     const val INLINE_MAX_RAW_BYTES = 500_000
+    const val MAX_CHUNKS = 1000
+    private const val MAX_THUMBNAIL_DATA_URL_LEN = 180_000
 
     suspend fun prepareVideoForUpload(
         context: Context,
@@ -38,30 +40,73 @@ object VideoClipHelper {
             val resolver = context.contentResolver
             val mimeType = resolver.getType(uri)?.takeIf { it.startsWith("video/") } ?: "video/mp4"
 
+            // Step 1: Stream content:// URI directly to app cache file first so MediaMetadataRetriever
+            // and chunking work reliably across Photo Picker URIs without loading huge videos in RAM.
+            val dir = File(context.cacheDir, "chat_videos").apply { mkdirs() }
+            val safeId = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "clip" }
+            val cachedFile = File(dir, "video_$safeId.mp4")
+
+            var totalBytes = 0L
+            resolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(cachedFile).use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        totalBytes += read
+                        output.write(buffer, 0, read)
+                    }
+                    output.flush()
+                }
+            } ?: throw IllegalArgumentException("Unable to read selected video.")
+
+            if (totalBytes <= 0L || !cachedFile.exists() || cachedFile.length() <= 0L) {
+                cachedFile.delete()
+                throw IllegalArgumentException("Selected video is empty.")
+            }
+
+            val estimatedChunks = ((totalBytes + CHUNK_RAW_BYTES - 1L) / CHUNK_RAW_BYTES).toInt()
+            if (totalBytes > INLINE_MAX_RAW_BYTES && estimatedChunks > MAX_CHUNKS) {
+                throw IllegalArgumentException("Video exceeds maximum sync limit (500 MB).")
+            }
+
+            // Step 2: Safely extract metadata/thumbnail from local cached file path (fallback gracefully).
+            var durationMs = 0L
+            var thumbnailDataUrl: String? = null
             val retriever = MediaMetadataRetriever()
-            val durationMs: Long
-            val thumbnailDataUrl: String?
             try {
-                retriever.setDataSource(context, uri)
-                durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                    ?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
-                val frame = retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?: retriever.frameAtTime
-                thumbnailDataUrl = frame?.let { encodeThumbnailDataUrl(it) }
+                runCatching { retriever.setDataSource(cachedFile.absolutePath) }
+                    .onFailure {
+                        // Secondary fallback on context+uri if file path failed for any codec reason
+                        retriever.setDataSource(context, uri)
+                    }
+                durationMs = runCatching {
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                }.getOrDefault(0L)
+                val frame = runCatching {
+                    retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: retriever.frameAtTime
+                }.getOrNull()
+                if (frame != null) {
+                    thumbnailDataUrl = encodeThumbnailDataUrl(frame)
+                    if (!frame.isRecycled) frame.recycle()
+                }
+            } catch (_: Exception) {
+                // Non-fatal: still allow uploading valid video bytes
             } finally {
                 runCatching { retriever.release() }
             }
 
-            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: throw IllegalArgumentException("Unable to read selected video.")
-            if (bytes.isEmpty()) {
-                throw IllegalArgumentException("Selected video is empty.")
+            val durationSec = if (durationMs > 0L) {
+                ((durationMs + 500L) / 1000L).coerceAtLeast(1L)
+            } else {
+                1L
             }
 
-            val cachedFile = writeBytesToCacheFile(context, cacheKey, bytes)
-            val durationSec = ((durationMs + 500L) / 1000L).coerceAtLeast(1L)
-
-            if (bytes.size <= INLINE_MAX_RAW_BYTES) {
+            // Step 3: Stream cached file into either inline data URL or ordered Base64 chunks
+            if (totalBytes <= INLINE_MAX_RAW_BYTES) {
+                val bytes = cachedFile.readBytes()
                 val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 PreparedVideoUpload(
                     inlineDataUrl = "data:$mimeType;base64,$base64",
@@ -69,22 +114,43 @@ object VideoClipHelper {
                     thumbnailDataUrl = thumbnailDataUrl,
                     mimeType = mimeType,
                     durationSec = durationSec,
-                    sizeBytes = bytes.size.toLong(),
+                    sizeBytes = totalBytes,
                     localCachedFile = cachedFile
                 )
             } else {
-                val chunks = splitBytesIntoBase64Chunks(bytes, CHUNK_RAW_BYTES)
+                val chunks = streamFileIntoBase64Chunks(cachedFile, CHUNK_RAW_BYTES)
                 PreparedVideoUpload(
                     inlineDataUrl = null,
                     chunkBase64List = chunks,
                     thumbnailDataUrl = thumbnailDataUrl,
                     mimeType = mimeType,
                     durationSec = durationSec,
-                    sizeBytes = bytes.size.toLong(),
+                    sizeBytes = totalBytes,
                     localCachedFile = cachedFile
                 )
             }
         }
+    }
+
+    fun streamFileIntoBase64Chunks(file: File, chunkSize: Int = CHUNK_RAW_BYTES): List<String> {
+        val len = file.length()
+        if (len <= 0L) return emptyList()
+        val expected = ((len + chunkSize - 1L) / chunkSize).toInt().coerceAtLeast(1)
+        val result = ArrayList<String>(expected)
+        val buffer = ByteArray(chunkSize)
+        FileInputStream(file).use { input ->
+            while (true) {
+                var filled = 0
+                while (filled < chunkSize) {
+                    val read = input.read(buffer, filled, chunkSize - filled)
+                    if (read <= 0) break
+                    filled += read
+                }
+                if (filled <= 0) break
+                result += Base64.encodeToString(buffer, 0, filled, Base64.NO_WRAP)
+            }
+        }
+        return result
     }
 
     fun splitBytesIntoBase64Chunks(bytes: ByteArray, chunkSize: Int = CHUNK_RAW_BYTES): List<String> {
@@ -93,8 +159,7 @@ object VideoClipHelper {
         var offset = 0
         while (offset < bytes.size) {
             val len = minOf(chunkSize, bytes.size - offset)
-            val slice = bytes.copyOfRange(offset, offset + len)
-            result += Base64.encodeToString(slice, Base64.NO_WRAP)
+            result += Base64.encodeToString(bytes, offset, len, Base64.NO_WRAP)
             offset += len
         }
         return result
@@ -165,20 +230,35 @@ object VideoClipHelper {
         }
     }
 
-    private fun encodeThumbnailDataUrl(bitmap: Bitmap): String {
-        val maxDim = 360
-        val w = bitmap.width
-        val h = bitmap.height
-        val scale = minOf(maxDim.toFloat() / w.coerceAtLeast(1), maxDim.toFloat() / h.coerceAtLeast(1), 1f)
-        val scaled = if (scale < 1f) {
-            Bitmap.createScaledBitmap(bitmap, (w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), true)
-        } else {
-            bitmap
+    private fun encodeThumbnailDataUrl(bitmap: Bitmap): String? {
+        val qualities = intArrayOf(72, 55, 38)
+        val maxDims = intArrayOf(360, 240)
+        for (maxDim in maxDims) {
+            val w = bitmap.width
+            val h = bitmap.height
+            val scale = minOf(maxDim.toFloat() / w.coerceAtLeast(1), maxDim.toFloat() / h.coerceAtLeast(1), 1f)
+            val scaled = if (scale < 1f) {
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (w * scale).toInt().coerceAtLeast(1),
+                    (h * scale).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else {
+                bitmap
+            }
+            for (q in qualities) {
+                val out = ByteArrayOutputStream()
+                scaled.compress(Bitmap.CompressFormat.JPEG, q, out)
+                val encoded = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                if (encoded.length <= MAX_THUMBNAIL_DATA_URL_LEN) {
+                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+                    return encoded
+                }
+            }
+            if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
         }
-        val out = ByteArrayOutputStream()
-        scaled.compress(Bitmap.CompressFormat.JPEG, 72, out)
-        val encoded = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-        return "data:image/jpeg;base64,$encoded"
+        return null
     }
 
     fun formatDurationLabel(durationSec: Long): String {

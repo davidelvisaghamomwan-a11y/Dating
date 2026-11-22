@@ -34,9 +34,9 @@ import kotlin.math.sqrt
 
 /**
  * Real-time bidirectional voice audio engine for Kindred in-app voice & video calls.
- * Captures 8 kHz 16-bit PCM voice via [AudioRecord] with hardware echo cancellation,
- * streams compact Base64 frames, and plays remote participant frames via [AudioTrack]
- * in [AudioManager.MODE_IN_COMMUNICATION].
+ * Captures 16 kHz (or 8 kHz fallback) 16-bit PCM voice via [AudioRecord] with hardware
+ * echo cancellation, streams compact Base64 frames, and plays remote participant frames
+ * via [AudioTrack] matching incoming sample rate in [AudioManager.MODE_IN_COMMUNICATION].
  */
 class LiveCallAudioEngine(
     context: Context
@@ -50,6 +50,7 @@ class LiveCallAudioEngine(
 
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
+    private var activeTrackSampleRate: Int = 0
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
     private var audioFocusRequest: AudioFocusRequest? = null
@@ -61,8 +62,8 @@ class LiveCallAudioEngine(
     @Volatile
     private var muted = false
 
-    private val playbackQueue = Channel<ByteArray>(
-        capacity = 12,
+    private val playbackQueue = Channel<Pair<Int, ByteArray>>(
+        capacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
 
@@ -140,12 +141,13 @@ class LiveCallAudioEngine(
         }
     }
 
-    fun enqueueRemoteAudio(audioBase64: String) {
+    fun enqueueRemoteAudio(audioBase64: String, sampleRateHz: Int = SAMPLE_RATE_HZ) {
         if (audioBase64.isBlank()) return
         val bytes = runCatching { Base64.decode(audioBase64, Base64.DEFAULT) }.getOrNull() ?: return
         if (bytes.isEmpty()) return
+        val normalizedRate = if (sampleRateHz == 16000) 16000 else 8000
         _remoteAudioLevel.value = computePcm16RmsLevel(bytes, bytes.size)
-        playbackQueue.trySend(bytes)
+        playbackQueue.trySend(normalizedRate to bytes)
     }
 
     @SuppressLint("MissingPermission")
@@ -154,26 +156,43 @@ class LiveCallAudioEngine(
     ) {
         captureJob?.cancel()
         captureJob = engineScope.launch {
-            val minBuf = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE_HZ,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(FRAME_BYTES)
-            val recordBufferSize = maxOf(minBuf * 2, FRAME_BYTES * 2)
-
-            val recorder = runCatching {
-                AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                    SAMPLE_RATE_HZ,
+            val candidates = listOf(
+                16000 to MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                16000 to MediaRecorder.AudioSource.MIC,
+                8000 to MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                8000 to MediaRecorder.AudioSource.MIC
+            )
+            var recorder: AudioRecord? = null
+            var chosenSampleRate = SAMPLE_RATE_HZ
+            for ((rate, source) in candidates) {
+                val frameBytes = (rate * 2) / 5
+                val minBuf = AudioRecord.getMinBufferSize(
+                    rate,
                     AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    recordBufferSize
+                    AudioFormat.ENCODING_PCM_16BIT
                 )
-            }.getOrNull()
+                if (minBuf <= 0) continue
+                val recordBufferSize = maxOf(minBuf * 2, frameBytes * 2)
+                val attempt = runCatching {
+                    AudioRecord(
+                        source,
+                        rate,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        recordBufferSize
+                    )
+                }.getOrNull()
+                if (attempt != null && attempt.state == AudioRecord.STATE_INITIALIZED) {
+                    recorder = attempt
+                    chosenSampleRate = rate
+                    break
+                } else {
+                    runCatching { attempt?.release() }
+                }
+            }
 
-            if (recorder == null || recorder.state != AudioRecord.STATE_INITIALIZED) {
-                Log.w(TAG, "AudioRecord initialization failed or unavailable on device")
-                runCatching { recorder?.release() }
+            if (recorder == null) {
+                Log.w(TAG, "AudioRecord initialization failed across all rates/sources")
                 return@launch
             }
             audioRecord = recorder
@@ -194,12 +213,13 @@ class LiveCallAudioEngine(
             runCatching { recorder.startRecording() }
             _isAudioHardwareActive.value = true
 
-            val buffer = ByteArray(FRAME_BYTES)
+            val frameBytes = (chosenSampleRate * 2) / 5 // 200ms PCM16 mono
+            val buffer = ByteArray(frameBytes)
             while (isActive) {
                 var offset = 0
-                while (offset < FRAME_BYTES && isActive) {
+                while (offset < frameBytes && isActive) {
                     val read = runCatching {
-                        recorder.read(buffer, offset, FRAME_BYTES - offset)
+                        recorder.read(buffer, offset, frameBytes - offset)
                     }.getOrDefault(-1)
                     if (read <= 0) break
                     offset += read
@@ -215,54 +235,78 @@ class LiveCallAudioEngine(
                 _localMicLevel.value = rms
                 val encoded = Base64.encodeToString(buffer, 0, offset, Base64.NO_WRAP)
                 val seq = seqCounter++
-                onAudioFrameReady(seq, SAMPLE_RATE_HZ, encoded)
+                onAudioFrameReady(seq, chosenSampleRate, encoded)
             }
+        }
+    }
+
+    private fun buildAudioTrack(sampleRateHz: Int): AudioTrack? {
+        val frameBytes = (sampleRateHz * 2) / 5
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRateHz,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(frameBytes)
+        val trackBufferSize = maxOf(minBuf * 2, frameBytes * 3)
+        val track = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .setSampleRate(sampleRateHz)
+                        .build()
+                )
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(trackBufferSize)
+                .build()
+        }.getOrNull()
+
+        return if (track != null && track.state == AudioTrack.STATE_INITIALIZED) {
+            runCatching { track.play() }
+            track
+        } else {
+            runCatching { track?.release() }
+            null
         }
     }
 
     private fun startPlaybackLoop() {
         playbackJob?.cancel()
         playbackJob = engineScope.launch {
-            val minBuf = AudioTrack.getMinBufferSize(
-                SAMPLE_RATE_HZ,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(FRAME_BYTES)
-            val trackBufferSize = maxOf(minBuf * 2, FRAME_BYTES * 3)
-
-            val track = runCatching {
-                AudioTrack.Builder()
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                            .setSampleRate(SAMPLE_RATE_HZ)
-                            .build()
-                    )
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(trackBufferSize)
-                    .build()
-            }.getOrNull()
-
-            if (track == null || track.state != AudioTrack.STATE_INITIALIZED) {
-                Log.w(TAG, "AudioTrack initialization failed or unavailable on device")
-                runCatching { track?.release() }
+            var currentTrack = buildAudioTrack(16000) ?: buildAudioTrack(8000)
+            if (currentTrack == null) {
+                Log.w(TAG, "AudioTrack initialization failed on device")
                 return@launch
             }
-            audioTrack = track
-            runCatching { track.play() }
+            activeTrackSampleRate = currentTrack.sampleRate
+            audioTrack = currentTrack
             _isAudioHardwareActive.value = true
 
             while (isActive) {
-                val frame = playbackQueue.receiveCatching().getOrNull() ?: break
+                val (sampleRate, frame) = playbackQueue.receiveCatching().getOrNull() ?: break
+                if (sampleRate != activeTrackSampleRate) {
+                    val swapped = buildAudioTrack(sampleRate)
+                    if (swapped != null) {
+                        runCatching {
+                            currentTrack?.pause()
+                            currentTrack?.flush()
+                            currentTrack?.stop()
+                            currentTrack?.release()
+                        }
+                        currentTrack = swapped
+                        activeTrackSampleRate = swapped.sampleRate
+                        audioTrack = swapped
+                    }
+                }
                 runCatching {
-                    track.write(frame, 0, frame.size)
+                    currentTrack?.write(frame, 0, frame.size)
                 }
             }
         }
@@ -322,12 +366,8 @@ class LiveCallAudioEngine(
         runCatching { noiseSuppressor?.release() }
         noiseSuppressor = null
 
-        runCatching {
-            audioRecord?.stop()
-        }
-        runCatching {
-            audioRecord?.release()
-        }
+        runCatching { audioRecord?.stop() }
+        runCatching { audioRecord?.release() }
         audioRecord = null
 
         runCatching {
@@ -335,10 +375,9 @@ class LiveCallAudioEngine(
             audioTrack?.flush()
             audioTrack?.stop()
         }
-        runCatching {
-            audioTrack?.release()
-        }
+        runCatching { audioTrack?.release() }
         audioTrack = null
+        activeTrackSampleRate = 0
 
         runCatching {
             audioManager?.let { am ->

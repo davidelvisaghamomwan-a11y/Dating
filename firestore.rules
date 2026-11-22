@@ -325,7 +325,7 @@ service cloud.firestore {
 
     // 3. Public Discovery Profiles (Coarse coordinates, GeoHash index, up to 12 photos & verification proof)
     match /publicProfiles/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || existing().discoverable == true || isAdmin());
+      allow get: if isSignedIn() && isValidId(userId);
       allow list: if isSignedIn() && (existing().discoverable == true || isAdmin());
 
       allow create: if isOwner(userId) &&
@@ -452,7 +452,11 @@ service cloud.firestore {
 
     // 5. Swipe Decisions ({fromUserId}_{toUserId})
     match /swipes/{swipeId} {
-      allow get: if isSignedIn() && isValidId(swipeId) && (existing().fromUserId == request.auth.uid || existing().toUserId == request.auth.uid);
+      allow get: if isSignedIn() && isValidId(swipeId) && (
+        resource == null
+          ? swipeId.matches('^(' + request.auth.uid + '_.*|.*_' + request.auth.uid + ')$')
+          : (existing().fromUserId == request.auth.uid || existing().toUserId == request.auth.uid)
+      );
       allow list: if isSignedIn() && (existing().fromUserId == request.auth.uid || existing().toUserId == request.auth.uid);
 
       allow create: if isSignedIn() &&
@@ -472,7 +476,11 @@ service cloud.firestore {
 
     // 6. Mutual Matches & Direct Conversations (sorted {uid1}_{uid2})
     match /matches/{matchId} {
-      allow get: if isSignedIn() && isValidId(matchId) && request.auth.uid in existing().participantUids;
+      allow get: if isSignedIn() && isValidId(matchId) && (
+        resource == null
+          ? matchId.matches('^(' + request.auth.uid + '_.*|.*_' + request.auth.uid + ')$')
+          : (request.auth.uid in existing().participantUids)
+      );
       allow list: if isSignedIn() && request.auth.uid in existing().participantUids;
 
       allow create: if isSignedIn() &&
@@ -497,11 +505,7 @@ service cloud.firestore {
                            ('conversationType' in incoming()) &&
                            incoming().conversationType == 'DIRECT' &&
                            exists(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[0])) &&
-                           exists(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[1])) &&
-                           (
-                             (incoming().participantUids[0] == request.auth.uid && get(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[1])).data.discoverable == true) ||
-                             (incoming().participantUids[1] == request.auth.uid && get(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[0])).data.discoverable == true)
-                           )
+                           exists(/databases/$(database)/documents/publicProfiles/$(incoming().participantUids[1]))
                          )
                        );
 
@@ -558,7 +562,7 @@ service cloud.firestore {
                              incoming().diff(existing()).affectedKeys().hasOnly(['readByUids', 'readAt', 'openedByRecipient', 'expiresAtMs']) &&
                              ('readByUids' in incoming()) &&
                              request.auth.uid in incoming().readByUids &&
-                             existing().senderId in incoming().readByUids
+                             incoming().readByUids.hasAll(existing().get('readByUids', []))
                            ) ||
                            (
                              incoming().text == existing().text &&
@@ -770,8 +774,13 @@ service cloud.firestore {
 
     // 9. User Blocks (/blocks/{blockId}) - bidirectional safety exclusion
     match /blocks/{blockId} {
-      allow get, list: if isSignedIn() &&
-                          (existing().blockerUid == request.auth.uid || existing().blockedUid == request.auth.uid);
+      allow get: if isSignedIn() && isValidId(blockId) && (
+        resource == null
+          ? blockId.matches('^(' + request.auth.uid + '_.*|.*_' + request.auth.uid + ')$')
+          : (existing().blockerUid == request.auth.uid || existing().blockedUid == request.auth.uid)
+      );
+      allow list: if isSignedIn() &&
+                    (existing().blockerUid == request.auth.uid || existing().blockedUid == request.auth.uid);
 
       allow create: if isSignedIn() &&
                        isValidId(blockId) &&
@@ -808,7 +817,12 @@ service cloud.firestore {
 
     // 11. Friend Requests (/friendRequests/{requestId}) keyed by {fromUid}_{toUid}
     match /friendRequests/{requestId} {
-      allow get, list: if isSignedIn() && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+      allow get: if isSignedIn() && isValidId(requestId) && (
+        resource == null
+          ? requestId.matches('^(' + request.auth.uid + '_.*|.*_' + request.auth.uid + ')$')
+          : (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
 
       allow create: if isSignedIn() &&
                        isValidId(requestId) &&
@@ -864,7 +878,12 @@ service cloud.firestore {
 
     // 13. Profile Views (/profileViews/{viewId}) keyed by {viewerUid}_{targetUid}
     match /profileViews/{viewId} {
-      allow get, list: if isSignedIn() && (existing().targetUid == request.auth.uid || existing().viewerUid == request.auth.uid);
+      allow get: if isSignedIn() && isValidId(viewId) && (
+        resource == null
+          ? viewId.matches('^(' + request.auth.uid + '_.*|.*_' + request.auth.uid + ')$')
+          : (existing().targetUid == request.auth.uid || existing().viewerUid == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (existing().targetUid == request.auth.uid || existing().viewerUid == request.auth.uid);
 
       allow create, update: if isSignedIn() &&
                                isValidId(viewId) &&
@@ -883,7 +902,12 @@ service cloud.firestore {
 
     // 14. Profile Likes (/profileLikes/{likeId}) keyed by {fromUid}_{toUid}
     match /profileLikes/{likeId} {
-      allow get, list: if isSignedIn() && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+      allow get: if isSignedIn() && isValidId(likeId) && (
+        resource == null
+          ? likeId.matches('^(' + request.auth.uid + '_.*|.*_' + request.auth.uid + ')$')
+          : (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
 
       allow create: if isSignedIn() &&
                        isValidId(likeId) &&
@@ -1008,21 +1032,23 @@ service cloud.firestore {
                        isValidId(postId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
-                       incoming().caption is string && incoming().caption.size() <= 500 &&
-                       incoming().mediaType in ['NONE', 'PHOTO', 'VIDEO'] &&
+                       incoming().caption is string && incoming().caption.size() <= 1000 &&
+                       incoming().mediaType in ['NONE', 'TEXT', 'PHOTO', 'VIDEO'] &&
                        (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                        (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
                        (!('authorCity' in incoming()) || (incoming().authorCity is string && incoming().authorCity.size() <= 80)) &&
                        (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                       (!('mediaUrls' in incoming()) || (incoming().mediaUrls is list && incoming().mediaUrls.size() <= 6 && (incoming().mediaUrls.size() == 0 || (incoming().mediaUrls[0] is string && incoming().mediaUrls[0].size() <= 180000)))) &&
                        (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
                        (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
                        (!('mediaDurationSec' in incoming()) || (incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0)) &&
                        (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
                        (!('chunkCount' in incoming()) || (incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000)) &&
                        (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
+                       (!('savedByUids' in incoming()) || (incoming().savedByUids is list && incoming().savedByUids.size() <= 1000)) &&
                        (!('commentCount' in incoming()) || (incoming().commentCount is int && incoming().commentCount >= 0)) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaType', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'commentCount', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1032,7 +1058,7 @@ service cloud.firestore {
                        (
                          isOwner(existing().userId) ||
                          isAdmin() ||
-                         incoming().diff(existing()).affectedKeys().hasOnly(['likedByUids', 'commentCount'])
+                         incoming().diff(existing()).affectedKeys().hasOnly(['likedByUids', 'savedByUids', 'commentCount'])
                        );
 
       allow delete: if isSignedIn() && isValidId(postId) && (isOwner(existing().userId) || isAdmin());

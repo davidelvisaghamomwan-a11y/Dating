@@ -331,6 +331,7 @@ private fun MainKindredApp(
     val activeStoriesState by viewModel.activeStoriesState.collectAsStateWithLifecycle()
     val videoFeedState by viewModel.videoFeedState.collectAsStateWithLifecycle()
     val friendsFeedPostsState by viewModel.friendsFeedPostsState.collectAsStateWithLifecycle()
+    val isFeedRefreshing by viewModel.isFeedRefreshing.collectAsStateWithLifecycle()
     val myShowcaseVideos by remember(user.uid) {
         viewModel.observeUserVideos(user.uid)
     }.collectAsStateWithLifecycle(initialValue = emptyList())

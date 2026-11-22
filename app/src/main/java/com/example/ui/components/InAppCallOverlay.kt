@@ -509,7 +509,7 @@ internal fun InAppCallOverlay(
         freshChunks.forEach { chunk ->
             val key = chunk.id.ifBlank { "${chunk.senderUid}_${chunk.seq}" }
             if (playedChunkKeys.add(key)) {
-                audioEngine.enqueueRemoteAudio(chunk.audioBase64)
+                audioEngine.enqueueRemoteAudio(chunk.audioBase64, chunk.sampleRateHz.toInt())
                 if (playedChunkKeys.size > 400) {
                     val iter = playedChunkKeys.iterator()
                     if (iter.hasNext()) {
@@ -521,8 +521,12 @@ internal fun InAppCallOverlay(
         }
     }
 
+    val latestOnEndCall by rememberUpdatedState(onEndCall)
     LaunchedEffect(session.id, session.status) {
-        if (session.status == "ACTIVE") {
+        if (session.status == "RINGING") {
+            delay(45_000L)
+            latestOnEndCall(0L)
+        } else if (session.status == "ACTIVE") {
             while (true) {
                 delay(1000L)
                 elapsedSec += 1L
@@ -915,6 +919,7 @@ private fun CallCameraPreview(
             val bindKey = "${useFrontCamera}_$streamFrames"
             if (lastBoundKey == bindKey) return@AndroidView
             lastBoundKey = bindKey
+            cameraBindError = 0
 
             val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
             cameraProviderFuture.addListener(
@@ -939,7 +944,7 @@ private fun CallCameraPreview(
                                     val now = System.currentTimeMillis()
                                     if (latestStreamFrames && (now - lastSentMs.get()) >= 250L) {
                                         lastSentMs.set(now)
-                                        encodeImageProxyToBase64(imageProxy)?.let { encoded ->
+                                        encodeImageProxyToBase64(imageProxy, mirrorHorizontal = useFrontCamera)?.let { encoded ->
                                             val seq = frameSeq.incrementAndGet()
                                             latestOnSend(seq, encoded)
                                         }
@@ -966,30 +971,70 @@ private fun CallCameraPreview(
     )
 }
 
-private fun encodeImageProxyToBase64(image: ImageProxy): String? {
+private fun encodeImageProxyToBase64(image: ImageProxy, mirrorHorizontal: Boolean): String? {
     if (image.format != ImageFormat.YUV_420_888 || image.planes.size < 3) return null
-    val yBuffer = image.planes[0].buffer
-    val uBuffer = image.planes[1].buffer
-    val vBuffer = image.planes[2].buffer
+    val width = image.width
+    val height = image.height
+    if (width <= 0 || height <= 0) return null
 
-    val ySize = yBuffer.remaining()
-    val uSize = uBuffer.remaining()
-    val vSize = vBuffer.remaining()
-    val nv21 = ByteArray(ySize + uSize + vSize)
+    val yPlane = image.planes[0]
+    val uPlane = image.planes[1]
+    val vPlane = image.planes[2]
 
-    yBuffer.get(nv21, 0, ySize)
-    vBuffer.get(nv21, ySize, vSize)
-    uBuffer.get(nv21, ySize + vSize, uSize)
+    val yBuffer = yPlane.buffer
+    val uBuffer = uPlane.buffer
+    val vBuffer = vPlane.buffer
 
-    val yuv = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+    val nv21 = ByteArray(width * height * 3 / 2)
+
+    // Copy Y plane respecting rowStride and pixelStride
+    val yRowStride = yPlane.rowStride
+    val yPixelStride = yPlane.pixelStride
+    var dstIndex = 0
+    for (row in 0 until height) {
+        val rowOffset = row * yRowStride
+        if (yPixelStride == 1) {
+            yBuffer.position(rowOffset)
+            yBuffer.get(nv21, dstIndex, width)
+            dstIndex += width
+        } else {
+            for (col in 0 until width) {
+                nv21[dstIndex++] = yBuffer.get(rowOffset + col * yPixelStride)
+            }
+        }
+    }
+
+    // Copy interleaved VU plane (NV21 = Y + interleaved V, U)
+    val chromaWidth = width / 2
+    val chromaHeight = height / 2
+    val uRowStride = uPlane.rowStride
+    val vRowStride = vPlane.rowStride
+    val uPixelStride = uPlane.pixelStride
+    val vPixelStride = vPlane.pixelStride
+
+    for (row in 0 until chromaHeight) {
+        val vRowStart = row * vRowStride
+        val uRowStart = row * uRowStride
+        for (col in 0 until chromaWidth) {
+            val vIndex = vRowStart + col * vPixelStride
+            val uIndex = uRowStart + col * uPixelStride
+            nv21[dstIndex++] = vBuffer.get(vIndex)
+            nv21[dstIndex++] = uBuffer.get(uIndex)
+        }
+    }
+
+    val yuv = YuvImage(nv21, ImageFormat.NV21, width, height, null)
     val rawOut = ByteArrayOutputStream()
-    yuv.compressToJpeg(Rect(0, 0, image.width, image.height), 58, rawOut)
+    yuv.compressToJpeg(Rect(0, 0, width, height), 60, rawOut)
     val jpegBytes = rawOut.toByteArray()
     val decoded = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size) ?: return null
 
     val rotation = image.imageInfo.rotationDegrees
-    val rotated = if (rotation != 0) {
-        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+    val matrix = Matrix().apply {
+        if (rotation != 0) postRotate(rotation.toFloat())
+        if (mirrorHorizontal) postScale(-1f, 1f)
+    }
+    val transformed = if (rotation != 0 || mirrorHorizontal) {
         Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
             .also { decoded.recycle() }
     } else {
@@ -997,16 +1042,16 @@ private fun encodeImageProxyToBase64(image: ImageProxy): String? {
     }
 
     val maxDim = 280
-    val scale = minOf(maxDim.toFloat() / rotated.width.coerceAtLeast(1), maxDim.toFloat() / rotated.height.coerceAtLeast(1), 1f)
+    val scale = minOf(maxDim.toFloat() / transformed.width.coerceAtLeast(1), maxDim.toFloat() / transformed.height.coerceAtLeast(1), 1f)
     val finalBmp = if (scale < 1f) {
         Bitmap.createScaledBitmap(
-            rotated,
-            (rotated.width * scale).toInt().coerceAtLeast(1),
-            (rotated.height * scale).toInt().coerceAtLeast(1),
+            transformed,
+            (transformed.width * scale).toInt().coerceAtLeast(1),
+            (transformed.height * scale).toInt().coerceAtLeast(1),
             true
-        ).also { rotated.recycle() }
+        ).also { transformed.recycle() }
     } else {
-        rotated
+        transformed
     }
 
     val finalOut = ByteArrayOutputStream()

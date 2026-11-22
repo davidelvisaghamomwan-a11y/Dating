@@ -73,6 +73,8 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -192,7 +194,9 @@ fun DiscoverScreen(
     onAddFeedPostComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, cb -> cb() },
     onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
-    resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) }
+    resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    isFeedRefreshing: Boolean = false,
+    onRefreshFeed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -481,6 +485,8 @@ fun DiscoverScreen(
                     onOpenComments = { post -> activeCommentsPost = post },
                     onDeletePost = onDeleteFeedPost,
                     resolvePostVideoFile = resolveFeedPostVideoFile,
+                    isRefreshing = isFeedRefreshing,
+                    onRefresh = onRefreshFeed,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -759,6 +765,7 @@ fun DiscoverScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SocialTimelineFeedContent(
     myProfile: PublicProfile,
@@ -780,96 +787,108 @@ private fun SocialTimelineFeedContent(
     onOpenComments: (FeedPost) -> Unit,
     onDeletePost: (String) -> Unit,
     resolvePostVideoFile: suspend (FeedPost) -> Result<File>,
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    LazyColumn(
-        modifier = modifier.testTag("social_timeline_feed"),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    val pullRefreshState = rememberPullToRefreshState()
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        state = pullRefreshState,
+        modifier = modifier
     ) {
-        item(key = "stories_row") {
-            StoriesTrayRow(
-                myProfile = myProfile,
-                stories = stories,
-                currentUserId = currentUserId,
-                onOpenStory = onOpenStory,
-                onPostPhotoStory = onPostPhotoStory,
-                onPostVideoStory = onPostVideoStory,
-                onOpenVideoFeed = onOpenVideoFeed,
-                onStatusMessage = onLocationError
-            )
-        }
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("social_timeline_feed"),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item(key = "stories_row") {
+                StoriesTrayRow(
+                    myProfile = myProfile,
+                    stories = stories,
+                    currentUserId = currentUserId,
+                    onOpenStory = onOpenStory,
+                    onPostPhotoStory = onPostPhotoStory,
+                    onPostVideoStory = onPostVideoStory,
+                    onOpenVideoFeed = onOpenVideoFeed,
+                    onStatusMessage = onLocationError
+                )
+            }
 
-        if (peopleToKnow.isNotEmpty()) {
-            item(key = "people_you_may_know_section") {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "People You May Know",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(vertical = 2.dp),
-                        modifier = Modifier.testTag("people_you_may_know_list")
-                    ) {
-                        items(peopleToKnow, key = { it.profile.userId }) { candidate ->
-                            val person = candidate.profile
-                            val flag = person.flagEmoji()
-                            val fStatus = friendStatusForUid(person.userId)
-                            Card(
-                                shape = RoundedCornerShape(18.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                                modifier = Modifier
-                                    .width(166.dp)
-                                    .clickable { onOpenProfile(person) }
-                                    .testTag("people_you_may_know_card_${person.userId}")
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+            if (peopleToKnow.isNotEmpty()) {
+                item(key = "people_you_may_know_section") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "People You May Know",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(vertical = 2.dp),
+                            modifier = Modifier.testTag("people_you_may_know_list")
+                        ) {
+                            items(peopleToKnow, key = { it.profile.userId }) { candidate ->
+                                val person = candidate.profile
+                                val flag = person.flagEmoji()
+                                val fStatus = friendStatusForUid(person.userId)
+                                Card(
+                                    shape = RoundedCornerShape(18.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                                    modifier = Modifier
+                                        .width(166.dp)
+                                        .clickable { onOpenProfile(person) }
+                                        .testTag("people_you_may_know_card_${person.userId}")
                                 ) {
-                                    ProfileAvatarImage(
-                                        photoDataUrl = person.photoDataUrl,
-                                        displayName = person.displayName,
-                                        seed = person.avatarSeed,
-                                        modifier = Modifier.size(64.dp),
-                                        shape = CircleShape,
-                                        initialsFontSizeSp = 20
-                                    )
-                                    Text(
-                                        text = buildString {
-                                            append("${person.displayName}, ${person.age}")
-                                            if (flag.isNotBlank()) append(" $flag")
-                                        },
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = person.bio.ifBlank { person.formattedLocation() },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    val friendBtnLabel = when (fStatus) {
-                                        FriendStatus.NONE -> "Add Friend"
-                                        FriendStatus.OUTGOING_PENDING -> "Request Sent"
-                                        FriendStatus.INCOMING_PENDING -> "Accept"
-                                        FriendStatus.FRIENDS -> "Friends ✓"
-                                    }
-                                    FilledTonalButton(
-                                        onClick = { onFriendAction(person) },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .minimumInteractiveComponentSize()
-                                            .testTag("feed_add_friend_${person.userId}")
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Text(friendBtnLabel, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                        ProfileAvatarImage(
+                                            photoDataUrl = person.photoDataUrl,
+                                            displayName = person.displayName,
+                                            seed = person.avatarSeed,
+                                            modifier = Modifier.size(64.dp),
+                                            shape = CircleShape,
+                                            initialsFontSizeSp = 20
+                                        )
+                                        Text(
+                                            text = buildString {
+                                                append("${person.displayName}, ${person.age}")
+                                                if (flag.isNotBlank()) append(" $flag")
+                                            },
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = person.bio.ifBlank { person.formattedLocation() },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                        val friendBtnLabel = when (fStatus) {
+                                            FriendStatus.NONE -> "Add Friend"
+                                            FriendStatus.OUTGOING_PENDING -> "Request Sent"
+                                            FriendStatus.INCOMING_PENDING -> "Accept"
+                                            FriendStatus.FRIENDS -> "Friends ✓"
+                                        }
+                                        FilledTonalButton(
+                                            onClick = { onFriendAction(person) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("feed_add_friend_${person.userId}")
+                                        ) {
+                                            Text(friendBtnLabel, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                        }
                                     }
                                 }
                             }
@@ -877,66 +896,66 @@ private fun SocialTimelineFeedContent(
                     }
                 }
             }
-        }
 
-        item(key = "friends_posts_header") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Friends' Posts",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Button(
-                    onClick = onOpenCreatePost,
-                    colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
-                    modifier = Modifier.testTag("create_feed_post_button")
+            item(key = "friends_posts_header") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Create Post")
-                }
-            }
-        }
-
-        if (feedPosts.isEmpty()) {
-            item(key = "empty_feed_posts") {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Text(
+                        text = "Friends' Posts",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Button(
+                        onClick = onOpenCreatePost,
+                        colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
+                        modifier = Modifier.testTag("create_feed_post_button")
                     ) {
-                        Text("No timeline posts yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = "Share your first photo, clip, or update with friends and connections.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Create Post")
                     }
                 }
             }
-        } else {
-            items(feedPosts, key = { it.id }) { post ->
-                SocialFeedPostCard(
-                    post = post,
-                    currentUserId = currentUserId,
-                    resolveVideoFile = resolvePostVideoFile,
-                    onToggleLike = { onTogglePostLike(post.id, currentUserId in post.likedByUids) },
-                    onOpenComments = { onOpenComments(post) },
-                    onDeletePost = { onDeletePost(post.id) },
-                    onOpenAuthor = { onOpenProfileById(post.userId) }
-                )
+
+            if (feedPosts.isEmpty()) {
+                item(key = "empty_feed_posts") {
+                    Card(
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("No timeline posts yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = "Share your first photo, clip, or update with friends and connections.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(feedPosts, key = { it.id }) { post ->
+                    SocialFeedPostCard(
+                        post = post,
+                        currentUserId = currentUserId,
+                        resolveVideoFile = resolvePostVideoFile,
+                        onToggleLike = { onTogglePostLike(post.id, currentUserId in post.likedByUids) },
+                        onOpenComments = { onOpenComments(post) },
+                        onDeletePost = { onDeletePost(post.id) },
+                        onOpenAuthor = { onOpenProfileById(post.userId) }
+                    )
+                }
             }
         }
     }

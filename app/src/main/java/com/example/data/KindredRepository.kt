@@ -1280,8 +1280,17 @@ class KindredRepository(
                     IllegalStateException("Save your profile in the Profile tab before messaging members directly.")
                 )
             }
+            val targetPublicSnap = db.collection("publicProfiles").document(targetUserId).get().await()
+            if (!targetPublicSnap.exists()) {
+                return Result.failure(
+                    IllegalStateException("Recipient profile is not available yet.")
+                )
+            }
 
             val matchRef = db.collection("matches").document(matchId)
+            if (matchRef.get().await().exists()) {
+                return Result.success(matchId)
+            }
             docPath = matchRef.path
             matchRef.set(
                 mapOf(
@@ -1373,7 +1382,8 @@ class KindredRepository(
         var docPath = "matches/$matchId/messages"
         return try {
             val uid = requireUserId()
-            require(participantUids.size == 2 && uid in participantUids) {
+            val sortedParticipants = participantUids.distinct().sorted()
+            require(sortedParticipants.size == 2 && uid in sortedParticipants) {
                 "You are not a participant in this match."
             }
             val matchRef = db.collection("matches").document(matchId)
@@ -1383,7 +1393,7 @@ class KindredRepository(
             val payload = mutableMapOf<String, Any>(
                 "matchId" to matchId,
                 "senderId" to uid,
-                "participantUids" to participantUids,
+                "participantUids" to sortedParticipants,
                 "text" to cleanText,
                 "messageType" to allowedType,
                 "readByUids" to listOf(uid),
@@ -1406,7 +1416,7 @@ class KindredRepository(
                     socialRepo.uploadChunksToSubcollection(
                         parentCollection = msgRef.collection("mediaChunks"),
                         ownerUid = uid,
-                        participantUids = participantUids,
+                        participantUids = sortedParticipants,
                         chunks = preparedVideo.chunkBase64List
                     )
                 }
@@ -1672,7 +1682,8 @@ class KindredRepository(
         var docPath = "matches/$matchId/calls"
         return try {
             val uid = requireUserId()
-            require(participantUids.size == 2 && uid in participantUids && calleeUid in participantUids && uid != calleeUid) {
+            val sortedParticipants = participantUids.distinct().sorted()
+            require(sortedParticipants.size == 2 && uid in sortedParticipants && calleeUid in sortedParticipants && uid != calleeUid) {
                 "Invalid call participants."
             }
             val callRef = db.collection("matches").document(matchId).collection("calls").document()
@@ -1682,7 +1693,7 @@ class KindredRepository(
                     "matchId" to matchId,
                     "callerUid" to uid,
                     "calleeUid" to calleeUid,
-                    "participantUids" to participantUids,
+                    "participantUids" to sortedParticipants,
                     "callType" to safeCallType,
                     "status" to "RINGING",
                     "callerMuted" to false,
@@ -1753,7 +1764,8 @@ class KindredRepository(
         var docPath = "matches/$matchId/calls/$callId/audioChunks"
         return try {
             val uid = requireUserId()
-            if (uid !in participantUids) return Result.success(Unit)
+            val sortedParticipants = participantUids.distinct().sorted()
+            if (sortedParticipants.size != 2 || uid !in sortedParticipants) return Result.success(Unit)
             val chunkId = "${uid}_$seq"
             val chunkRef = db.collection("matches")
                 .document(matchId)
@@ -1767,7 +1779,7 @@ class KindredRepository(
                     "matchId" to matchId,
                     "callId" to callId,
                     "senderUid" to uid,
-                    "participantUids" to participantUids,
+                    "participantUids" to sortedParticipants,
                     "seq" to seq,
                     "sampleRateHz" to sampleRateHz.toLong(),
                     "audioBase64" to audioBase64.take(40_000),
@@ -1796,7 +1808,8 @@ class KindredRepository(
         var docPath = "matches/$matchId/calls/$callId/videoFrames"
         return try {
             val uid = requireUserId()
-            if (uid !in participantUids) return Result.success(Unit)
+            val sortedParticipants = participantUids.distinct().sorted()
+            if (sortedParticipants.size != 2 || uid !in sortedParticipants) return Result.success(Unit)
             val frameRef = db.collection("matches")
                 .document(matchId)
                 .collection("calls")
@@ -1809,7 +1822,7 @@ class KindredRepository(
                     "matchId" to matchId,
                     "callId" to callId,
                     "senderUid" to uid,
-                    "participantUids" to participantUids,
+                    "participantUids" to sortedParticipants,
                     "seq" to seq,
                     "frameBase64" to frameBase64.take(160_000),
                     "createdAt" to FieldValue.serverTimestamp()
