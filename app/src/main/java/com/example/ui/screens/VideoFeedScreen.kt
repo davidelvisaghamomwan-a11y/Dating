@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -71,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -82,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.model.FriendStatus
+import com.example.model.PublicProfile
 import com.example.model.VideoPost
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
@@ -97,6 +100,7 @@ import java.io.File
 fun VideoFeedScreen(
     videoPosts: List<VideoPost>,
     currentUserId: String,
+    profilesByUid: Map<String, PublicProfile> = emptyMap(),
     resolveVideoFile: suspend (VideoPost) -> Result<File>,
     onPublishVideoPost: (caption: String, prepared: PreparedVideoUpload) -> Unit,
     onToggleLike: (postId: String, currentlyLiked: Boolean) -> Unit,
@@ -206,6 +210,7 @@ fun VideoFeedScreen(
                     val isSettledActive = pagerState.settledPage == page
                     ReelPageItem(
                         post = post,
+                        authorProfile = profilesByUid[post.userId],
                         isActive = isSettledActive,
                         isMuted = isMuted,
                         currentUserId = currentUserId,
@@ -329,6 +334,7 @@ fun VideoFeedScreen(
 @Composable
 private fun ReelPageItem(
     post: VideoPost,
+    authorProfile: PublicProfile? = null,
     isActive: Boolean,
     isMuted: Boolean,
     currentUserId: String,
@@ -369,7 +375,13 @@ private fun ReelPageItem(
 
     val isLiked = currentUserId in post.likedByUids
     val isOwner = post.userId == currentUserId
-    val flag = CountryFlagHelper.flagEmojiForCountry(post.authorCountry.orEmpty())
+    val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
+        ?: post.authorName.ifBlank { "Member" }
+    val displayAuthorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull() ?: post.authorPhoto
+    val isAuthorVerified = authorProfile?.isProfileVerified ?: post.authorVerified
+    val flag = CountryFlagHelper.flagEmojiForCountry(
+        authorProfile?.country?.takeIf { it.isNotBlank() } ?: post.authorCountry.orEmpty()
+    )
 
     Box(
         modifier = Modifier
@@ -427,6 +439,7 @@ private fun ReelPageItem(
                     bitmap = thumb,
                     contentDescription = "Reel thumbnail",
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.High,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -490,8 +503,8 @@ private fun ReelPageItem(
                     modifier = Modifier.clickable(onClick = onOpenAuthor)
                 ) {
                     ProfileAvatarImage(
-                        photoDataUrl = post.authorPhoto,
-                        displayName = post.authorName.ifBlank { "Member" },
+                        photoDataUrl = displayAuthorPhoto,
+                        displayName = displayAuthorName,
                         seed = post.userId,
                         modifier = Modifier.size(40.dp),
                         shape = CircleShape,
@@ -499,7 +512,7 @@ private fun ReelPageItem(
                     )
                     Text(
                         text = buildString {
-                            append(post.authorName.ifBlank { "Member" })
+                            append(displayAuthorName)
                             if (flag.isNotBlank()) append(" $flag")
                         },
                         style = MaterialTheme.typography.titleSmall,
@@ -508,6 +521,14 @@ private fun ReelPageItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (isAuthorVerified) {
+                        Icon(
+                            imageVector = Icons.Filled.Verified,
+                            contentDescription = "Verified creator",
+                            tint = Color(0xFF0095F6),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
                 if (!isOwner && friendStatus != FriendStatus.FRIENDS) {

@@ -354,6 +354,7 @@ data class StoryItem(
     val authorName: String = "",
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
+    val authorVerified: Boolean = false,
     val mediaType: String = "PHOTO",
     val mediaDataUrl: String? = null,
     val thumbnailDataUrl: String? = null,
@@ -387,6 +388,7 @@ data class VideoPost(
     val authorName: String = "",
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
+    val authorVerified: Boolean = false,
     val caption: String = "",
     val mediaDataUrl: String? = null,
     val thumbnailDataUrl: String? = null,
@@ -407,6 +409,7 @@ data class FeedPost(
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
     val authorCity: String? = null,
+    val authorVerified: Boolean = false,
     val caption: String = "",
     val mediaType: String = "NONE",
     val mediaDataUrl: String? = null,
@@ -446,6 +449,7 @@ data class FeedComment(
     val userId: String = "",
     val authorName: String = "",
     val authorPhoto: String? = null,
+    val authorVerified: Boolean = false,
     val text: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null
 )

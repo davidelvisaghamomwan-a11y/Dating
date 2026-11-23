@@ -7,9 +7,11 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.PointF
 import android.graphics.RectF
+import android.media.ExifInterface
 import android.media.FaceDetector
 import android.net.Uri
 import android.util.Base64
+import android.util.LruCache
 import androidx.camera.core.ImageProxy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -25,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.security.MessageDigest
 import kotlin.math.abs
 import kotlin.math.max
@@ -400,42 +403,127 @@ object VerificationAnalyzer {
         )
     }
 
-    suspend fun compressUriToDataUrl(context: Context, uri: Uri): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                val inputStream = context.contentResolver.openInputStream(uri) ?: return@withContext null
-                val original = inputStream.use { BitmapFactory.decodeStream(it) } ?: return@withContext null
-                compressBitmapToDataUrl(original)
-            } catch (_: Exception) {
-                null
-            }
+    suspend fun compressUriToDataUrl(
+        context: Context,
+        uri: Uri,
+        maxDim: Int = 768,
+        maxRawBytes: Int = 125_000
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val bitmap = decodeAndOrientUri(context, uri) ?: return@withContext null
+            compressBitmapToDataUrl(bitmap, maxDim = maxDim, maxRawBytes = maxRawBytes)
+        } catch (_: Exception) {
+            null
         }
+    }
 
-    suspend fun decodeUriToBitmap(context: Context, uri: Uri, maxDim: Int = 768): Bitmap? =
+    suspend fun compressUriForFeedPostDataUrl(
+        context: Context,
+        uri: Uri,
+        maxDim: Int = 1280,
+        maxRawBytes: Int = 340_000
+    ): String? = withContext(Dispatchers.IO) {
+        try {
+            val bitmap = decodeAndOrientUri(context, uri) ?: return@withContext null
+            compressBitmapToDataUrl(bitmap, maxDim = maxDim, maxRawBytes = maxRawBytes)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun decodeAndOrientUri(context: Context, uri: Uri): Bitmap? {
+        val orientation = try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                ExifInterface(stream).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            } ?: ExifInterface.ORIENTATION_NORMAL
+        } catch (_: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+        val original = context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it)
+        } ?: return null
+        return applyExifOrientation(original, orientation)
+    }
+
+    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            else -> return bitmap
+        }
+        return try {
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        } catch (_: Exception) {
+            bitmap
+        }
+    }
+
+    suspend fun decodeUriToBitmap(context: Context, uri: Uri, maxDim: Int = 1080): Bitmap? =
         withContext(Dispatchers.IO) {
             try {
-                val inputStream = context.contentResolver.openInputStream(uri) ?: return@withContext null
-                val original = inputStream.use { BitmapFactory.decodeStream(it) } ?: return@withContext null
+                val original = decodeAndOrientUri(context, uri) ?: return@withContext null
                 resizeToMaxDim(original, maxDim = maxDim)
             } catch (_: Exception) {
                 null
             }
         }
 
-    fun compressBitmapToDataUrl(bitmap: Bitmap): String {
-        val resized = resizeToMaxDim(bitmap, maxDim = 420)
-        var quality = 78
+    fun compressBitmapToDataUrl(
+        bitmap: Bitmap,
+        maxDim: Int = 768,
+        maxRawBytes: Int = 125_000
+    ): String {
+        val resized = resizeToMaxDim(bitmap, maxDim = maxDim)
+        var quality = 90
         var bytes: ByteArray
         do {
             val out = ByteArrayOutputStream()
             resized.compress(Bitmap.CompressFormat.JPEG, quality, out)
             bytes = out.toByteArray()
-            quality -= 8
-        } while (bytes.size > 52_000 && quality >= 30)
+            quality -= 6
+        } while (bytes.size > maxRawBytes && quality >= 46)
 
         val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
         return "data:image/jpeg;base64,$encoded"
     }
+
+    private val memoryCacheMaxKb: Int =
+        ((Runtime.getRuntime().maxMemory() / 1024L) / 8L).toInt().coerceIn(16 * 1024, 64 * 1024)
+
+    private val decodedBitmapCache: LruCache<String, Bitmap> =
+        object : LruCache<String, Bitmap>(memoryCacheMaxKb) {
+            override fun sizeOf(key: String, value: Bitmap): Int =
+                (value.allocationByteCount / 1024).coerceAtLeast(1)
+        }
+
+    @Volatile
+    private var diskImageCacheDir: File? = null
+
+    fun initImageCache(context: Context) {
+        if (diskImageCacheDir == null) {
+            val dir = File(context.applicationContext.cacheDir, "kindred_image_cache")
+            if (!dir.exists()) dir.mkdirs()
+            diskImageCacheDir = dir
+        }
+    }
+
+    private fun cacheKeyForDataUrl(dataUrl: String): String =
+        sha256Hex(dataUrl.toByteArray(Charsets.UTF_8))
 
     fun decodeBase64DataUrl(dataUrl: String?): ImageBitmap? {
         return decodeBitmapFromDataUrl(dataUrl)?.asImageBitmap()
@@ -444,12 +532,51 @@ object VerificationAnalyzer {
     fun decodeBitmapFromDataUrl(dataUrl: String?): Bitmap? {
         if (dataUrl.isNullOrBlank()) return null
         return try {
+            val key = cacheKeyForDataUrl(dataUrl)
+            decodedBitmapCache.get(key)?.takeIf { !it.isRecycled }?.let { return it }
+
+            val cacheFile = diskImageCacheDir?.let { File(it, "$key.bin") }
+            if (cacheFile != null && cacheFile.exists() && cacheFile.length() > 0L) {
+                val diskBmp = BitmapFactory.decodeFile(cacheFile.absolutePath)
+                if (diskBmp != null) {
+                    decodedBitmapCache.put(key, diskBmp)
+                    return diskBmp
+                }
+            }
+
             val base64Part = dataUrl.substringAfter("base64,", dataUrl)
             val bytes = Base64.decode(base64Part, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            decodedBitmapCache.put(key, decoded)
+            if (cacheFile != null && !cacheFile.exists()) {
+                runCatching {
+                    cacheFile.writeBytes(bytes)
+                    trimDiskCacheIfNeeded(diskImageCacheDir)
+                }
+            }
+            decoded
         } catch (_: Exception) {
             null
         }
+    }
+
+    suspend fun prefetchDataUrls(urls: List<String>) = withContext(Dispatchers.Default) {
+        urls.asSequence()
+            .filter { it.startsWith("data:image") }
+            .distinct()
+            .take(18)
+            .forEach { url ->
+                decodeBitmapFromDataUrl(url)
+            }
+    }
+
+    private fun trimDiskCacheIfNeeded(dir: File?) {
+        val cacheDir = dir ?: return
+        val files = cacheDir.listFiles() ?: return
+        if (files.size <= 160) return
+        files.sortedBy { it.lastModified() }
+            .take(files.size - 120)
+            .forEach { runCatching { it.delete() } }
     }
 
     private fun buildSelfiePreviewDataUrl(bitmap: Bitmap): String {

@@ -29,14 +29,17 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.tasks.await
 import java.io.File
 
@@ -49,6 +52,9 @@ class SocialAndMediaRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth
 ) {
+    private val refreshedFeedPostsFlow = MutableSharedFlow<List<FeedPost>>(extraBufferCapacity = 4)
+    private val refreshedStoriesFlow = MutableSharedFlow<List<StoryItem>>(extraBufferCapacity = 4)
+
     private fun requireUserId(): String {
         return auth.currentUser?.uid
             ?: throw IllegalStateException("User must be signed in before accessing Firestore.")
@@ -594,7 +600,7 @@ class SocialAndMediaRepository(
 
     fun observeActiveStories(viewerUid: String): Flow<List<StoryItem>> {
         if (viewerUid.isBlank()) return flowOf(emptyList())
-        return flow {
+        val liveFlow = flow {
             emitAll(
                 db.collection("stories")
                     .snapshots()
@@ -606,6 +612,29 @@ class SocialAndMediaRepository(
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "stories", viewerUid) }
             )
+        }
+        return merge(liveFlow, refreshedStoriesFlow)
+    }
+
+    suspend fun fetchLatestActiveStories(viewerUid: String): Result<List<StoryItem>> {
+        if (viewerUid.isBlank()) return Result.success(emptyList())
+        return try {
+            val snap = try {
+                db.collection("stories").get(Source.SERVER).await()
+            } catch (_: Exception) {
+                db.collection("stories").get(Source.DEFAULT).await()
+            }
+            val now = System.currentTimeMillis()
+            val list = snap.toObjects(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                .filter { !it.isExpiredAt(now) }
+                .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            refreshedStoriesFlow.tryEmit(list)
+            Result.success(list)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, "stories")
+            Result.failure(e)
         }
     }
 
@@ -623,6 +652,7 @@ class SocialAndMediaRepository(
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "mediaType" to "PHOTO",
                 "mediaDataUrl" to photoDataUrl,
                 "caption" to caption.trim().take(300),
@@ -663,6 +693,7 @@ class SocialAndMediaRepository(
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "mediaType" to "VIDEO",
                 "caption" to caption.trim().take(300),
                 "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
@@ -852,6 +883,7 @@ class SocialAndMediaRepository(
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "caption" to caption.trim().take(300),
                 "mediaMimeType" to prepared.mimeType.take(80),
                 "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
@@ -927,7 +959,7 @@ class SocialAndMediaRepository(
 
     fun observeFeedPosts(viewerUid: String): Flow<List<FeedPost>> {
         if (viewerUid.isBlank()) return flowOf(emptyList())
-        return flow {
+        val liveFlow = flow {
             emitAll(
                 db.collection("feedPosts")
                     .snapshots()
@@ -937,6 +969,27 @@ class SocialAndMediaRepository(
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "feedPosts", viewerUid) }
             )
+        }
+        return merge(liveFlow, refreshedFeedPostsFlow)
+    }
+
+    suspend fun fetchLatestFeedPosts(viewerUid: String): Result<List<FeedPost>> {
+        if (viewerUid.isBlank()) return Result.success(emptyList())
+        return try {
+            val snap = try {
+                db.collection("feedPosts").get(Source.SERVER).await()
+            } catch (_: Exception) {
+                db.collection("feedPosts").get(Source.DEFAULT).await()
+            }
+            val list = snap.toObjects(FeedPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            refreshedFeedPostsFlow.tryEmit(list)
+            Result.success(list)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, "feedPosts")
+            Result.failure(e)
         }
     }
 
@@ -968,12 +1021,12 @@ class SocialAndMediaRepository(
     ): Result<String> {
         val cleanCaption = caption.trim().take(1000)
         val validPhotos = buildList {
+            val single = photoDataUrl?.trim().orEmpty()
+            if (single.isNotBlank() && single.length <= 900_000) add(single)
             photoUrls.forEach { url ->
                 val clean = url.trim()
                 if (clean.isNotBlank() && clean.length <= 180_000) add(clean)
             }
-            val single = photoDataUrl?.trim().orEmpty()
-            if (single.isNotBlank() && single.length <= 920_000) add(single)
         }.distinct().take(6)
 
         if (cleanCaption.isBlank() && validPhotos.isEmpty() && preparedVideo == null) {
@@ -992,6 +1045,7 @@ class SocialAndMediaRepository(
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "mediaType" to mediaType,
                 "caption" to cleanCaption,
                 "likedByUids" to emptyList<String>(),
@@ -1029,7 +1083,11 @@ class SocialAndMediaRepository(
                 }
             } else if (validPhotos.isNotEmpty()) {
                 payload["mediaDataUrl"] = validPhotos.first()
-                payload["mediaUrls"] = validPhotos.filter { it.length <= 180_000 }
+                payload["mediaUrls"] = if (validPhotos.size > 1) {
+                    validPhotos.filter { it.length <= 180_000 }
+                } else {
+                    emptyList()
+                }
                 payload["chunkCount"] = 0L
             }
             postRef.set(payload).await()
@@ -1096,6 +1154,7 @@ class SocialAndMediaRepository(
                 "postId" to postId,
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "text" to cleanText,
                 "createdAt" to FieldValue.serverTimestamp()
             )

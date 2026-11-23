@@ -935,6 +935,7 @@ service cloud.firestore {
                        incoming().mediaType in ['PHOTO', 'VIDEO'] &&
                        (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                        (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
+                       (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                        (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
                        (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
                        (!('caption' in incoming()) || (incoming().caption is string && incoming().caption.size() <= 300)) &&
@@ -943,7 +944,7 @@ service cloud.firestore {
                        (!('viewerUids' in incoming()) || (incoming().viewerUids is list && incoming().viewerUids.size() <= 500)) &&
                        incoming().expiresAtMs is int && incoming().expiresAtMs > 0 &&
                        incoming().keys().hasAll(['userId', 'authorName', 'mediaType', 'expiresAtMs', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAtMs', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorVerified', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAtMs', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1010,6 +1011,7 @@ service cloud.firestore {
                        incoming().caption is string && incoming().caption.size() <= 300 &&
                        (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                        (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
+                       (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                        (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
                        (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
                        (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
@@ -1018,7 +1020,7 @@ service cloud.firestore {
                        incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000 &&
                        (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaDurationSec', 'chunkCount', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorVerified', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1060,6 +1062,7 @@ service cloud.firestore {
                        (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                        (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
                        (!('authorCity' in incoming()) || (incoming().authorCity is string && incoming().authorCity.size() <= 80)) &&
+                       (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                        (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
                        (!('mediaUrls' in incoming()) || (incoming().mediaUrls is list && incoming().mediaUrls.size() <= 6 && (incoming().mediaUrls.size() == 0 || (incoming().mediaUrls[0] is string && incoming().mediaUrls[0].size() <= 180000)))) &&
                        (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
@@ -1071,7 +1074,7 @@ service cloud.firestore {
                        (!('savedByUids' in incoming()) || (incoming().savedByUids is list && incoming().savedByUids.size() <= 1000)) &&
                        (!('commentCount' in incoming()) || (incoming().commentCount is int && incoming().commentCount >= 0)) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaType', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'authorVerified', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1109,9 +1112,10 @@ service cloud.firestore {
                          incoming().userId == request.auth.uid &&
                          incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
                          (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
+                         (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                          incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
                          incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'authorVerified', 'text', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
         allow update: if false;

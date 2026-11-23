@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -71,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -118,7 +120,12 @@ fun StoriesTrayRow(
         if (uri != null) {
             scope.launch {
                 isPreparingMedia = true
-                val dataUrl = VerificationAnalyzer.compressUriToDataUrl(context, uri)
+                val dataUrl = VerificationAnalyzer.compressUriForFeedPostDataUrl(
+                    context = context,
+                    uri = uri,
+                    maxDim = 1280,
+                    maxRawBytes = 320_000
+                )
                 isPreparingMedia = false
                 if (dataUrl != null) {
                     pendingPreparedVideo = null
@@ -154,35 +161,33 @@ fun StoriesTrayRow(
         modifier = modifier
             .fillMaxWidth()
             .testTag("stories_tray_row"),
-        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         item(key = "add_story_ring") {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(70.dp)
+                    .width(74.dp)
                     .clickable { showCreateStorySheet = true }
                     .testTag("add_story_button")
             ) {
-                Box(modifier = Modifier.size(60.dp), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
                     ProfileAvatarImage(
                         photoDataUrl = myProfile?.photoDataUrl,
                         displayName = myProfile?.displayName ?: "You",
                         seed = myProfile?.avatarSeed ?: currentUserId,
-                        modifier = Modifier
-                            .size(56.dp)
-                            .border(2.dp, CoralRose.copy(alpha = 0.65f), CircleShape),
+                        modifier = Modifier.size(64.dp),
                         shape = CircleShape,
-                        initialsFontSizeSp = 18
+                        initialsFontSizeSp = 20
                     )
                     Surface(
                         shape = CircleShape,
-                        color = CoralRose,
-                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.background),
+                        color = Color(0xFF0095F6),
+                        border = BorderStroke(2.5.dp, MaterialTheme.colorScheme.background),
                         modifier = Modifier
-                            .size(22.dp)
+                            .size(24.dp)
                             .align(Alignment.BottomEnd)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -190,51 +195,18 @@ fun StoriesTrayRow(
                                 imageVector = Icons.Filled.Add,
                                 contentDescription = "Add story",
                                 tint = Color.White,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Text(
-                    text = "Your Story",
+                    text = "Your story",
                     style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        item(key = "video_feed_chip") {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .width(70.dp)
-                    .clickable(onClick = onOpenVideoFeed)
-                    .testTag("open_video_feed_story_chip")
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = ChampagneGold.copy(alpha = 0.16f),
-                    border = BorderStroke(2.dp, ChampagneGold),
-                    modifier = Modifier.size(58.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Filled.PlayCircleOutline,
-                            contentDescription = "Community video feed",
-                            tint = ChampagneGold,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Reels",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = ChampagneGold,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
                 )
             }
         }
@@ -242,16 +214,25 @@ fun StoriesTrayRow(
         items(stories.size, key = { idx -> stories[idx].id.ifBlank { "story_$idx" } }) { index ->
             val story = stories[index]
             val seen = currentUserId in story.viewerUids
+            val igStoryBrush = Brush.linearGradient(
+                listOf(
+                    Color(0xFFFEDA75),
+                    Color(0xFFFA7E1E),
+                    Color(0xFFD62976),
+                    Color(0xFF962FBF),
+                    Color(0xFF4F5BD5)
+                )
+            )
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(70.dp)
+                    .width(74.dp)
                     .clickable { onOpenStory(index) }
                     .testTag("story_ring_${story.id}")
             ) {
                 Box(
                     modifier = Modifier
-                        .size(60.dp)
+                        .size(70.dp)
                         .border(
                             width = if (seen) 1.5.dp else 2.5.dp,
                             brush = if (seen) {
@@ -262,11 +243,11 @@ fun StoriesTrayRow(
                                     )
                                 )
                             } else {
-                                Brush.linearGradient(listOf(CoralRose, ChampagneGold))
+                                igStoryBrush
                             },
                             shape = CircleShape
                         )
-                        .padding(3.dp),
+                        .padding(3.5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     ProfileAvatarImage(
@@ -275,13 +256,14 @@ fun StoriesTrayRow(
                         seed = story.userId,
                         modifier = Modifier.fillMaxSize(),
                         shape = CircleShape,
-                        initialsFontSizeSp = 18
+                        initialsFontSizeSp = 20
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(5.dp))
                 Text(
                     text = if (story.userId == currentUserId) "You" else story.authorName,
                     style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -401,6 +383,7 @@ fun StoryViewerDialog(
     stories: List<StoryItem>,
     initialIndex: Int,
     currentUserId: String,
+    profilesByUid: Map<String, PublicProfile> = emptyMap(),
     resolveVideoFile: suspend (StoryItem) -> Result<File>,
     onMarkViewed: (String) -> Unit,
     onDeleteStory: (String) -> Unit,
@@ -488,6 +471,7 @@ fun StoryViewerDialog(
                         bitmap = bitmap,
                         contentDescription = "Story photo by ${story.authorName}",
                         contentScale = ContentScale.Fit,
+                        filterQuality = FilterQuality.High,
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(RoundedCornerShape(18.dp))
@@ -542,13 +526,27 @@ fun StoryViewerDialog(
                             shape = CircleShape,
                             initialsFontSizeSp = 15
                         )
+                        val isVerified = profilesByUid[story.userId]?.isProfileVerified ?: story.authorVerified
                         Column {
-                            Text(
-                                text = story.authorName.ifBlank { "Member" },
-                                color = Color.White,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = story.authorName.ifBlank { "Member" },
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (isVerified) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Verified,
+                                        contentDescription = "Verified creator",
+                                        tint = Color(0xFF0095F6),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
                             Text(
                                 text = "${story.viewerUids.size} views",
                                 color = Color.White.copy(alpha = 0.78f),

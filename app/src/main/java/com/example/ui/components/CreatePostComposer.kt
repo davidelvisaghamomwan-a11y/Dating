@@ -199,10 +199,24 @@ fun CreatePostComposerSheet(
             scope.launch {
                 isPreparingMedia = true
                 preparedVideo = null
+                val totalTargetCount = (photoUrls.size + uris.size).coerceIn(1, 6)
+                val perPhotoMaxBytes = if (totalTargetCount == 1) {
+                    340_000
+                } else {
+                    (460_000 / totalTargetCount).coerceIn(72_000, 128_000)
+                }
+                val perPhotoMaxDim = if (totalTargetCount == 1) 1280 else 1080
                 uris.forEach { uri ->
-                    val dataUrl = VerificationAnalyzer.compressUriToDataUrl(context, uri)
-                    if (dataUrl != null && dataUrl !in photoUrls) {
-                        photoUrls.add(dataUrl)
+                    if (photoUrls.size < 6) {
+                        val dataUrl = VerificationAnalyzer.compressUriForFeedPostDataUrl(
+                            context = context,
+                            uri = uri,
+                            maxDim = perPhotoMaxDim,
+                            maxRawBytes = perPhotoMaxBytes
+                        )
+                        if (dataUrl != null && dataUrl !in photoUrls) {
+                            photoUrls.add(dataUrl)
+                        }
                     }
                 }
                 isPreparingMedia = false
@@ -277,7 +291,7 @@ fun CreatePostComposerSheet(
                             onPublish(
                                 finalCaption,
                                 photoUrls.firstOrNull(),
-                                photoUrls.toList(),
+                                if (photoUrls.size > 1) photoUrls.toList() else emptyList(),
                                 preparedVideo
                             )
                             onDismiss()

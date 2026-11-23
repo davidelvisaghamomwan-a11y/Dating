@@ -5,13 +5,11 @@
     <string name="create_account_with_google">Create Account with Google</string>
     <string name="signing_in">Signing in...</string>
     <string name="nav_home">Home</string>
-    <string name="nav_discover">Discover</string>
     <string name="nav_create">Create</string>
     <string name="nav_reels">Reels</string>
     <string name="nav_matches">Inbox</string>
     <string name="nav_verify">Verify</string>
     <string name="nav_profile">Profile</string>
-    <string name="discover_title">Discover</string>
     <string name="matches_title">Inbox</string>
     <string name="verify_title">Profile Verification</string>
     <string name="profile_title">Your Profile</string>
@@ -44,8 +42,6 @@
     <string name="chat_live_sync">Live Firestore sync</string>
     <string name="chat_view_profile">View match profile</string>
     <string name="chat_block_cd">Block user</string>
-    <string name="discover_block_cd">Block profile</string>
-    <string name="discover_search_cd">Search profiles by name</string>
     <string name="inbox_search_cd">Search profiles or start a conversation</string>
     <string name="search_profiles_title">Search People</string>
     <string name="search_profiles_placeholder">Search by name, city, or country...</string>
@@ -76,7 +72,6 @@
     <string name="chat_typing_label">typing…</string>
     <string name="chat_end_call_cd">End call</string>
     <string name="report_user_cd">Report profile</string>
-    <string name="discover_report_cd">Report profile</string>
     <string name="location_gate_title">Verify Your Location</string>
     <string name="location_gate_subtitle">Kindred automatically verifies your city and country via GPS so everyone knows where matches are messaging from.</string>
     <string name="nav_video_feed">Videos</string>

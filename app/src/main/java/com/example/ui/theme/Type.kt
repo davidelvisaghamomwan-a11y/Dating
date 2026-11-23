@@ -21,6 +21,10 @@ val PlusJakartaSansFamily = FontFamily(
     Font(R.font.plus_jakarta_sans, FontWeight.Bold)
 )
 
+val GrandHotelFamily = FontFamily(
+    Font(R.font.grand_hotel, FontWeight.Normal)
+)
+
 val KindredTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = PlayfairDisplayFamily,

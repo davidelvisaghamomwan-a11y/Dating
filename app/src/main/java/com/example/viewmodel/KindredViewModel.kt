@@ -55,6 +55,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -844,11 +845,20 @@ class KindredViewModel(
     val isFeedRefreshing: StateFlow<Boolean> = _isFeedRefreshing.asStateFlow()
 
     fun refreshFeed() {
+        if (_isFeedRefreshing.value) return
         viewModelScope.launch {
             _isFeedRefreshing.value = true
             try {
-                delay(700L)
+                val uid = currentUserId
+                val postsJob = async { socialRepo.fetchLatestFeedPosts(uid) }
+                val storiesJob = async { socialRepo.fetchLatestActiveStories(uid) }
+                val postsRes = postsJob.await()
+                storiesJob.await()
+                postsRes.onFailure { err ->
+                    _actionStatusMessage.value = err.localizedMessage ?: "Unable to refresh feed from server"
+                }
             } finally {
+                delay(250L)
                 _isFeedRefreshing.value = false
             }
         }

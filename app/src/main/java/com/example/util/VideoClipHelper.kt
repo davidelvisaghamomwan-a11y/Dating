@@ -231,8 +231,8 @@ object VideoClipHelper {
     }
 
     private fun encodeThumbnailDataUrl(bitmap: Bitmap): String? {
-        val qualities = intArrayOf(72, 55, 38)
-        val maxDims = intArrayOf(360, 240)
+        val qualities = intArrayOf(84, 70, 52)
+        val maxDims = intArrayOf(720, 480, 360)
         for (maxDim in maxDims) {
             val w = bitmap.width
             val h = bitmap.height

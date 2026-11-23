@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +60,7 @@ fun PostCommentsSheet(
     post: FeedPost,
     currentUserId: String,
     myProfile: PublicProfile?,
+    profilesByUid: Map<String, PublicProfile> = emptyMap(),
     observeComments: (String) -> Flow<List<FeedComment>>,
     onAddComment: (postId: String, text: String, onDone: () -> Unit) -> Unit,
     onDeleteComment: (postId: String, commentId: String) -> Unit,
@@ -121,11 +124,25 @@ fun PostCommentsSheet(
                         initialsFontSizeSp = 13
                     )
                     Column {
-                        Text(
-                            text = post.authorName.ifBlank { "Author" },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        val isPostAuthorVerified = profilesByUid[post.userId]?.isProfileVerified ?: post.authorVerified
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = post.authorName.ifBlank { "Author" },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (isPostAuthorVerified) {
+                                Icon(
+                                    imageVector = Icons.Filled.Verified,
+                                    contentDescription = "Verified",
+                                    tint = Color(0xFF0095F6),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
                         Text(
                             text = post.caption,
                             style = MaterialTheme.typography.bodySmall
@@ -189,15 +206,24 @@ fun PostCommentsSheet(
                                     initialsFontSizeSp = 12
                                 )
                                 Column {
+                                    val isCommenterVerified = profilesByUid[comment.userId]?.isProfileVerified ?: comment.authorVerified
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         Text(
                                             text = comment.authorName.ifBlank { "Member" },
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold
                                         )
+                                        if (isCommenterVerified) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Verified,
+                                                contentDescription = "Verified commenter",
+                                                tint = Color(0xFF0095F6),
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                        }
                                         Text(
                                             text = timeStr,
                                             style = MaterialTheme.typography.labelSmall,

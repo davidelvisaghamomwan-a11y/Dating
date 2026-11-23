@@ -17,6 +17,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import com.google.firebase.auth.userProfileChangeRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
@@ -140,6 +141,81 @@ object GoogleAuthHelper {
             } catch (e: Exception) {
                 Log.e(TAG, "Google Sign-In failed", e)
                 onAuthError(e.localizedMessage ?: "Sign in failed. Please try again.")
+            }
+        }
+    }
+
+    fun signInWithEmail(
+        email: String,
+        password: String,
+        onAuthSuccess: () -> Unit,
+        onAuthError: (String) -> Unit,
+        scope: CoroutineScope
+    ) {
+        scope.launch {
+            try {
+                Firebase.auth.signInWithEmailAndPassword(email.trim(), password).await()
+                onAuthSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Email sign-in failed", e)
+                onAuthError(e.localizedMessage ?: "Unable to log in with email and password.")
+            }
+        }
+    }
+
+    fun signUpWithEmail(
+        email: String,
+        password: String,
+        displayName: String,
+        onAuthSuccess: () -> Unit,
+        onAuthError: (String) -> Unit,
+        scope: CoroutineScope
+    ) {
+        scope.launch {
+            try {
+                val result = Firebase.auth.createUserWithEmailAndPassword(email.trim(), password).await()
+                val user = result.user
+                if (user != null && displayName.isNotBlank()) {
+                    runCatching {
+                        user.updateProfile(
+                            userProfileChangeRequest {
+                                this.displayName = displayName.trim()
+                            }
+                        ).await()
+                    }
+                }
+                onAuthSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Email sign-up failed", e)
+                onAuthError(e.localizedMessage ?: "Unable to create account with email and password.")
+            }
+        }
+    }
+
+    fun sendPasswordReset(
+        email: String,
+        onSuccess: (String) -> Unit,
+        onError: (String) -> Unit,
+        scope: CoroutineScope
+    ) {
+        val cleanEmail = email.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
+            onError("Enter your account email above to receive a password reset link.")
+            return
+        }
+        scope.launch {
+            try {
+                Firebase.auth.sendPasswordResetEmail(cleanEmail).await()
+                onSuccess("Password reset email sent to $cleanEmail.")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Password reset failed", e)
+                onError(e.localizedMessage ?: "Unable to send password reset email.")
             }
         }
     }

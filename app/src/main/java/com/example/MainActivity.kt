@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,6 +24,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddBox
 import androidx.compose.material.icons.filled.ChatBubble
@@ -86,6 +89,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import coil.Coil
+import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.example.auth.GoogleAuthHelper
 import com.example.communication.CallRingtoneController
 import com.example.data.KindredRepository
@@ -100,12 +107,13 @@ import com.example.ui.components.CreatePostComposerSheet
 import com.example.ui.components.FullscreenIncomingCallDialog
 import com.example.ui.components.InAppCallOverlay
 import com.example.ui.components.NewMatchCelebrationDialog
+import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.ProfileSearchSheet
 import com.example.ui.screens.ActiveUsersScreen
 import com.example.ui.screens.AdminDashboardScreen
 import com.example.ui.screens.AuthScreen
-import com.example.ui.screens.DiscoverScreen
 import com.example.ui.screens.EditProfileScreen
+import com.example.ui.screens.HomeFeedScreen
 import com.example.ui.screens.FriendsHubScreen
 import com.example.ui.screens.MatchesAndChatScreen
 import com.example.ui.screens.ProfileScreen
@@ -122,6 +130,7 @@ import com.example.update.AppUpdateChecker
 import com.example.update.UpdateCheckResult
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PresenceUtils
+import com.example.util.VerificationAnalyzer
 import com.example.viewmodel.KindredPushAlert
 import com.example.viewmodel.KindredViewModel
 import com.google.firebase.Firebase
@@ -137,8 +146,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
-const val ROUTE_DISCOVER = "discover"
+const val ROUTE_HOME = "home"
 const val ROUTE_MATCHES = "matches"
 const val ROUTE_VERIFY = "verify"
 const val ROUTE_PROFILE = "profile"
@@ -161,18 +171,18 @@ private data class NavTabItem(
 
 private val NAV_TABS = listOf(
     NavTabItem(
-        route = ROUTE_DISCOVER,
+        route = ROUTE_HOME,
         labelRes = R.string.nav_home,
         selectedIcon = Icons.Filled.Home,
         unselectedIcon = Icons.Outlined.Home,
         testTag = "nav_home_tab"
     ),
     NavTabItem(
-        route = ROUTE_ACTIVE_USERS,
-        labelRes = R.string.nav_discover,
-        selectedIcon = Icons.Filled.Search,
-        unselectedIcon = Icons.Outlined.Search,
-        testTag = "nav_discover_tab"
+        route = ROUTE_VIDEO_FEED,
+        labelRes = R.string.nav_reels,
+        selectedIcon = Icons.Filled.Movie,
+        unselectedIcon = Icons.Outlined.Movie,
+        testTag = "nav_reels_tab"
     ),
     NavTabItem(
         route = "create",
@@ -182,11 +192,11 @@ private val NAV_TABS = listOf(
         testTag = "nav_create_tab"
     ),
     NavTabItem(
-        route = ROUTE_VIDEO_FEED,
-        labelRes = R.string.nav_reels,
-        selectedIcon = Icons.Filled.Movie,
-        unselectedIcon = Icons.Outlined.Movie,
-        testTag = "nav_reels_tab"
+        route = ROUTE_MATCHES,
+        labelRes = R.string.nav_matches,
+        selectedIcon = Icons.Filled.ChatBubble,
+        unselectedIcon = Icons.Outlined.ChatBubbleOutline,
+        testTag = "nav_matches_tab"
     ),
     NavTabItem(
         route = ROUTE_PROFILE,
@@ -217,6 +227,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureAppCheck(this, intent)
+        VerificationAnalyzer.initImageCache(applicationContext)
+        Coil.setImageLoader {
+            ImageLoader.Builder(applicationContext)
+                .memoryCache {
+                    MemoryCache.Builder(applicationContext)
+                        .maxSizePercent(0.25)
+                        .build()
+                }
+                .diskCache {
+                    DiskCache.Builder()
+                        .directory(File(applicationContext.cacheDir, "coil_image_cache"))
+                        .maxSizeBytes(100L * 1024L * 1024L)
+                        .build()
+                }
+                .respectCacheHeaders(false)
+                .crossfade(true)
+                .build()
+        }
         enableEdgeToEdge()
         KindredNotificationHelper.ensureChannels(this)
         pendingDeepLinkMatchId = extractMatchDeepLink(intent)
@@ -473,7 +501,7 @@ private fun MainKindredApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: ROUTE_DISCOVER
+    val currentRoute = navBackStackEntry?.destination?.route ?: ROUTE_HOME
 
     DisposableEffect(lifecycleOwner, currentRoute, selectedMatchId) {
         fun syncForegroundMatch() {
@@ -720,23 +748,25 @@ private fun MainKindredApp(
                 if (!hideBottomBar && !useRail) {
                     NavigationBar(
                         windowInsets = WindowInsets.navigationBars,
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                        containerColor = MaterialTheme.colorScheme.background,
+                        tonalElevation = 0.dp
                     ) {
                         NAV_TABS.forEach { tab ->
                             val selected = currentRoute == tab.route
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { navigateToTab(tab.route) },
+                                alwaysShowLabel = false,
                                 modifier = Modifier.testTag(tab.testTag),
                                 icon = {
                                     TabIconWithOptionalBadge(
                                         tab = tab,
                                         selected = selected,
                                         unreadCount = unreadInboxCount,
-                                        matchCount = matchCount
+                                        matchCount = matchCount,
+                                        myProfile = successData?.myProfile
                                     )
-                                },
-                                label = { Text(stringResource(tab.labelRes)) }
+                                }
                             )
                         }
                     }
@@ -765,7 +795,8 @@ private fun MainKindredApp(
                                         tab = tab,
                                         selected = selected,
                                         unreadCount = unreadInboxCount,
-                                        matchCount = matchCount
+                                        matchCount = matchCount,
+                                        myProfile = successData?.myProfile
                                     )
                                 },
                                 label = { Text(stringResource(tab.labelRes)) }
@@ -845,31 +876,20 @@ private fun MainKindredApp(
 
                             NavHost(
                                 navController = navController,
-                                startDestination = ROUTE_DISCOVER,
+                                startDestination = ROUTE_HOME,
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                composable(ROUTE_DISCOVER) {
-                                    DiscoverScreen(
+                                composable(ROUTE_HOME) {
+                                    HomeFeedScreen(
                                         myProfile = data.myProfile,
-                                        privateUser = data.privateUser,
-                                        geoHashMeta = data.geoHashMeta,
                                         candidates = data.discoveryCandidates,
-                                        onSwipe = { candidate, direction ->
-                                            viewModel.swipeProfile(candidate, direction)
-                                        },
-                                        onBlockUser = { candidate ->
-                                            viewModel.blockUser(
-                                                targetUserId = candidate.profile.userId,
-                                                displayName = candidate.profile.displayName
-                                            )
-                                        },
                                         onReportUser = { candidate, reason, details, alsoBlock ->
                                             viewModel.reportUser(
                                                 reportedUid = candidate.profile.userId,
                                                 displayName = candidate.profile.displayName,
                                                 reason = reason,
                                                 details = details,
-                                                sourceSurface = "DISCOVER",
+                                                sourceSurface = "HOME_FEED",
                                                 alsoBlock = alsoBlock
                                             )
                                         },
@@ -879,29 +899,10 @@ private fun MainKindredApp(
                                         onLocationError = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         },
-                                        onUpdateFilters = { interestedIn, minAge, maxAge, maxDist, verifiedOnly ->
-                                            viewModel.updateFilters(
-                                                interestedIn = interestedIn,
-                                                minAgePref = minAge,
-                                                maxAgePref = maxAge,
-                                                maxDistanceKm = maxDist,
-                                                verifiedOnlyFilter = verifiedOnly
-                                            )
-                                        },
-                                        onNavigateToProfile = { navigateToTab(ROUTE_PROFILE) },
-                                        onNavigateToVerify = { navigateToTab(ROUTE_VERIFY) },
                                         onOpenSearch = { showSearchSheet = true },
-                                        onOpenSettings = {
-                                            navController.navigate(ROUTE_SETTINGS) {
-                                                launchSingleTop = true
-                                            }
-                                        },
-                                        latestLocation = latestLocation,
                                         onLocationPermissionGranted = {
                                             hasLocationPermission = true
                                         },
-                                        canUndoLastSwipe = canUndoLastSwipe,
-                                        onUndoSwipe = { viewModel.undoLastSwipe() },
                                         activeOnlineCount = activeOnlineCount,
                                         onOpenActiveUsers = {
                                             navController.navigate(ROUTE_ACTIVE_USERS) {
@@ -1450,7 +1451,7 @@ private fun MainKindredApp(
                                         activeMembers = activeMembersState,
                                         onBack = {
                                             if (!navController.popBackStack()) {
-                                                navigateToTab(ROUTE_DISCOVER)
+                                                navigateToTab(ROUTE_HOME)
                                             }
                                         },
                                         onOpenProfile = { memberProfile ->
@@ -1468,6 +1469,7 @@ private fun MainKindredApp(
                                     VideoFeedScreen(
                                         videoPosts = videoFeedState,
                                         currentUserId = viewModel.currentUserId,
+                                        profilesByUid = profilesByUid,
                                         resolveVideoFile = { post ->
                                             viewModel.resolveVideoPostFile(context, post)
                                         },
@@ -1485,7 +1487,7 @@ private fun MainKindredApp(
                                         },
                                         onBack = {
                                             if (!navController.popBackStack()) {
-                                                navigateToTab(ROUTE_DISCOVER)
+                                                navigateToTab(ROUTE_HOME)
                                             }
                                         },
                                         onStatusMessage = { msg ->
@@ -1753,10 +1755,29 @@ private fun TabIconWithOptionalBadge(
     tab: NavTabItem,
     selected: Boolean,
     unreadCount: Int,
-    matchCount: Int
+    matchCount: Int,
+    myProfile: PublicProfile? = null
 ) {
     val icon = if (selected) tab.selectedIcon else tab.unselectedIcon
     when {
+        tab.route == ROUTE_PROFILE && myProfile != null -> {
+            ProfileAvatarImage(
+                photoDataUrl = myProfile.photoDataUrl,
+                displayName = myProfile.displayName,
+                seed = myProfile.avatarSeed,
+                modifier = Modifier
+                    .size(28.dp)
+                    .then(
+                        if (selected) {
+                            Modifier.border(2.dp, MaterialTheme.colorScheme.onBackground, CircleShape)
+                        } else {
+                            Modifier
+                        }
+                    ),
+                shape = CircleShape,
+                initialsFontSizeSp = 11
+            )
+        }
         tab.route == ROUTE_MATCHES && unreadCount > 0 -> {
             BadgedBox(
                 badge = {
@@ -1780,7 +1801,11 @@ private fun TabIconWithOptionalBadge(
             }
         }
         else -> {
-            Icon(imageVector = icon, contentDescription = stringResource(tab.labelRes))
+            Icon(
+                imageVector = icon,
+                contentDescription = stringResource(tab.labelRes),
+                modifier = Modifier.size(26.dp)
+            )
         }
     }
 }
