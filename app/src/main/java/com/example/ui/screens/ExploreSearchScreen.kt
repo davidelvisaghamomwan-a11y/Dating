@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -162,6 +163,9 @@ fun ExploreSearchScreen(
     observeFeedComments: (postId: String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
     onAddFeedPostComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, _ -> },
     onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
+    observeVideoComments: (postId: String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
+    onAddVideoComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, _ -> },
+    onDeleteVideoComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File>,
     resolveVideoPostFile: suspend (VideoPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
@@ -625,6 +629,22 @@ fun ExploreSearchScreen(
                                             onOpenAuthor = {
                                                 selectedExploreIndex = null
                                                 onOpenUserProfile(liveReel.userId)
+                                            },
+                                            onOpenComments = {
+                                                activeCommentsPost = FeedPost(
+                                                    id = liveReel.id,
+                                                    userId = liveReel.userId,
+                                                    authorName = liveReel.authorName,
+                                                    authorPhoto = liveReel.authorPhoto,
+                                                    authorCountry = liveReel.authorCountry,
+                                                    authorVerified = liveReel.authorVerified,
+                                                    caption = liveReel.caption,
+                                                    mediaType = "VIDEO",
+                                                    mediaDataUrl = liveReel.mediaDataUrl,
+                                                    thumbnailDataUrl = liveReel.thumbnailDataUrl,
+                                                    likedByUids = liveReel.likedByUids,
+                                                    createdAt = liveReel.createdAt
+                                                )
                                             }
                                         )
                                     }
@@ -638,14 +658,15 @@ fun ExploreSearchScreen(
     }
 
     activeCommentsPost?.let { postForComments ->
+        val isVideoReel = videoPosts.any { it.id == postForComments.id }
         PostCommentsSheet(
             post = postForComments,
             currentUserId = currentUserId,
             myProfile = myProfile,
             profilesByUid = profilesByUid,
-            observeComments = observeFeedComments,
-            onAddComment = onAddFeedPostComment,
-            onDeleteComment = onDeleteFeedPostComment,
+            observeComments = if (isVideoReel) observeVideoComments else observeFeedComments,
+            onAddComment = if (isVideoReel) onAddVideoComment else onAddFeedPostComment,
+            onDeleteComment = if (isVideoReel) onDeleteVideoComment else onDeleteFeedPostComment,
             onOpenProfile = { uid ->
                 activeCommentsPost = null
                 selectedExploreIndex = null
@@ -791,7 +812,8 @@ private fun ExploreReelFeedCard(
     isVisibleForAutoPlay: Boolean,
     onToggleLike: () -> Unit,
     onFriendAction: () -> Unit,
-    onOpenAuthor: () -> Unit
+    onOpenAuthor: () -> Unit,
+    onOpenComments: () -> Unit
 ) {
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
         ?: videoPost.authorName.ifBlank { "Kindred Member" }
@@ -880,11 +902,17 @@ private fun ExploreReelFeedCard(
                 }
             }
 
-            if (!isOwner && friendStatus == FriendStatus.NONE) {
+            if (!isOwner) {
+                val followLabel = when (friendStatus) {
+                    FriendStatus.NONE -> "Follow"
+                    FriendStatus.OUTGOING_PENDING -> "Requested"
+                    FriendStatus.INCOMING_PENDING -> "Accept"
+                    FriendStatus.FRIENDS -> "Following"
+                }
                 TextButton(onClick = onFriendAction) {
                     Text(
-                        text = "Follow",
-                        color = ExploreInstagramBlue,
+                        text = followLabel,
+                        color = if (friendStatus == FriendStatus.NONE) ExploreInstagramBlue else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -998,6 +1026,14 @@ private fun ExploreReelFeedCard(
                     imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                     contentDescription = "Like",
                     tint = if (isLiked) CoralRose else MaterialTheme.colorScheme.onSurface
+                )
+            }
+            IconButton(onClick = onOpenComments) {
+                Icon(
+                    imageVector = Icons.Filled.ChatBubble,
+                    contentDescription = "Comments",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp)
                 )
             }
             if (videoPost.likedByUids.isNotEmpty()) {

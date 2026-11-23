@@ -1025,6 +1025,15 @@ private fun MainKindredApp(
                                         onDeleteFeedPostComment = { postId, commentId ->
                                             viewModel.deleteFeedPostComment(postId, commentId)
                                         },
+                                        observeVideoComments = { postId ->
+                                            viewModel.observeVideoPostComments(postId)
+                                        },
+                                        onAddVideoComment = { postId, text, onDone ->
+                                            viewModel.addVideoPostComment(postId, text, onDone)
+                                        },
+                                        onDeleteVideoComment = { postId, commentId ->
+                                            viewModel.deleteVideoPostComment(postId, commentId)
+                                        },
                                         onDeleteFeedPost = { postId ->
                                             viewModel.deleteFeedPost(postId)
                                         },
@@ -1590,6 +1599,16 @@ private fun MainKindredApp(
                                         friendStatusForUid = { uid -> friendStatusForUid(uid) },
                                         onFriendAction = { uid ->
                                             handleFriendAction(uid, friendStatusForUid(uid))
+                                        },
+                                        myProfile = data.myProfile,
+                                        observeComments = { postId ->
+                                            viewModel.observeVideoPostComments(postId)
+                                        },
+                                        onAddComment = { postId, text ->
+                                            viewModel.addVideoPostComment(postId, text)
+                                        },
+                                        onDeleteComment = { postId, commentId ->
+                                            viewModel.deleteVideoPostComment(postId, commentId)
                                         }
                                     )
                                 }

@@ -2137,6 +2137,25 @@ class KindredViewModel(
         )
     }
 
+    fun observeVideoPostComments(postId: String): Flow<List<FeedComment>> =
+        socialRepo.observeVideoPostComments(postId, currentUserId)
+
+    fun addVideoPostComment(postId: String, text: String, onComplete: () -> Unit = {}) {
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        viewModelScope.launch {
+            socialRepo.addVideoPostComment(postId, snap?.myProfile, defaultDisplayName, text)
+                .onSuccess { onComplete() }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not add comment" }
+        }
+    }
+
+    fun deleteVideoPostComment(postId: String, commentId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteVideoPostComment(postId, commentId)
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not delete comment" }
+        }
+    }
+
     // --- Social Timeline Feed Posts & Comments ---
 
     fun publishFeedPost(

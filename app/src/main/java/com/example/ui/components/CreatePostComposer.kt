@@ -190,7 +190,6 @@ fun CreatePostComposerSheet(
     var caption by remember { mutableStateOf("") }
     val photoUrls = remember { mutableStateListOf<String>().apply { addAll(initialPhotos) } }
     var preparedVideo by remember { mutableStateOf<PreparedVideoUpload?>(initialVideo) }
-    var locationTag by remember { mutableStateOf(myProfile?.cityLabel.orEmpty()) }
     var isPreparingMedia by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
@@ -284,12 +283,7 @@ fun CreatePostComposerSheet(
                                 errorMsg = "Add a caption or media before posting"
                                 return@Button
                             }
-                            val finalCaption = buildString {
-                                append(trimmedCaption)
-                                if (locationTag.isNotBlank() && !trimmedCaption.contains(locationTag)) {
-                                    append("\n📍 $locationTag")
-                                }
-                            }
+                            val finalCaption = trimmedCaption
                             onPublish(
                                 finalCaption,
                                 photoUrls.firstOrNull(),
@@ -325,15 +319,6 @@ fun CreatePostComposerSheet(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = CoralRose, modifier = Modifier.size(13.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = if (locationTag.isNotBlank()) locationTag else "Everywhere",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 }
 
@@ -373,17 +358,7 @@ fun CreatePostComposerSheet(
                     }
                 }
 
-                // Location Tag
-                OutlinedTextField(
-                    value = locationTag,
-                    onValueChange = { locationTag = it },
-                    label = { Text("Location Tag (Optional)") },
-                    leadingIcon = { Icon(Icons.Filled.LocationOn, contentDescription = null, tint = CoralRose) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("composer_location_input")
-                )
+
 
                 // Loading media
                 if (isPreparingMedia) {
@@ -504,21 +479,7 @@ fun CreatePostComposerSheet(
                     }
                 }
 
-                if (onCreateStoryClick != null) {
-                    FilledTonalButton(
-                        onClick = {
-                            onDismiss()
-                            onCreateStoryClick()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("composer_switch_to_story_btn")
-                    ) {
-                        Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = CoralRose)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Or Capture 24h Camera Story")
-                    }
-                }
+
 
                 if (errorMsg != null) {
                     Text(

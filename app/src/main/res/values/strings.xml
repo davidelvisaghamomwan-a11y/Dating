@@ -80,7 +80,7 @@
     <string name="nav_who_likes_me">Likes You</string>
     <string name="nav_friends">Friends</string>
     <string name="nav_admin_dashboard">Admin Moderation</string>
-    <string name="btn_add_friend">Add Friend</string>
+    <string name="btn_add_friend">Follow</string>
     <string name="btn_delete_account">Delete Account &amp; Data</string>
     <string name="chat_search_messages_cd">Search messages in chat</string>
     <string name="download_media_cd">Download media</string>

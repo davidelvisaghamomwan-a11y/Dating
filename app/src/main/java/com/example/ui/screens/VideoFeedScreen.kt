@@ -47,6 +47,12 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.ChatBubble
+import com.example.model.FeedComment
+import com.example.model.FeedPost
+import com.example.ui.components.PostCommentsSheet
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -109,7 +115,11 @@ fun VideoFeedScreen(
     onBack: () -> Unit,
     onStatusMessage: (String) -> Unit = {},
     friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
-    onFriendAction: (String) -> Unit = {}
+    onFriendAction: (String) -> Unit = {},
+    myProfile: PublicProfile? = null,
+    observeComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
+    onAddComment: (String, String) -> Unit = { _, _ -> },
+    onDeleteComment: (String, String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -117,6 +127,7 @@ fun VideoFeedScreen(
     var captionDraft by remember { mutableStateOf("") }
     var isPreparing by remember { mutableStateOf(false) }
     var isMuted by remember { mutableStateOf(false) }
+    var activeCommentsVideoPost by remember { mutableStateOf<VideoPost?>(null) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -220,7 +231,8 @@ fun VideoFeedScreen(
                         onToggleLike = { onToggleLike(post.id, currentUserId in post.likedByUids) },
                         onDelete = { onDeletePost(post.id) },
                         onOpenAuthor = { onOpenAuthorProfile(post.userId) },
-                        onFriendAction = { onFriendAction(post.userId) }
+                        onFriendAction = { onFriendAction(post.userId) },
+                        onOpenComments = { activeCommentsVideoPost = post }
                     )
                 }
             }
@@ -329,6 +341,39 @@ fun VideoFeedScreen(
             }
         )
     }
+
+    activeCommentsVideoPost?.let { vidPost ->
+        PostCommentsSheet(
+            post = FeedPost(
+                id = vidPost.id,
+                userId = vidPost.userId,
+                authorName = vidPost.authorName,
+                authorPhoto = vidPost.authorPhoto,
+                authorCountry = vidPost.authorCountry,
+                authorVerified = vidPost.authorVerified,
+                caption = vidPost.caption,
+                mediaType = "VIDEO",
+                mediaDataUrl = vidPost.mediaDataUrl,
+                thumbnailDataUrl = vidPost.thumbnailDataUrl,
+                likedByUids = vidPost.likedByUids,
+                createdAt = vidPost.createdAt
+            ),
+            currentUserId = currentUserId,
+            myProfile = myProfile,
+            profilesByUid = profilesByUid,
+            observeComments = observeComments,
+            onAddComment = { postId, text, onDone ->
+                onAddComment(postId, text)
+                onDone()
+            },
+            onDeleteComment = onDeleteComment,
+            onOpenProfile = { uid ->
+                activeCommentsVideoPost = null
+                onOpenAuthorProfile(uid)
+            },
+            onDismiss = { activeCommentsVideoPost = null }
+        )
+    }
 }
 
 @Composable
@@ -344,7 +389,8 @@ private fun ReelPageItem(
     onToggleLike: () -> Unit,
     onDelete: () -> Unit,
     onOpenAuthor: () -> Unit,
-    onFriendAction: () -> Unit
+    onFriendAction: () -> Unit,
+    onOpenComments: () -> Unit
 ) {
     val context = LocalContext.current
     var resolvedFile by remember(post.id) { mutableStateOf<File?>(null) }
@@ -531,12 +577,12 @@ private fun ReelPageItem(
                     }
                 }
 
-                if (!isOwner && friendStatus != FriendStatus.FRIENDS) {
+                if (!isOwner) {
                     val label = when (friendStatus) {
                         FriendStatus.NONE -> "Follow"
-                        FriendStatus.OUTGOING_PENDING -> "Sent"
+                        FriendStatus.OUTGOING_PENDING -> "Requested"
                         FriendStatus.INCOMING_PENDING -> "Accept"
-                        FriendStatus.FRIENDS -> "Friends"
+                        FriendStatus.FRIENDS -> "Following"
                     }
                     OutlinedButton(
                         onClick = onFriendAction,
@@ -585,6 +631,28 @@ private fun ReelPageItem(
                 }
                 Text(
                     text = "${post.likedByUids.size}",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(
+                    onClick = onOpenComments,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ChatBubble,
+                        contentDescription = "Comments",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Text(
+                    text = "Comments",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold

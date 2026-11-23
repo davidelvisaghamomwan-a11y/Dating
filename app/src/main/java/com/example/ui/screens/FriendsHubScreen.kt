@@ -149,7 +149,7 @@ fun FriendsHubScreen(
                             if (connectedProfiles.isEmpty()) {
                                 item {
                                     Text(
-                                        text = "No friends connected yet. Check the Suggested tab or Discover feed to add friends!",
+                                        text = "No connections yet. Check the Suggested tab or Explore feed to follow people!",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

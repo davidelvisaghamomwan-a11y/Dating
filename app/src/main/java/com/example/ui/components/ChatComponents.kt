@@ -1177,10 +1177,10 @@ internal fun PartnerProfileQuickSheet(
             ) {
                 if (onFriendAction != null) {
                     val friendLabel = when (friendStatus) {
-                        FriendStatus.NONE -> "Add Friend"
-                        FriendStatus.OUTGOING_PENDING -> "Request Sent"
-                        FriendStatus.INCOMING_PENDING -> "Accept Friend"
-                        FriendStatus.FRIENDS -> "Friends ✓"
+                        FriendStatus.NONE -> "Follow"
+                        FriendStatus.OUTGOING_PENDING -> "Requested"
+                        FriendStatus.INCOMING_PENDING -> "Accept"
+                        FriendStatus.FRIENDS -> "Following"
                     }
                     OutlinedButton(
                         onClick = onFriendAction,

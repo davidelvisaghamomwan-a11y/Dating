@@ -687,15 +687,53 @@ fun CreateStoryStudioDialog(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.75f)),
+                            .background(Color.Black.copy(alpha = 0.8f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            CircularProgressIndicator(color = Color.White)
-                            Text("Preparing story media...", color = Color.White)
+                            CircularProgressIndicator(color = StoryInstagramBlue, strokeWidth = 4.dp, modifier = Modifier.size(56.dp))
+                            Text(
+                                text = "Preparing story media...",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    }
+                }
+
+                if (isPublishing) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.85f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                color = StoryInstagramBlue,
+                                strokeWidth = 4.dp,
+                                modifier = Modifier.size(64.dp)
+                            )
+                            Text(
+                                text = "Uploading story to Cloud...",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            Text(
+                                text = "Please keep the app open while your photo/video is being shared",
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }

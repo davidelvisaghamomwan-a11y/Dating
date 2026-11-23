@@ -1011,6 +1011,77 @@ class SocialAndMediaRepository(
         }
     }
 
+    fun observeVideoPostComments(postId: String, viewerUid: String): Flow<List<FeedComment>> {
+        if (postId.isBlank() || viewerUid.isBlank()) return flowOf(emptyList())
+        val path = "videoPosts/$postId/comments"
+        return flow {
+            emitAll(
+                db.collection("videoPosts")
+                    .document(postId)
+                    .collection("comments")
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(FeedComment::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedBy { it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, path, viewerUid) }
+            )
+        }
+    }
+
+    suspend fun addVideoPostComment(
+        postId: String,
+        authorProfile: PublicProfile?,
+        fallbackName: String?,
+        text: String
+    ): Result<String> {
+        val cleanText = text.trim().take(500)
+        if (cleanText.isBlank()) {
+            return Result.failure(IllegalArgumentException("Comment cannot be empty."))
+        }
+        var docPath = "videoPosts/$postId/comments"
+        return try {
+            val uid = requireUserId()
+            val commentRef = db.collection("videoPosts").document(postId).collection("comments").document()
+            docPath = commentRef.path
+            val payload = mutableMapOf<String, Any>(
+                "postId" to postId,
+                "userId" to uid,
+                "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "authorVerified" to (authorProfile?.isProfileVerified == true),
+                "text" to cleanText,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
+            if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
+                payload["authorPhoto"] = authorPhoto
+            }
+            commentRef.set(payload).await()
+            Result.success(commentRef.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteVideoPostComment(postId: String, commentId: String): Result<Unit> {
+        var docPath = "videoPosts/$postId/comments/$commentId"
+        return try {
+            requireUserId()
+            val commentRef = db.collection("videoPosts").document(postId).collection("comments").document(commentId)
+            docPath = commentRef.path
+            commentRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
     suspend fun publishFeedPost(
         authorProfile: PublicProfile?,
         fallbackName: String?,

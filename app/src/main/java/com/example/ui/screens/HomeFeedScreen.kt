@@ -484,7 +484,7 @@ fun HomeFeedScreen(
                                 )
                                 Text(
                                     text = if (filterMode == FeedFilterMode.FOLLOWING) {
-                                        "Switch to \"For you\" to explore posts from members across Kindred, or add friends below."
+                                        "Switch to \"For you\" to explore posts from members across Kindred, or follow people below."
                                     } else {
                                         "Share photos, videos, and updates with the Kindred community."
                                     },
