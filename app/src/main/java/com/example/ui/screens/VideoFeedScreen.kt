@@ -1,15 +1,21 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.media.MediaPlayer
 import android.net.Uri
 import android.view.ViewGroup
-import android.widget.MediaController
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,36 +28,37 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,13 +69,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.model.FriendStatus
 import com.example.model.VideoPost
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
@@ -90,13 +103,16 @@ fun VideoFeedScreen(
     onDeletePost: (postId: String) -> Unit,
     onOpenAuthorProfile: (String) -> Unit,
     onBack: () -> Unit,
-    onStatusMessage: (String) -> Unit = {}
+    onStatusMessage: (String) -> Unit = {},
+    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
+    onFriendAction: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingUpload by remember { mutableStateOf<PreparedVideoUpload?>(null) }
     var captionDraft by remember { mutableStateOf("") }
     var isPreparing by remember { mutableStateOf(false) }
+    var isMuted by remember { mutableStateOf(false) }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -115,86 +131,149 @@ fun VideoFeedScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Community Video Feed") },
-                navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.testTag("video_feed_back_button")
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    videoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0B0A0E))
+            .testTag("video_feed_screen")
+    ) {
+        when {
+            isPreparing -> {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(color = CoralRose)
+                    Text(
+                        text = "Preparing Reel...",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium
                     )
-                },
-                containerColor = CoralRose,
-                contentColor = Color.White,
-                modifier = Modifier
-                    .navigationBarsPadding()
-                    .testTag("video_feed_upload_fab")
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Post Video")
+                }
             }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .navigationBarsPadding()
-                .testTag("video_feed_screen")
-        ) {
-            if (isPreparing) {
-                CircularProgressIndicator(
-                    color = CoralRose,
-                    modifier = Modifier.align(Alignment.Center)
-                )
-            } else if (videoPosts.isEmpty()) {
+
+            videoPosts.isEmpty() -> {
                 Column(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("No Community Videos Yet", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        text = "Tap + to upload high-resolution clips of any length to the Kindred feed.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Icon(
+                        imageVector = Icons.Filled.Movie,
+                        contentDescription = null,
+                        tint = CoralRose,
+                        modifier = Modifier.size(56.dp)
                     )
+                    Text(
+                        text = "No Reels Yet",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Be the first to share a short video clip on Kindred Reels.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.72f),
+                        textAlign = TextAlign.Center
+                    )
+                    Button(
+                        onClick = {
+                            videoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Create Reel")
+                    }
                 }
-            } else {
-                LazyColumn(
+            }
+
+            else -> {
+                val pagerState = rememberPagerState(pageCount = { videoPosts.size })
+                VerticalPager(
+                    state = pagerState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .widthIn(max = 620.dp)
-                        .align(Alignment.TopCenter),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .testTag("reels_vertical_pager")
+                ) { page ->
+                    val post = videoPosts[page]
+                    val isSettledActive = pagerState.settledPage == page
+                    ReelPageItem(
+                        post = post,
+                        isActive = isSettledActive,
+                        isMuted = isMuted,
+                        currentUserId = currentUserId,
+                        friendStatus = friendStatusForUid(post.userId),
+                        resolveVideoFile = resolveVideoFile,
+                        onToggleMute = { isMuted = !isMuted },
+                        onToggleLike = { onToggleLike(post.id, currentUserId in post.likedByUids) },
+                        onDelete = { onDeletePost(post.id) },
+                        onOpenAuthor = { onOpenAuthorProfile(post.userId) },
+                        onFriendAction = { onFriendAction(post.userId) }
+                    )
+                }
+            }
+        }
+
+        // Floating Overlay Top Bar (Reels title, Back / Upload)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                        .testTag("video_feed_back_button")
                 ) {
-                    items(videoPosts, key = { it.id }) { post ->
-                        VideoPostFeedCard(
-                            post = post,
-                            currentUserId = currentUserId,
-                            resolveVideoFile = resolveVideoFile,
-                            onToggleLike = {
-                                onToggleLike(post.id, currentUserId in post.likedByUids)
-                            },
-                            onDelete = { onDeletePost(post.id) },
-                            onOpenAuthor = { onOpenAuthorProfile(post.userId) }
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
+                Text(
+                    text = "Reels",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = CoralRose,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable {
+                        videoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
                         )
                     }
+                    .testTag("video_feed_upload_fab")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Post Reel", tint = Color.White, modifier = Modifier.size(18.dp))
+                    Text("New Reel", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -206,7 +285,7 @@ fun VideoFeedScreen(
                 pendingUpload = null
                 captionDraft = ""
             },
-            title = { Text("Publish Video Post") },
+            title = { Text("Publish Reel") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -217,7 +296,7 @@ fun VideoFeedScreen(
                     OutlinedTextField(
                         value = captionDraft,
                         onValueChange = { if (it.length <= 240) captionDraft = it },
-                        label = { Text("Caption") },
+                        label = { Text("Caption & #hashtags") },
                         maxLines = 3,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -232,7 +311,7 @@ fun VideoFeedScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
                 ) {
-                    Text("Post Video")
+                    Text("Post Reel")
                 }
             },
             dismissButton = {
@@ -248,46 +327,167 @@ fun VideoFeedScreen(
 }
 
 @Composable
-private fun VideoPostFeedCard(
+private fun ReelPageItem(
     post: VideoPost,
+    isActive: Boolean,
+    isMuted: Boolean,
     currentUserId: String,
+    friendStatus: FriendStatus,
     resolveVideoFile: suspend (VideoPost) -> Result<File>,
+    onToggleMute: () -> Unit,
     onToggleLike: () -> Unit,
     onDelete: () -> Unit,
-    onOpenAuthor: () -> Unit
+    onOpenAuthor: () -> Unit,
+    onFriendAction: () -> Unit
 ) {
-    var playRequested by remember(post.id) { mutableStateOf(false) }
+    val context = LocalContext.current
     var resolvedFile by remember(post.id) { mutableStateOf<File?>(null) }
     var isLoading by remember(post.id) { mutableStateOf(false) }
+    var userPaused by remember(post.id) { mutableStateOf(false) }
+    var mediaPlayerRef by remember(post.id) { mutableStateOf<MediaPlayer?>(null) }
 
-    LaunchedEffect(post.id, playRequested) {
-        if (playRequested && resolvedFile == null && !isLoading) {
+    val shouldPlay = isActive && !userPaused
+
+    LaunchedEffect(post.id, isActive) {
+        if (!isActive) {
+            userPaused = false
+        } else if (resolvedFile == null && !isLoading) {
             isLoading = true
             resolvedFile = resolveVideoFile(post).getOrNull()
             isLoading = false
         }
     }
 
+    LaunchedEffect(isMuted, mediaPlayerRef) {
+        mediaPlayerRef?.let { mp ->
+            runCatching {
+                val vol = if (isMuted) 0f else 1f
+                mp.setVolume(vol, vol)
+            }
+        }
+    }
+
     val isLiked = currentUserId in post.likedByUids
+    val isOwner = post.userId == currentUserId
     val flag = CountryFlagHelper.flagEmojiForCountry(post.authorCountry.orEmpty())
 
-    Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0B0A0E))
+            .pointerInput(post.id) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        if (!isLiked) onToggleLike()
+                    },
+                    onTap = {
+                        userPaused = !userPaused
+                    }
+                )
+            }
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        val file = resolvedFile
+        if (file != null) {
+            AndroidView(
+                factory = { ctx ->
+                    VideoView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        setVideoURI(Uri.fromFile(file))
+                        setOnPreparedListener { mp ->
+                            mediaPlayerRef = mp
+                            mp.isLooping = true
+                            val vol = if (isMuted) 0f else 1f
+                            mp.setVolume(vol, vol)
+                            if (shouldPlay) start()
+                        }
+                    }
+                },
+                update = { vv ->
+                    if (shouldPlay && !vv.isPlaying) {
+                        runCatching { vv.start() }
+                    } else if (!shouldPlay && vv.isPlaying) {
+                        runCatching { vv.pause() }
+                    }
+                },
+                onRelease = {
+                    mediaPlayerRef = null
+                    runCatching { it.stopPlayback() }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            val thumb = remember(post.thumbnailDataUrl) {
+                post.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+            }
+            if (thumb != null) {
+                Image(
+                    bitmap = thumb,
+                    contentDescription = "Reel thumbnail",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            if (isLoading) {
+                CircularProgressIndicator(color = CoralRose, modifier = Modifier.align(Alignment.Center))
+            }
+        }
+
+        // Play/Pause indicator overlay
+        AnimatedVisibility(
+            visible = userPaused && !isLoading,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = Color.Black.copy(alpha = 0.55f),
+                modifier = Modifier.size(68.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        contentDescription = "Paused",
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+            }
+        }
+
+        // Bottom Gradient Scrim for text readability
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(260.dp)
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))
+                    )
+                )
+        )
+
+        // Bottom Left: Author profile, follow button, caption
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth(0.78f)
+                .navigationBarsPadding()
+                .padding(start = 16.dp, bottom = 20.dp, end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(onClick = onOpenAuthor)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.clickable(onClick = onOpenAuthor)
                 ) {
                     ProfileAvatarImage(
                         photoDataUrl = post.authorPhoto,
@@ -303,88 +503,136 @@ private fun VideoPostFeedCard(
                             if (flag.isNotBlank()) append(" $flag")
                         },
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (post.userId == currentUserId) {
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete video post")
-                    }
-                }
-            }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF141118))
-                    .clickable { playRequested = true }
-            ) {
-                val file = resolvedFile
-                if (playRequested && file != null) {
-                    AndroidView(
-                        factory = { ctx ->
-                            VideoView(ctx).apply {
-                                layoutParams = ViewGroup.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT
-                                )
-                                val ctrl = MediaController(ctx).apply { setAnchorView(this@apply) }
-                                setMediaController(ctrl)
-                                setVideoURI(Uri.fromFile(file))
-                                setOnPreparedListener { mp ->
-                                    mp.isLooping = true
-                                    start()
-                                }
-                            }
-                        },
-                        onRelease = { runCatching { it.stopPlayback() } },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    val thumb = remember(post.thumbnailDataUrl) {
-                        post.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                if (!isOwner && friendStatus != FriendStatus.FRIENDS) {
+                    val label = when (friendStatus) {
+                        FriendStatus.NONE -> "Follow"
+                        FriendStatus.OUTGOING_PENDING -> "Sent"
+                        FriendStatus.INCOMING_PENDING -> "Accept"
+                        FriendStatus.FRIENDS -> "Friends"
                     }
-                    if (thumb != null) {
-                        Image(
-                            bitmap = thumb,
-                            contentDescription = "Video thumbnail",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    if (isLoading) {
-                        CircularProgressIndicator(color = CoralRose, modifier = Modifier.align(Alignment.Center))
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.PlayArrow,
-                            contentDescription = "Play video",
-                            tint = Color.White,
-                            modifier = Modifier
-                                .size(54.dp)
-                                .align(Alignment.Center)
-                        )
+                    OutlinedButton(
+                        onClick = onFriendAction,
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.8f)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
 
             if (post.caption.isNotBlank()) {
-                Text(text = post.caption, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = post.caption,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.94f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
+        }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onToggleLike) {
+        // Bottom Right Action Column: Like, Share, Mute/Unmute, Pause/Play, Delete
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 12.dp, bottom = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(
+                    onClick = onToggleLike,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                ) {
                     Icon(
                         imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        contentDescription = "Like video",
-                        tint = if (isLiked) CoralRose else MaterialTheme.colorScheme.onSurfaceVariant
+                        contentDescription = "Like reel",
+                        tint = if (isLiked) CoralRose else Color.White,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
                 Text(
-                    text = "${post.likedByUids.size} likes",
-                    style = MaterialTheme.typography.labelLarge
+                    text = "${post.likedByUids.size}",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
+            }
+
+            IconButton(
+                onClick = {
+                    val sendIntent = Intent().apply {
+                        action = Intent.ACTION_SEND
+                        putExtra(Intent.EXTRA_TEXT, "Watch ${post.authorName}'s Reel on Kindred: ${post.caption}")
+                        type = "text/plain"
+                    }
+                    context.startActivity(Intent.createChooser(sendIntent, "Share Reel"))
+                },
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Share reel",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            IconButton(
+                onClick = onToggleMute,
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            IconButton(
+                onClick = { userPaused = !userPaused },
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = if (userPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    contentDescription = if (userPaused) "Play" else "Pause",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            if (isOwner) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteOutline,
+                        contentDescription = "Delete reel",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
     }

@@ -370,6 +370,17 @@ data class StoryItem(
 
 @Keep
 @IgnoreExtraProperties
+data class StoryHighlight(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val title: String = "Highlight",
+    val coverUrl: String = "",
+    val storyItems: List<StoryItem> = emptyList(),
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@Keep
+@IgnoreExtraProperties
 data class VideoPost(
     @DocumentId val id: String = "",
     val userId: String = "",

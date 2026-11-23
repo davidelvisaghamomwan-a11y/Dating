@@ -105,10 +105,15 @@ import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.ProfileVideoItem
 import com.example.model.PublicProfile
+import com.example.model.StoryHighlight
+import com.example.model.StoryItem
 import com.example.model.VisibilityLevel
 import com.example.notifications.KindredNotificationHelper
 import com.example.ui.components.CountryAndCitySelector
+import com.example.ui.components.CreateHighlightDialog
+import com.example.ui.components.HighlightViewerDialog
 import com.example.ui.components.ProfileAvatarImage
+import com.example.ui.components.StoryHighlightsSection
 import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -174,10 +179,16 @@ fun ProfileScreen(
     onOpenVideoFeed: () -> Unit = {},
     onOpenAdminDashboard: () -> Unit = {},
     onUpdatePrivacy: (hideOnlineStatus: Boolean, photosVis: String, videosVis: String, infoVis: String) -> Unit = { _, _, _, _ -> },
+    highlights: List<StoryHighlight> = emptyList(),
+    archivedStories: List<StoryItem> = emptyList(),
+    onCreateHighlight: (title: String, coverUrl: String, items: List<StoryItem>) -> Unit = { _, _, _ -> },
+    onDeleteHighlight: (String) -> Unit = {},
     onStatusMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var activeHighlightViewer by remember { mutableStateOf<StoryHighlight?>(null) }
+    var showCreateHighlightDialog by remember { mutableStateOf(false) }
     val credentialManager = remember(context) { CredentialManager.create(context) }
     var notificationsEnabled by remember {
         mutableStateOf(KindredNotificationHelper.hasNotificationPermission(context))
@@ -771,6 +782,23 @@ fun ProfileScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
+                }
+            }
+
+            // Story Highlights Card
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                modifier = Modifier.testTag("profile_highlights_card")
+            ) {
+                Box(modifier = Modifier.padding(18.dp)) {
+                    StoryHighlightsSection(
+                        highlights = highlights,
+                        isOwner = true,
+                        onOpenHighlight = { activeHighlightViewer = it },
+                        onOpenCreateHighlight = { showCreateHighlightDialog = true },
+                        onDeleteHighlight = onDeleteHighlight
+                    )
                 }
             }
 
@@ -1458,6 +1486,23 @@ fun ProfileScreen(
                     }
                 ) { Text("Cancel") }
             }
+        )
+    }
+
+    if (activeHighlightViewer != null) {
+        HighlightViewerDialog(
+            highlight = activeHighlightViewer!!,
+            isOwner = true,
+            onDismiss = { activeHighlightViewer = null },
+            onDeleteHighlight = onDeleteHighlight
+        )
+    }
+
+    if (showCreateHighlightDialog) {
+        CreateHighlightDialog(
+            archivedStories = archivedStories,
+            onDismiss = { showCreateHighlightDialog = false },
+            onSaveHighlight = onCreateHighlight
         )
     }
 }

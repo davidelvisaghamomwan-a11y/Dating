@@ -4,7 +4,10 @@
     <string name="sign_in_with_google">Continue with Google</string>
     <string name="create_account_with_google">Create Account with Google</string>
     <string name="signing_in">Signing in...</string>
+    <string name="nav_home">Home</string>
     <string name="nav_discover">Discover</string>
+    <string name="nav_create">Create</string>
+    <string name="nav_reels">Reels</string>
     <string name="nav_matches">Inbox</string>
     <string name="nav_verify">Verify</string>
     <string name="nav_profile">Profile</string>
@@ -53,6 +56,7 @@
     <string name="fcm_calls_channel_name">Incoming Calls</string>
     <string name="fcm_background_channel_name">Background Live Calls</string>
     <string name="fcm_updates_channel_name">App Updates</string>
+    <string name="fcm_social_channel_name">Likes, Comments &amp; Activity</string>
     <string name="btn_enable_notifications">Enable Push Alerts</string>
     <string name="btn_unblock">Unblock</string>
     <string name="settings_title">Dating Preferences</string>

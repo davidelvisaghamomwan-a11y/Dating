@@ -13,6 +13,7 @@ import com.example.model.ProfileVideoItem
 import com.example.model.ProfileViewRecord
 import com.example.model.PublicProfile
 import com.example.model.ReportRecord
+import com.example.model.StoryHighlight
 import com.example.model.StoryItem
 import com.example.model.SwipeRecord
 import com.example.model.UserPresence
@@ -719,6 +720,96 @@ class SocialAndMediaRepository(
         return try {
             requireUserId()
             val ref = db.collection("stories").document(storyId)
+            docPath = ref.path
+            ref.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    // --- Story Highlights & Story Archive ---
+
+    fun observeUserStoriesArchive(userId: String): Flow<List<StoryItem>> {
+        if (userId.isBlank()) return flowOf(emptyList())
+        return flow {
+            emitAll(
+                db.collection("stories")
+                    .whereEqualTo("userId", userId)
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, "stories", userId) }
+            )
+        }
+    }
+
+    fun observeUserHighlights(userId: String): Flow<List<StoryHighlight>> {
+        if (userId.isBlank()) return flowOf(emptyList())
+        return flow {
+            emitAll(
+                db.collection("highlights")
+                    .whereEqualTo("userId", userId)
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(StoryHighlight::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, "highlights", userId) }
+            )
+        }
+    }
+
+    suspend fun createHighlight(
+        title: String,
+        coverUrl: String,
+        storyItems: List<StoryItem>
+    ): Result<String> {
+        var docPath = "highlights"
+        return try {
+            val uid = requireUserId()
+            val ref = db.collection("highlights").document()
+            docPath = ref.path
+            val itemsData = storyItems.take(50).map { s ->
+                mapOf(
+                    "id" to s.id,
+                    "userId" to s.userId,
+                    "authorName" to s.authorName,
+                    "mediaType" to s.mediaType,
+                    "mediaDataUrl" to (s.mediaDataUrl ?: ""),
+                    "thumbnailDataUrl" to (s.thumbnailDataUrl ?: ""),
+                    "caption" to (s.caption ?: ""),
+                    "mediaDurationSec" to s.mediaDurationSec,
+                    "expiresAtMs" to s.expiresAtMs
+                )
+            }
+            val payload = mutableMapOf<String, Any>(
+                "userId" to uid,
+                "title" to title.trim().ifBlank { "Highlight" }.take(40),
+                "coverUrl" to coverUrl.trim().take(180_000),
+                "storyItems" to itemsData,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            ref.set(payload).await()
+            Result.success(ref.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteHighlight(highlightId: String): Result<Unit> {
+        var docPath = "highlights/$highlightId"
+        return try {
+            requireUserId()
+            val ref = db.collection("highlights").document(highlightId)
             docPath = ref.path
             ref.delete().await()
             Result.success(Unit)

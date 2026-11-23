@@ -10,17 +10,38 @@ import android.util.Log
 import com.example.R
 import com.example.communication.CallRingtoneController
 import com.example.model.CallSession
+import com.example.model.FeedComment
+import com.example.model.FeedPost
 import com.example.model.MatchRecord
+import com.example.model.ProfileLikeRecord
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 
 class KindredBackgroundService : Service() {
     private var matchesRegistration: ListenerRegistration? = null
+    private var myPostsRegistration: ListenerRegistration? = null
+    private var profileLikesRegistration: ListenerRegistration? = null
+
     private val callRegistrations = mutableMapOf<String, ListenerRegistration>()
+    private val commentRegistrations = mutableMapOf<String, ListenerRegistration>()
+
     private val activeRingingCallIds = mutableSetOf<String>()
+    private val knownLastMessageMs = mutableMapOf<String, Long>()
+    private var matchesInitialized = false
+
+    private val knownPostLikes = mutableMapOf<String, Set<String>>()
+    private var postsInitialized = false
+
+    private val initializedCommentPosts = mutableSetOf<String>()
+    private val seenCommentIds = mutableSetOf<String>()
+
+    private val seenProfileLikeIds = mutableSetOf<String>()
+    private var profileLikesInitialized = false
+
     private var ringtoneController: CallRingtoneController? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -43,7 +64,7 @@ class KindredBackgroundService : Service() {
                 )
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Unable to elevate background call listener to foreground", e)
+            Log.w(TAG, "Unable to elevate background sync listener to foreground", e)
             stopSelf()
             return
         }
@@ -65,43 +86,241 @@ class KindredBackgroundService : Service() {
     }
 
     private fun attachFirestoreListeners(uid: String) {
-        if (matchesRegistration != null) return
         val dbId = getString(R.string.firestore_database_id)
         val db = runCatching { FirebaseFirestore.getInstance(dbId) }.getOrNull() ?: return
 
-        matchesRegistration = db.collection("matches")
-            .whereArrayContains("participantUids", uid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.w(TAG, "Background matches listener error", error)
-                    return@addSnapshotListener
-                }
-                val matchIds = snapshot?.documents?.mapNotNull { doc ->
-                    doc.toObject(MatchRecord::class.java)?.id?.ifBlank { doc.id } ?: doc.id
-                }?.toSet().orEmpty()
+        // 1. Real-time Matches -> Direct Messages & Calls
+        if (matchesRegistration == null) {
+            matchesRegistration = db.collection("matches")
+                .whereArrayContains("participantUids", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Background matches listener error", error)
+                        return@addSnapshotListener
+                    }
+                    val records = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(MatchRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+                    }.orEmpty()
 
-                val removed = callRegistrations.keys - matchIds
-                removed.forEach { oldId ->
-                    callRegistrations.remove(oldId)?.remove()
-                }
+                    handleMatchMessagesUpdate(db, uid, records)
 
-                matchIds.forEach { matchId ->
-                    if (matchId !in callRegistrations) {
-                        callRegistrations[matchId] = db.collection("matches")
-                            .document(matchId)
-                            .collection("calls")
-                            .addSnapshotListener { callSnap, callErr ->
-                                if (callErr != null) {
-                                    Log.w(TAG, "Background call listener error for $matchId", callErr)
-                                    return@addSnapshotListener
+                    val matchIds = records.map { it.id }.toSet()
+                    val removed = callRegistrations.keys - matchIds
+                    removed.forEach { oldId ->
+                        callRegistrations.remove(oldId)?.remove()
+                    }
+
+                    matchIds.forEach { matchId ->
+                        if (matchId !in callRegistrations) {
+                            callRegistrations[matchId] = db.collection("matches")
+                                .document(matchId)
+                                .collection("calls")
+                                .addSnapshotListener { callSnap, callErr ->
+                                    if (callErr != null) {
+                                        Log.w(TAG, "Background call listener error for $matchId", callErr)
+                                        return@addSnapshotListener
+                                    }
+                                    val sessions = callSnap?.documents?.mapNotNull { doc ->
+                                        doc.toObject(CallSession::class.java)?.copy(id = doc.id)
+                                    }.orEmpty()
+                                    handleCallSessionsUpdate(db, uid, matchId, sessions)
                                 }
-                                val sessions = callSnap?.documents?.mapNotNull { doc ->
-                                    doc.toObject(CallSession::class.java)?.copy(id = doc.id)
-                                }.orEmpty()
-                                handleCallSessionsUpdate(db, uid, matchId, sessions)
-                            }
+                        }
                     }
                 }
+        }
+
+        // 2. Real-time Likes & Comments on Current User's Posts
+        if (myPostsRegistration == null) {
+            myPostsRegistration = db.collection("feedPosts")
+                .whereEqualTo("userId", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Background posts listener error", error)
+                        return@addSnapshotListener
+                    }
+                    val myPosts = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(FeedPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+                    }.orEmpty()
+
+                    handleMyPostsLikesUpdate(db, uid, myPosts)
+                    syncPostCommentsListeners(db, uid, myPosts)
+                }
+        }
+
+        // 3. Real-time Profile Likes
+        if (profileLikesRegistration == null) {
+            profileLikesRegistration = db.collection("profileLikes")
+                .whereEqualTo("toUid", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Background profile likes listener error", error)
+                        return@addSnapshotListener
+                    }
+                    val likes = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(ProfileLikeRecord::class.java)
+                            ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+                    }.orEmpty()
+
+                    if (!profileLikesInitialized) {
+                        likes.forEach { seenProfileLikeIds += it.id }
+                        profileLikesInitialized = true
+                        return@addSnapshotListener
+                    }
+
+                    likes.forEach { like ->
+                        if (seenProfileLikeIds.add(like.id) && like.fromUid != uid) {
+                            resolveDisplayName(db, like.fromUid, "Kindred Member") { likerName ->
+                                KindredNotificationHelper.showSocialNotification(
+                                    context = this,
+                                    title = "Someone Likes You!",
+                                    body = "$likerName liked your Kindred profile.",
+                                    notificationType = KindredNotificationHelper.TYPE_PROFILE_LIKE,
+                                    tagKey = "plike_${like.fromUid}"
+                                )
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun handleMatchMessagesUpdate(
+        db: FirebaseFirestore,
+        uid: String,
+        records: List<MatchRecord>
+    ) {
+        if (!matchesInitialized) {
+            records.forEach { m ->
+                knownLastMessageMs[m.id] = m.lastMessageAt?.toDate()?.time ?: 0L
+            }
+            matchesInitialized = true
+            return
+        }
+
+        records.forEach { match ->
+            val msgMs = match.lastMessageAt?.toDate()?.time ?: 0L
+            val prevMs = knownLastMessageMs[match.id] ?: 0L
+            if (msgMs > prevMs) {
+                knownLastMessageMs[match.id] = msgMs
+                val senderId = match.lastMessageSenderId
+                if (!senderId.isNullOrBlank() &&
+                    senderId != uid &&
+                    !KindredNotificationHelper.shouldSuppressForegroundMessageNotification(match.id)
+                ) {
+                    val previewText = match.lastMessageText?.takeIf { it.isNotBlank() } ?: "Sent you a new message"
+                    resolveDisplayName(db, senderId, "Kindred Match") { senderName ->
+                        KindredNotificationHelper.showMessageNotification(
+                            context = this,
+                            matchId = match.id,
+                            senderName = senderName,
+                            messageText = previewText
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleMyPostsLikesUpdate(
+        db: FirebaseFirestore,
+        uid: String,
+        myPosts: List<FeedPost>
+    ) {
+        if (!postsInitialized) {
+            myPosts.forEach { post ->
+                knownPostLikes[post.id] = post.likedByUids.toSet()
+            }
+            postsInitialized = true
+            return
+        }
+
+        myPosts.forEach { post ->
+            val prevLikes = knownPostLikes[post.id]
+            val currentLikes = post.likedByUids.toSet()
+            knownPostLikes[post.id] = currentLikes
+
+            if (prevLikes != null) {
+                val newlyAdded = (currentLikes - prevLikes).filter { it != uid }
+                newlyAdded.forEach { likerUid ->
+                    resolveDisplayName(db, likerUid, "Kindred Member") { likerName ->
+                        KindredNotificationHelper.showPostLikeNotification(
+                            context = this,
+                            postId = post.id,
+                            likerName = likerName,
+                            postPreview = post.caption
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun syncPostCommentsListeners(
+        db: FirebaseFirestore,
+        uid: String,
+        myPosts: List<FeedPost>
+    ) {
+        // Track comments on the 15 most recent posts to stay lightweight
+        val trackedPostIds = myPosts.take(15).map { it.id }.toSet()
+        val removed = commentRegistrations.keys - trackedPostIds
+        removed.forEach { oldPostId ->
+            commentRegistrations.remove(oldPostId)?.remove()
+            initializedCommentPosts.remove(oldPostId)
+        }
+
+        trackedPostIds.forEach { postId ->
+            if (postId !in commentRegistrations) {
+                commentRegistrations[postId] = db.collection("feedPosts")
+                    .document(postId)
+                    .collection("comments")
+                    .addSnapshotListener { commentSnap, commentErr ->
+                        if (commentErr != null) {
+                            Log.w(TAG, "Background comments listener error for $postId", commentErr)
+                            return@addSnapshotListener
+                        }
+                        val comments = commentSnap?.documents?.mapNotNull { doc ->
+                            doc.toObject(FeedComment::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                                ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+                        }.orEmpty()
+
+                        if (postId !in initializedCommentPosts) {
+                            comments.forEach { seenCommentIds += it.id }
+                            initializedCommentPosts += postId
+                            return@addSnapshotListener
+                        }
+
+                        comments.forEach { comment ->
+                            if (seenCommentIds.add(comment.id) && comment.userId != uid) {
+                                val commenterName = comment.authorName.ifBlank { "Kindred Member" }
+                                KindredNotificationHelper.showPostCommentNotification(
+                                    context = this,
+                                    postId = postId,
+                                    commenterName = commenterName,
+                                    commentText = comment.text
+                                )
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    private fun resolveDisplayName(
+        db: FirebaseFirestore,
+        targetUid: String,
+        fallback: String,
+        onResolved: (String) -> Unit
+    ) {
+        db.collection("publicProfiles").document(targetUid).get()
+            .addOnSuccessListener { snap ->
+                val name = snap.getString("displayName")?.takeIf { it.isNotBlank() } ?: fallback
+                onResolved(name)
+            }
+            .addOnFailureListener {
+                onResolved(fallback)
             }
     }
 
@@ -125,30 +344,18 @@ class KindredBackgroundService : Service() {
 
         ringingForMe.forEach { session ->
             if (activeRingingCallIds.add(session.id)) {
-                db.collection("publicProfiles").document(session.callerUid).get()
-                    .addOnSuccessListener { snap ->
-                        val callerName = snap.getString("displayName")?.takeIf { it.isNotBlank() }
-                            ?: "Kindred Match"
-                        KindredNotificationHelper.showIncomingCallNotification(
-                            context = this,
-                            matchId = matchId,
-                            callId = session.id,
-                            callerName = callerName,
-                            callType = session.callType
-                        )
-                        if (KindredNotificationHelper.activeMatchIdInForeground != matchId) {
-                            ringtoneController?.startIncomingRing()
-                        }
+                resolveDisplayName(db, session.callerUid, "Kindred Match") { callerName ->
+                    KindredNotificationHelper.showIncomingCallNotification(
+                        context = this,
+                        matchId = matchId,
+                        callId = session.id,
+                        callerName = callerName,
+                        callType = session.callType
+                    )
+                    if (KindredNotificationHelper.activeMatchIdInForeground != matchId) {
+                        ringtoneController?.startIncomingRing()
                     }
-                    .addOnFailureListener {
-                        KindredNotificationHelper.showIncomingCallNotification(
-                            context = this,
-                            matchId = matchId,
-                            callId = session.id,
-                            callerName = "Kindred Match",
-                            callType = session.callType
-                        )
-                    }
+                }
             }
         }
     }
@@ -156,9 +363,20 @@ class KindredBackgroundService : Service() {
     override fun onDestroy() {
         matchesRegistration?.remove()
         matchesRegistration = null
+        myPostsRegistration?.remove()
+        myPostsRegistration = null
+        profileLikesRegistration?.remove()
+        profileLikesRegistration = null
         callRegistrations.values.forEach { it.remove() }
         callRegistrations.clear()
+        commentRegistrations.values.forEach { it.remove() }
+        commentRegistrations.clear()
         activeRingingCallIds.clear()
+        knownLastMessageMs.clear()
+        knownPostLikes.clear()
+        initializedCommentPosts.clear()
+        seenCommentIds.clear()
+        seenProfileLikeIds.clear()
         ringtoneController?.release()
         ringtoneController = null
         super.onDestroy()

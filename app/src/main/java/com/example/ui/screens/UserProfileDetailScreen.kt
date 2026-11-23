@@ -77,11 +77,14 @@ import androidx.compose.ui.unit.dp
 import com.example.model.FriendStatus
 import com.example.model.ProfileVideoItem
 import com.example.model.PublicProfile
+import com.example.model.StoryHighlight
 import com.example.model.UserPresence
 import com.example.model.VisibilityLevel
+import com.example.ui.components.HighlightViewerDialog
 import com.example.ui.components.PartnerPhotoGalleryDialog
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.ReportUserDialog
+import com.example.ui.components.StoryHighlightsSection
 import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -117,9 +120,11 @@ fun UserProfileDetailScreen(
     onToggleFavorite: () -> Unit,
     onReportUser: (reason: String, details: String, alsoBlock: Boolean) -> Unit,
     onBlockUser: () -> Unit,
-    onUnblockUser: () -> Unit
+    onUnblockUser: () -> Unit,
+    highlights: List<StoryHighlight> = emptyList()
 ) {
     val isOwner = profile.userId == currentUserId
+    var activeHighlightViewer by remember { mutableStateOf<StoryHighlight?>(null) }
     val isFriend = friendStatus == FriendStatus.FRIENDS
     val canSeePhotos = ProfileCompletionUtils.canViewerSeeSection(profile.photosVisibility, isOwner, isFriend, isMatched)
     val canSeeVideos = ProfileCompletionUtils.canViewerSeeSection(profile.videosVisibility, isOwner, isFriend, isMatched)
@@ -403,6 +408,21 @@ fun UserProfileDetailScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                if (highlights.isNotEmpty()) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+                    ) {
+                        Box(modifier = Modifier.padding(18.dp)) {
+                            StoryHighlightsSection(
+                                highlights = highlights,
+                                isOwner = isOwner,
+                                onOpenHighlight = { activeHighlightViewer = it }
+                            )
                         }
                     }
                 }
@@ -708,6 +728,14 @@ fun UserProfileDetailScreen(
             dismissButton = {
                 TextButton(onClick = { showBlockDialog = false }) { Text("Cancel") }
             }
+        )
+    }
+
+    if (activeHighlightViewer != null) {
+        HighlightViewerDialog(
+            highlight = activeHighlightViewer!!,
+            isOwner = isOwner,
+            onDismiss = { activeHighlightViewer = null }
         )
     }
 }

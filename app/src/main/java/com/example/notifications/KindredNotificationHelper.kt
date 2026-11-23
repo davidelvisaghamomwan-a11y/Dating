@@ -23,6 +23,7 @@ object KindredNotificationHelper {
     const val CHANNEL_CALLS = "kindred_calls"
     const val CHANNEL_BACKGROUND_SERVICE = "kindred_background_sync"
     const val CHANNEL_APP_UPDATES = "kindred_app_updates"
+    const val CHANNEL_SOCIAL = "kindred_social"
 
     const val TYPE_NEW_MATCH = "NEW_MATCH"
     const val TYPE_NEW_MESSAGE = "NEW_MESSAGE"
@@ -30,9 +31,12 @@ object KindredNotificationHelper {
     const val TYPE_APP_UPDATE = "APP_UPDATE"
     const val TYPE_FRIEND_REQUEST = "FRIEND_REQUEST"
     const val TYPE_PROFILE_LIKE = "PROFILE_LIKE"
+    const val TYPE_POST_LIKE = "POST_LIKE"
+    const val TYPE_POST_COMMENT = "POST_COMMENT"
 
     const val EXTRA_MATCH_ID = "extra_match_id"
     const val EXTRA_CALL_ID = "extra_call_id"
+    const val EXTRA_POST_ID = "extra_post_id"
     const val EXTRA_NOTIFICATION_TYPE = "extra_notification_type"
 
     const val NOTIFICATION_ID_BACKGROUND_SERVICE = 4201
@@ -106,11 +110,21 @@ object KindredNotificationHelper {
             description = "Alerts when a new Kindred APK release is published on GitHub"
         }
 
+        val socialChannel = NotificationChannel(
+            CHANNEL_SOCIAL,
+            context.getString(R.string.fcm_social_channel_name),
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Real-time alerts for post likes, comments, friend requests, and profile likes"
+            enableVibration(true)
+        }
+
         manager.createNotificationChannel(matchesChannel)
         manager.createNotificationChannel(messagesChannel)
         manager.createNotificationChannel(callsChannel)
         manager.createNotificationChannel(backgroundChannel)
         manager.createNotificationChannel(updatesChannel)
+        manager.createNotificationChannel(socialChannel)
     }
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -128,7 +142,8 @@ object KindredNotificationHelper {
         context: Context,
         matchId: String?,
         notificationType: String,
-        callId: String? = null
+        callId: String? = null,
+        postId: String? = null
     ): Intent {
         return Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -137,6 +152,9 @@ object KindredNotificationHelper {
             }
             if (!callId.isNullOrBlank()) {
                 putExtra(EXTRA_CALL_ID, callId)
+            }
+            if (!postId.isNullOrBlank()) {
+                putExtra(EXTRA_POST_ID, postId)
             }
             putExtra(EXTRA_NOTIFICATION_TYPE, notificationType)
         }
@@ -215,12 +233,18 @@ object KindredNotificationHelper {
         title: String,
         body: String,
         notificationType: String,
-        tagKey: String
+        tagKey: String,
+        postId: String? = null
     ) {
         if (!hasNotificationPermission(context)) return
         ensureChannels(context)
 
-        val contentIntent = buildLaunchIntent(context, null, notificationType)
+        val contentIntent = buildLaunchIntent(
+            context = context,
+            matchId = null,
+            notificationType = notificationType,
+            postId = postId
+        )
         val pendingIntent = PendingIntent.getActivity(
             context,
             ("social_$tagKey").hashCode(),
@@ -228,7 +252,7 @@ object KindredNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_MATCHES)
+        val notification = NotificationCompat.Builder(context, CHANNEL_SOCIAL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(body)
@@ -242,6 +266,44 @@ object KindredNotificationHelper {
             context = context,
             notificationId = ("social_$tagKey").hashCode(),
             notification = notification
+        )
+    }
+
+    fun showPostLikeNotification(
+        context: Context,
+        postId: String?,
+        likerName: String,
+        postPreview: String = ""
+    ) {
+        val body = if (postPreview.isNotBlank()) {
+            "$likerName liked your post: \"${postPreview.take(60)}\""
+        } else {
+            "$likerName liked your post on Kindred"
+        }
+        showSocialNotification(
+            context = context,
+            title = "New Like on Your Post",
+            body = body,
+            notificationType = TYPE_POST_LIKE,
+            tagKey = "plike_${postId ?: "p"}_$likerName",
+            postId = postId
+        )
+    }
+
+    fun showPostCommentNotification(
+        context: Context,
+        postId: String?,
+        commenterName: String,
+        commentText: String
+    ) {
+        val cleanComment = commentText.trim().take(120).ifBlank { "Left a comment on your post" }
+        showSocialNotification(
+            context = context,
+            title = "$commenterName commented on your post",
+            body = cleanComment,
+            notificationType = TYPE_POST_COMMENT,
+            tagKey = "pcomment_${postId ?: "p"}_${commenterName}_${cleanComment.hashCode()}",
+            postId = postId
         )
     }
 
@@ -328,8 +390,8 @@ object KindredNotificationHelper {
         )
         return NotificationCompat.Builder(context, CHANNEL_BACKGROUND_SERVICE)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Kindred background sync active")
-            .setContentText("Listening for instant incoming calls and live messages")
+            .setContentTitle("Kindred real-time sync active")
+            .setContentText("Listening for live messages, likes, comments & calls")
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setSilent(true)

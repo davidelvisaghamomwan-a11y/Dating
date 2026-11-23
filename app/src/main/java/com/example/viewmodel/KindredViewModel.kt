@@ -31,6 +31,7 @@ import com.example.model.ProfileVideoItem
 import com.example.model.ProfileViewRecord
 import com.example.model.PublicProfile
 import com.example.model.ReportRecord
+import com.example.model.StoryHighlight
 import com.example.model.StoryItem
 import com.example.model.SuggestedFriendItem
 import com.example.model.SwipeRecord
@@ -2027,6 +2028,40 @@ class KindredViewModel(
             chunkCount = story.chunkCount,
             chunksCollection = socialRepo.storyChunksRef(story.id)
         )
+    }
+
+    // --- Story Highlights & Story Archive ---
+
+    fun observeUserHighlights(userId: String): Flow<List<StoryHighlight>> =
+        socialRepo.observeUserHighlights(userId)
+
+    fun observeUserStoriesArchive(userId: String): Flow<List<StoryItem>> =
+        socialRepo.observeUserStoriesArchive(userId)
+
+    fun createStoryHighlight(
+        title: String,
+        coverUrl: String,
+        items: List<StoryItem>,
+        onDone: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val res = socialRepo.createHighlight(title, coverUrl, items)
+            res.onSuccess {
+                _actionStatusMessage.value = "Highlight created"
+                onDone(true)
+            }.onFailure { err ->
+                _actionStatusMessage.value = err.localizedMessage ?: "Could not create highlight"
+                onDone(false)
+            }
+        }
+    }
+
+    fun deleteStoryHighlight(highlightId: String) {
+        viewModelScope.launch {
+            socialRepo.deleteHighlight(highlightId)
+                .onSuccess { _actionStatusMessage.value = "Highlight removed" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not remove highlight" }
+        }
     }
 
     // --- Video Feed ---

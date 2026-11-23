@@ -976,7 +976,30 @@ service cloud.firestore {
       }
     }
 
-    // 16. Video Feed Posts (/videoPosts/{postId} + mediaChunks)
+    // 16. Story Highlights (/highlights/{highlightId})
+    match /highlights/{highlightId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(highlightId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 40 &&
+                       (!('coverUrl' in incoming()) || (incoming().coverUrl is string && incoming().coverUrl.size() <= 180000)) &&
+                       (!('storyItems' in incoming()) || (incoming().storyItems is list && incoming().storyItems.size() <= 100)) &&
+                       incoming().keys().hasAll(['userId', 'title', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'title', 'coverUrl', 'storyItems', 'createdAt']) &&
+                       isValidTimestamp(incoming().createdAt);
+
+      allow update: if isSignedIn() &&
+                       isValidId(highlightId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (isOwner(existing().userId) || isAdmin());
+
+      allow delete: if isSignedIn() && isValidId(highlightId) && (isOwner(existing().userId) || isAdmin());
+    }
+
+    // 17. Video Feed Posts (/videoPosts/{postId} + mediaChunks)
     match /videoPosts/{postId} {
       allow get, list: if isSignedIn();
 

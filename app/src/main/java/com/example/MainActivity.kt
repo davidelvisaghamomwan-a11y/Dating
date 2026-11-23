@@ -24,13 +24,19 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddBox
 import androidx.compose.material.icons.filled.ChatBubble
-import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -90,9 +96,9 @@ import com.example.notifications.KindredBackgroundService
 import com.example.notifications.KindredNotificationHelper
 import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
+import com.example.ui.components.CreatePostComposerSheet
 import com.example.ui.components.FullscreenIncomingCallDialog
 import com.example.ui.components.InAppCallOverlay
-import com.example.ui.components.LocationVerificationGate
 import com.example.ui.components.NewMatchCelebrationDialog
 import com.example.ui.components.ProfileSearchSheet
 import com.example.ui.screens.ActiveUsersScreen
@@ -156,24 +162,31 @@ private data class NavTabItem(
 private val NAV_TABS = listOf(
     NavTabItem(
         route = ROUTE_DISCOVER,
+        labelRes = R.string.nav_home,
+        selectedIcon = Icons.Filled.Home,
+        unselectedIcon = Icons.Outlined.Home,
+        testTag = "nav_home_tab"
+    ),
+    NavTabItem(
+        route = ROUTE_ACTIVE_USERS,
         labelRes = R.string.nav_discover,
-        selectedIcon = Icons.Filled.Explore,
-        unselectedIcon = Icons.Outlined.Explore,
+        selectedIcon = Icons.Filled.Search,
+        unselectedIcon = Icons.Outlined.Search,
         testTag = "nav_discover_tab"
     ),
     NavTabItem(
-        route = ROUTE_MATCHES,
-        labelRes = R.string.nav_matches,
-        selectedIcon = Icons.Filled.ChatBubble,
-        unselectedIcon = Icons.Outlined.ChatBubbleOutline,
-        testTag = "nav_matches_tab"
+        route = "create",
+        labelRes = R.string.nav_create,
+        selectedIcon = Icons.Filled.AddBox,
+        unselectedIcon = Icons.Outlined.AddBox,
+        testTag = "nav_create_tab"
     ),
     NavTabItem(
-        route = ROUTE_VERIFY,
-        labelRes = R.string.nav_verify,
-        selectedIcon = Icons.Filled.VerifiedUser,
-        unselectedIcon = Icons.Outlined.VerifiedUser,
-        testTag = "nav_verify_tab"
+        route = ROUTE_VIDEO_FEED,
+        labelRes = R.string.nav_reels,
+        selectedIcon = Icons.Filled.Movie,
+        unselectedIcon = Icons.Outlined.Movie,
+        testTag = "nav_reels_tab"
     ),
     NavTabItem(
         route = ROUTE_PROFILE,
@@ -330,11 +343,18 @@ private fun MainKindredApp(
     val favoritesState by viewModel.favoritesState.collectAsStateWithLifecycle()
     val activeStoriesState by viewModel.activeStoriesState.collectAsStateWithLifecycle()
     val videoFeedState by viewModel.videoFeedState.collectAsStateWithLifecycle()
-    val friendsFeedPostsState by viewModel.friendsFeedPostsState.collectAsStateWithLifecycle()
+    val feedPostsState by viewModel.feedPostsState.collectAsStateWithLifecycle()
     val isFeedRefreshing by viewModel.isFeedRefreshing.collectAsStateWithLifecycle()
     val myShowcaseVideos by remember(user.uid) {
         viewModel.observeUserVideos(user.uid)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val myHighlights by remember(user.uid) {
+        viewModel.observeUserHighlights(user.uid)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val myStoryArchive by remember(user.uid) {
+        viewModel.observeUserStoriesArchive(user.uid)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    var showGlobalCreatePostSheet by remember { mutableStateOf(false) }
     val isAdminUser by viewModel.isAdminUser.collectAsStateWithLifecycle()
     val adminReportsState by viewModel.adminReportsState.collectAsStateWithLifecycle()
     val adminAllProfilesState by viewModel.adminAllProfilesState.collectAsStateWithLifecycle()
@@ -359,13 +379,6 @@ private fun MainKindredApp(
     }
 
     val incomingRingController = remember(context) { CallRingtoneController(context.applicationContext) }
-
-    val locationGateLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
-        isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
-    }
 
     DisposableEffect(user.uid) {
         onDispose {
@@ -573,6 +586,10 @@ private fun MainKindredApp(
     }
 
     fun navigateToTab(route: String) {
+        if (route == "create") {
+            showGlobalCreatePostSheet = true
+            return
+        }
         navController.navigate(route) {
             popUpTo(navController.graph.findStartDestination().id) {
                 saveState = true
@@ -589,28 +606,6 @@ private fun MainKindredApp(
             navigateToTab(ROUTE_MATCHES)
             onConsumeDeepLink()
         }
-    }
-
-    if (!hasLocationPermission || !isLocationEnabled) {
-        LocationVerificationGate(
-            hasPermission = hasLocationPermission,
-            isLocationEnabled = isLocationEnabled,
-            onRequestPermission = {
-                locationGateLauncher.launch(
-                    arrayOf(
-                        Manifest.permission.ACCESS_COARSE_LOCATION,
-                        Manifest.permission.ACCESS_FINE_LOCATION
-                    )
-                )
-            },
-            onOpenAppSettings = {
-                runCatching { context.startActivity(LocationAndGeoHelper.buildAppSettingsIntent(context)) }
-            },
-            onOpenLocationSettings = {
-                runCatching { context.startActivity(LocationAndGeoHelper.buildLocationSettingsIntent()) }
-            }
-        )
-        return
     }
 
     val successData = (dashboardState as? UiState.Success)?.data
@@ -712,8 +707,6 @@ private fun MainKindredApp(
             isInFullScreenChat ||
                 currentRoute == ROUTE_EDIT_PROFILE ||
                 currentRoute == ROUTE_SETTINGS ||
-                currentRoute == ROUTE_ACTIVE_USERS ||
-                currentRoute == ROUTE_VIDEO_FEED ||
                 currentRoute == ROUTE_WHO_LIKES_ME ||
                 currentRoute == ROUTE_FRIENDS_HUB ||
                 currentRoute == ROUTE_ADMIN_DASHBOARD ||
@@ -937,7 +930,7 @@ private fun MainKindredApp(
                                             }
                                         },
                                         suggestedProfiles = data.searchableProfiles,
-                                        feedPosts = friendsFeedPostsState,
+                                        feedPosts = feedPostsState,
                                         currentUserId = viewModel.currentUserId,
                                         friendStatusForUid = { uid -> friendStatusForUid(uid) },
                                         onFriendAction = { profile ->
@@ -949,11 +942,14 @@ private fun MainKindredApp(
                                         onOpenUserProfileById = { uid ->
                                             openUserProfileRoute(uid)
                                         },
-                                        onPublishFeedPost = { caption, photoDataUrl, preparedVideo, onDone ->
-                                            viewModel.publishFeedPost(caption, photoDataUrl, preparedVideo, onDone)
+                                        onPublishFeedPost = { caption, photoDataUrl, photoUrls, preparedVideo, onDone ->
+                                            viewModel.publishFeedPost(caption, photoDataUrl, photoUrls, preparedVideo, onDone)
                                         },
                                         onToggleFeedPostLike = { postId, currentlyLiked ->
                                             viewModel.toggleFeedPostLike(postId, currentlyLiked)
+                                        },
+                                        onToggleFeedPostSave = { postId, currentlySaved ->
+                                            viewModel.toggleFeedPostSave(postId, currentlySaved)
                                         },
                                         observeFeedComments = { postId ->
                                             viewModel.observeFeedComments(postId)
@@ -969,6 +965,24 @@ private fun MainKindredApp(
                                         },
                                         resolveFeedPostVideoFile = { post ->
                                             viewModel.resolveFeedPostVideoFile(context, post)
+                                        },
+                                        isFeedRefreshing = isFeedRefreshing,
+                                        onRefreshFeed = {
+                                            viewModel.refreshFeed()
+                                        },
+                                        unreadMessageCount = unreadInboxCount,
+                                        incomingNotificationCount = incomingFriendRequestCount + profileLikesState.size,
+                                        friendRequests = friendRequestsState,
+                                        profileLikes = profileLikesState,
+                                        profilesByUid = profilesByUid,
+                                        onAcceptFriendRequest = { fromUid ->
+                                            viewModel.acceptFriendRequest(fromUid)
+                                        },
+                                        onRejectFriendRequest = { fromUid ->
+                                            viewModel.rejectFriendRequest(fromUid)
+                                        },
+                                        onNavigateToInbox = {
+                                            navigateToTab(ROUTE_MATCHES)
                                         }
                                     )
                                 }
@@ -1228,6 +1242,14 @@ private fun MainKindredApp(
                                                 infoVisibility = infoVis
                                             )
                                         },
+                                        highlights = myHighlights,
+                                        archivedStories = myStoryArchive,
+                                        onCreateHighlight = { title, coverUrl, items ->
+                                            viewModel.createStoryHighlight(title, coverUrl, items)
+                                        },
+                                        onDeleteHighlight = { highlightId ->
+                                            viewModel.deleteStoryHighlight(highlightId)
+                                        },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         }
@@ -1334,6 +1356,9 @@ private fun MainKindredApp(
                                     val targetVideos by remember(targetUid) {
                                         viewModel.observeUserVideos(targetUid)
                                     }.collectAsStateWithLifecycle(initialValue = emptyList())
+                                    val targetHighlights by remember(targetUid) {
+                                        viewModel.observeUserHighlights(targetUid)
+                                    }.collectAsStateWithLifecycle(initialValue = emptyList())
                                     val targetFriendIds = remember(friendshipsState, targetUid) {
                                         friendshipsState
                                             .filter { targetUid in it.participantUids }
@@ -1415,14 +1440,19 @@ private fun MainKindredApp(
                                         },
                                         onUnblockUser = {
                                             viewModel.unblockUser(targetUid)
-                                        }
+                                        },
+                                        highlights = targetHighlights
                                     )
                                 }
 
                                 composable(ROUTE_ACTIVE_USERS) {
                                     ActiveUsersScreen(
                                         activeMembers = activeMembersState,
-                                        onBack = { navController.popBackStack() },
+                                        onBack = {
+                                            if (!navController.popBackStack()) {
+                                                navigateToTab(ROUTE_DISCOVER)
+                                            }
+                                        },
                                         onOpenProfile = { memberProfile ->
                                             openUserProfileRoute(memberProfile.userId)
                                         },
@@ -1453,9 +1483,17 @@ private fun MainKindredApp(
                                         onOpenAuthorProfile = { authorUid ->
                                             openUserProfileRoute(authorUid)
                                         },
-                                        onBack = { navController.popBackStack() },
+                                        onBack = {
+                                            if (!navController.popBackStack()) {
+                                                navigateToTab(ROUTE_DISCOVER)
+                                            }
+                                        },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
+                                        },
+                                        friendStatusForUid = { uid -> friendStatusForUid(uid) },
+                                        onFriendAction = { uid ->
+                                            handleFriendAction(uid, friendStatusForUid(uid))
                                         }
                                     )
                                 }
@@ -1573,6 +1611,15 @@ private fun MainKindredApp(
                                         openUserProfileRoute(targetProfile.userId)
                                     },
                                     onDismiss = { showSearchSheet = false }
+                                )
+                            }
+                            if (showGlobalCreatePostSheet) {
+                                CreatePostComposerSheet(
+                                    myProfile = data.myProfile,
+                                    onDismiss = { showGlobalCreatePostSheet = false },
+                                    onPublish = { caption, photoDataUrl, photoUrls, video ->
+                                        viewModel.publishFeedPost(caption, photoDataUrl, photoUrls, video) {}
+                                    }
                                 )
                             }
                         }

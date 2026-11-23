@@ -107,6 +107,26 @@ class KindredMessagingService : FirebaseMessagingService() {
                 )
             }
 
+            KindredNotificationHelper.TYPE_POST_LIKE -> {
+                val postId = data["postId"]
+                KindredNotificationHelper.showPostLikeNotification(
+                    context = applicationContext,
+                    postId = postId,
+                    likerName = senderName,
+                    postPreview = body.orEmpty()
+                )
+            }
+
+            KindredNotificationHelper.TYPE_POST_COMMENT, "COMMENT" -> {
+                val postId = data["postId"]
+                KindredNotificationHelper.showPostCommentNotification(
+                    context = applicationContext,
+                    postId = postId,
+                    commenterName = senderName,
+                    commentText = body ?: "Commented on your post"
+                )
+            }
+
             else -> {
                 if (!body.isNullOrBlank() &&
                     !KindredNotificationHelper.shouldSuppressForegroundMessageNotification(matchId)
