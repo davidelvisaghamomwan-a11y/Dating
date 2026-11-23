@@ -186,8 +186,8 @@ fun CreateStoryStudioDialog(
             val dataUrl = VerificationAnalyzer.compressUriForFeedPostDataUrl(
                 context = context,
                 uri = uri,
-                maxDim = 1280,
-                maxRawBytes = 320_000
+                maxDim = 1080,
+                maxRawBytes = 220_000
             )
             isPreparingMedia = false
             if (dataUrl != null) {
@@ -720,19 +720,13 @@ fun CreateStoryStudioDialog(
                             CircularProgressIndicator(
                                 color = StoryInstagramBlue,
                                 strokeWidth = 4.dp,
-                                modifier = Modifier.size(64.dp)
+                                modifier = Modifier.size(56.dp)
                             )
                             Text(
-                                text = "Uploading story to Cloud...",
+                                text = "Uploading story...",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleLarge
-                            )
-                            Text(
-                                text = "Please keep the app open while your photo/video is being shared",
-                                color = Color.White.copy(alpha = 0.7f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = TextAlign.Center
                             )
                         }
                     }

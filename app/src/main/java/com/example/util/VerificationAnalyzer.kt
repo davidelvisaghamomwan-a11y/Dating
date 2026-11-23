@@ -489,14 +489,14 @@ object VerificationAnalyzer {
         maxRawBytes: Int = 125_000
     ): String {
         val resized = resizeToMaxDim(bitmap, maxDim = maxDim)
-        var quality = 90
+        var quality = 84
         var bytes: ByteArray
         do {
             val out = ByteArrayOutputStream()
             resized.compress(Bitmap.CompressFormat.JPEG, quality, out)
             bytes = out.toByteArray()
-            quality -= 6
-        } while (bytes.size > maxRawBytes && quality >= 46)
+            quality -= 8
+        } while (bytes.size > maxRawBytes && quality >= 44)
 
         val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
         return "data:image/jpeg;base64,$encoded"

@@ -32,6 +32,10 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.catch
@@ -79,29 +83,32 @@ class SocialAndMediaRepository(
         ownerUid: String,
         participantUids: List<String>? = null,
         chunks: List<String>
-    ) {
-        if (chunks.isEmpty()) return
-        // Firestore limits RPC write batch payload to ~10 MiB; write <= 8 chunks per batch (~5.3 MiB)
-        var index = 0
-        while (index < chunks.size) {
-            val end = minOf(index + 8, chunks.size)
-            val batch = db.batch()
-            for (seq in index until end) {
-                val chunkRef = parentCollection.document(seq.toString())
-                val map = mutableMapOf<String, Any>(
-                    "ownerUid" to ownerUid,
-                    "seq" to seq.toLong(),
-                    "dataBase64" to chunks[seq],
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-                if (participantUids != null && participantUids.size == 2) {
-                    map["participantUids"] = participantUids.sorted()
+    ) = coroutineScope {
+        if (chunks.isEmpty()) return@coroutineScope
+        // Parallelize writes across concurrent batches for rapid multi-chunk video upload
+        val batchSize = 6
+        val batches = chunks.chunked(batchSize)
+        batches.mapIndexed { batchIdx, chunkSubList ->
+            async(Dispatchers.IO) {
+                val batch = db.batch()
+                val startSeq = batchIdx * batchSize
+                chunkSubList.forEachIndexed { offset, chunkData ->
+                    val seq = startSeq + offset
+                    val chunkRef = parentCollection.document(seq.toString())
+                    val map = mutableMapOf<String, Any>(
+                        "ownerUid" to ownerUid,
+                        "seq" to seq.toLong(),
+                        "dataBase64" to chunkData,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    if (participantUids != null && participantUids.size == 2) {
+                        map["participantUids"] = participantUids.sorted()
+                    }
+                    batch.set(chunkRef, map)
                 }
-                batch.set(chunkRef, map)
+                batch.commit().await()
             }
-            batch.commit().await()
-            index = end
-        }
+        }.awaitAll()
     }
 
     suspend fun resolveVideoToFile(

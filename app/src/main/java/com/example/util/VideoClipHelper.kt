@@ -26,8 +26,9 @@ data class PreparedVideoUpload(
 
 object VideoClipHelper {
     // Firestore doc cap is 1 MiB and chunkCount rules cap at 1000 chunks (~500 MB max).
-    const val CHUNK_RAW_BYTES = 500_000
-    const val INLINE_MAX_RAW_BYTES = 500_000
+    // 650 KB raw bytes yields ~866 KB base64, well within Firestore's 920 KB limit.
+    const val CHUNK_RAW_BYTES = 650_000
+    const val INLINE_MAX_RAW_BYTES = 650_000
     const val MAX_CHUNKS = 1000
     private const val MAX_THUMBNAIL_DATA_URL_LEN = 180_000
 
@@ -49,7 +50,7 @@ object VideoClipHelper {
             var totalBytes = 0L
             resolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cachedFile).use { output ->
-                    val buffer = ByteArray(32 * 1024)
+                    val buffer = ByteArray(64 * 1024)
                     while (true) {
                         val read = input.read(buffer)
                         if (read <= 0) break
