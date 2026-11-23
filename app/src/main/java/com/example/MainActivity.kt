@@ -998,6 +998,7 @@ private fun MainKindredApp(
                                         myProfile = data.myProfile,
                                         searchableProfiles = data.searchableProfiles,
                                         feedPosts = feedPostsState,
+                                        videoPosts = videoFeedState,
                                         profilesByUid = profilesByUid,
                                         friendStatusForUid = { uid -> friendStatusForUid(uid) },
                                         onFriendAction = { target ->
@@ -1006,16 +1007,14 @@ private fun MainKindredApp(
                                         onOpenUserProfile = { targetUid ->
                                             openUserProfileRoute(targetUid)
                                         },
-                                        onMessageProfile = { targetProfile ->
-                                            viewModel.startDirectConversation(targetProfile) {
-                                                navigateToTab(ROUTE_MATCHES)
-                                            }
-                                        },
                                         onToggleFeedPostLike = { postId, currentlyLiked ->
                                             viewModel.toggleFeedPostLike(postId, currentlyLiked)
                                         },
                                         onToggleFeedPostSave = { postId, currentlySaved ->
                                             viewModel.toggleFeedPostSave(postId, currentlySaved)
+                                        },
+                                        onToggleVideoPostLike = { postId, currentlyLiked ->
+                                            viewModel.toggleVideoPostLike(postId, currentlyLiked)
                                         },
                                         observeFeedComments = { postId ->
                                             viewModel.observeFeedComments(postId)
@@ -1031,6 +1030,12 @@ private fun MainKindredApp(
                                         },
                                         resolveFeedPostVideoFile = { post ->
                                             viewModel.resolveFeedPostVideoFile(context, post)
+                                        },
+                                        resolveVideoPostFile = { videoPost ->
+                                            viewModel.resolveVideoPostFile(context, videoPost)
+                                        },
+                                        onRefreshExplore = {
+                                            viewModel.refreshFeed()
                                         }
                                     )
                                 }
