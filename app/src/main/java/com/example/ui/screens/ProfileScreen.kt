@@ -1,86 +1,81 @@
 package com.example.ui.screens
 
-import android.Manifest
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
+import android.net.Uri
+import android.view.ViewGroup
+import android.widget.VideoView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FilterNone
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.RadioButtonChecked
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material.icons.filled.VideoCall
-import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.outlined.AddBox
+import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.GridOn
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RangeSlider
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -89,1403 +84,855 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.credentials.CredentialManager
-import com.example.R
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.auth.GoogleAuthHelper
-import com.example.model.BlockedUserItem
-import com.example.model.KindredConstants
-import com.example.model.PrivateUser
+import com.example.model.FeedComment
+import com.example.model.FeedPost
+import com.example.model.FriendStatus
 import com.example.model.ProfileVideoItem
 import com.example.model.PublicProfile
 import com.example.model.StoryHighlight
 import com.example.model.StoryItem
-import com.example.model.VisibilityLevel
-import com.example.notifications.KindredNotificationHelper
-import com.example.ui.components.CountryAndCitySelector
 import com.example.ui.components.CreateHighlightDialog
 import com.example.ui.components.HighlightViewerDialog
+import com.example.ui.components.InstagramFeedPostCard
+import com.example.ui.components.PostCommentsSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.StoryHighlightsSection
-import com.example.ui.components.VerifiedShieldBadge
-import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
-import com.example.util.CountryFlagHelper
-import com.example.util.GeoHashUtils
-import com.example.util.LocationAndGeoHelper
-import com.example.util.PreparedVideoUpload
-import com.example.util.ProfileCompletionUtils
-import com.example.util.ResolvedDeviceLocation
 import com.example.util.VerificationAnalyzer
 import com.example.util.VideoClipHelper
-import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import java.io.File
 
-@OptIn(ExperimentalLayoutApi::class)
+private val InstagramVerifiedBlue = Color(0xFF0095F6)
+
+private sealed interface ProfileGridEntry {
+    val sortTimestamp: Long
+    val key: String
+
+    data class PostEntry(val post: FeedPost) : ProfileGridEntry {
+        override val sortTimestamp: Long = post.createdAt?.toDate()?.time ?: 0L
+        override val key: String = "post_${post.id}"
+    }
+
+    data class ShowcaseVideoEntry(val video: ProfileVideoItem) : ProfileGridEntry {
+        override val sortTimestamp: Long = video.createdAt?.toDate()?.time ?: 0L
+        override val key: String = "video_${video.id}"
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     currentUserId: String,
     userEmail: String?,
     defaultDisplayName: String?,
     myProfile: PublicProfile?,
-    privateUser: PrivateUser?,
-    isBusy: Boolean,
-    latestLocation: ResolvedDeviceLocation? = null,
-    onSaveProfile: (
-        displayName: String,
-        age: Int,
-        gender: String,
-        bio: String,
-        cityLabel: String,
-        country: String,
-        latitude: Double,
-        longitude: Double,
-        interests: List<String>,
-        photoDataUrl: String?,
-        profilePhotos: List<String>,
-        discoverable: Boolean,
-        interestedIn: String,
-        minAgePref: Int,
-        maxAgePref: Int,
-        maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean
-    ) -> Unit,
-    onEditProfile: () -> Unit = {},
-    onOpenSettings: () -> Unit = {},
-    blockedUsers: List<BlockedUserItem> = emptyList(),
-    onUnblockUser: (String) -> Unit = {},
-    onNotificationsGranted: () -> Unit = {},
-    onBeforeSignOut: suspend () -> Unit = {},
+    myPosts: List<FeedPost> = emptyList(),
+    savedPosts: List<FeedPost> = emptyList(),
+    profilesByUid: Map<String, PublicProfile> = emptyMap(),
     myVideos: List<ProfileVideoItem> = emptyList(),
-    onUploadVideo: (caption: String, prepared: PreparedVideoUpload) -> Unit = { _, _ -> },
-    onDeleteVideo: (String) -> Unit = {},
-    incomingFriendRequestCount: Int = 0,
+    highlights: List<StoryHighlight> = emptyList(),
+    archivedStories: List<StoryItem> = emptyList(),
     friendsCount: Int = 0,
     whoLikedMeCount: Int = 0,
     profileViewCount: Int = 0,
-    activeOnlineCount: Int = 0,
+    incomingFriendRequestCount: Int = 0,
     isAdmin: Boolean = false,
+    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
+    onFriendAction: (PublicProfile) -> Unit = {},
+    onEditProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onOpenFriendsHub: () -> Unit = {},
     onOpenWhoLikesMe: () -> Unit = {},
-    onOpenActiveUsers: () -> Unit = {},
-    onOpenVideoFeed: () -> Unit = {},
     onOpenAdminDashboard: () -> Unit = {},
-    onUpdatePrivacy: (hideOnlineStatus: Boolean, photosVis: String, videosVis: String, infoVis: String) -> Unit = { _, _, _, _ -> },
-    highlights: List<StoryHighlight> = emptyList(),
-    archivedStories: List<StoryItem> = emptyList(),
+    onOpenVerification: () -> Unit = {},
+    onOpenVideoFeed: () -> Unit = {},
+    onOpenCreatePost: () -> Unit = {},
+    onOpenCreateStory: () -> Unit = {},
+    onOpenUserProfile: (String) -> Unit = {},
+    onToggleFeedPostLike: (postId: String, currentlyLiked: Boolean) -> Unit = { _, _ -> },
+    onToggleFeedPostSave: (postId: String, currentlySaved: Boolean) -> Unit = { _, _ -> },
+    observeFeedComments: (postId: String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
+    onAddFeedPostComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, _ -> },
+    onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
+    onDeleteFeedPost: (postId: String) -> Unit = {},
+    resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    resolveProfileVideoFile: suspend (ProfileVideoItem) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    onDeleteVideo: (String) -> Unit = {},
     onCreateHighlight: (title: String, coverUrl: String, items: List<StoryItem>) -> Unit = { _, _, _ -> },
     onDeleteHighlight: (String) -> Unit = {},
-    onStatusMessage: (String) -> Unit
+    onBeforeSignOut: suspend () -> Unit = {},
+    onStatusMessage: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+
+    val displayName = remember(myProfile, defaultDisplayName) {
+        myProfile?.displayName?.takeIf { it.isNotBlank() }
+            ?: defaultDisplayName?.takeIf { it.isNotBlank() }
+            ?: "Kindred Member"
+    }
+    val handle = remember(myProfile, userEmail, displayName) {
+        val emailPrefix = userEmail
+            ?.substringBefore("@")
+            ?.trim()
+            ?.lowercase()
+            ?.replace(Regex("[^a-z0-9._]"), "")
+            ?.takeIf { it.length >= 2 }
+        emailPrefix ?: displayName
+            .lowercase()
+            .replace(Regex("[^a-z0-9._]"), "")
+            .ifBlank { "kindred.member" }
+    }
+    val primaryPhoto = remember(myProfile) { myProfile?.allProfilePhotos()?.firstOrNull() }
+    val avatarSeed = myProfile?.avatarSeed ?: currentUserId
+    val bio = myProfile?.bio.orEmpty().trim()
+    val isVerified = myProfile?.isProfileVerified == true
+
+    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Posts, 1 = Reels, 2 = Saved
+    var showAccountQuickMenu by remember { mutableStateOf(false) }
+    var showCreateSheet by remember { mutableStateOf(false) }
     var activeHighlightViewer by remember { mutableStateOf<StoryHighlight?>(null) }
     var showCreateHighlightDialog by remember { mutableStateOf(false) }
-    val credentialManager = remember(context) { CredentialManager.create(context) }
-    var notificationsEnabled by remember {
-        mutableStateOf(KindredNotificationHelper.hasNotificationPermission(context))
+    var selectedFeedPost by remember { mutableStateOf<FeedPost?>(null) }
+    var activeCommentsPost by remember { mutableStateOf<FeedPost?>(null) }
+    var selectedShowcaseVideo by remember { mutableStateOf<ProfileVideoItem?>(null) }
+
+    val allGridEntries = remember(myPosts, myVideos) {
+        (myPosts.map { ProfileGridEntry.PostEntry(it) } +
+            myVideos.map { ProfileGridEntry.ShowcaseVideoEntry(it) })
+            .sortedByDescending { it.sortTimestamp }
     }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        notificationsEnabled = granted
-        if (granted) {
-            onNotificationsGranted()
-            onStatusMessage("Push notifications enabled for new matches and messages")
-        } else {
-            onStatusMessage("Notification permission denied — enable alerts anytime in system settings")
-        }
+    val reelEntries = remember(myPosts, myVideos) {
+        (myPosts.filter { it.mediaType == "VIDEO" }.map { ProfileGridEntry.PostEntry(it) } +
+            myVideos.map { ProfileGridEntry.ShowcaseVideoEntry(it) })
+            .sortedByDescending { it.sortTimestamp }
+    }
+    val savedEntries = remember(savedPosts) {
+        savedPosts.sortedByDescending { it.createdAt?.toDate()?.time ?: 0L }
+            .map { ProfileGridEntry.PostEntry(it) }
     }
 
-    val pendingRegistration = remember(myProfile) {
-        if (myProfile == null) {
-            com.example.auth.PendingRegistrationPrefs.get(context)
-        } else {
-            com.example.auth.PendingRegistrationPrefs.clear(context)
-            null
-        }
+    val activeEntries = when (selectedTab) {
+        1 -> reelEntries
+        2 -> savedEntries
+        else -> allGridEntries
     }
 
-    var displayName by remember(myProfile, defaultDisplayName, pendingRegistration) {
-        mutableStateOf(
-            myProfile?.displayName
-                ?: pendingRegistration?.displayName?.takeIf { it.isNotBlank() }
-                ?: defaultDisplayName.orEmpty().take(40)
-        )
-    }
-    var ageText by remember(myProfile, pendingRegistration) {
-        mutableStateOf(
-            myProfile?.age?.toString()
-                ?: pendingRegistration?.age?.toString()
-                ?: ""
-        )
-    }
-    var gender by remember(myProfile, pendingRegistration) {
-        mutableStateOf(myProfile?.gender ?: pendingRegistration?.gender ?: "Woman")
-    }
-    var bio by remember(myProfile) {
-        mutableStateOf(myProfile?.bio ?: "")
-    }
-    var country by remember(myProfile) {
-        mutableStateOf(myProfile?.country?.ifBlank { "United States" } ?: "United States")
-    }
-    var cityLabel by remember(myProfile) {
-        mutableStateOf(myProfile?.cityLabel ?: "San Francisco")
-    }
-    var latitude by remember(privateUser, myProfile) {
-        mutableStateOf(privateUser?.exactLatitude ?: myProfile?.coarseLatitude ?: 37.7749)
-    }
-    var longitude by remember(privateUser, myProfile) {
-        mutableStateOf(privateUser?.exactLongitude ?: myProfile?.coarseLongitude ?: -122.4194)
-    }
-
-    LaunchedEffect(latestLocation) {
-        val loc = latestLocation ?: return@LaunchedEffect
-        if (loc.isLiveGps) {
-            latitude = loc.exactLatitude
-            longitude = loc.exactLongitude
-            if (loc.cityLabel.isNotBlank()) {
-                cityLabel = loc.cityLabel
-            }
-            if (loc.countryName.isNotBlank()) {
-                country = loc.countryName
-            }
-        }
-    }
-    var selectedInterests by remember(myProfile) {
-        mutableStateOf(myProfile?.interests ?: listOf("Coffee", "Hiking"))
-    }
-    var profilePhotos by remember(myProfile) {
-        mutableStateOf(myProfile?.allProfilePhotos().orEmpty())
-    }
-    var discoverable by remember(myProfile) {
-        mutableStateOf(myProfile?.discoverable ?: true)
-    }
-    var interestedIn by remember(privateUser) {
-        mutableStateOf(privateUser?.interestedIn ?: "Everyone")
-    }
-    var agePrefRange by remember(privateUser) {
-        val min = (privateUser?.minAgePref ?: 20L).toFloat().coerceIn(18f, 99f)
-        val max = (privateUser?.maxAgePref ?: 45L).toFloat().coerceIn(min, 99f)
-        mutableStateOf(min..max)
-    }
-    var maxDistanceKm by remember(privateUser) {
-        mutableFloatStateOf((privateUser?.maxDistanceKm ?: 100L).toFloat().coerceIn(5f, 500f))
-    }
-    var verifiedOnlyFilter by remember(privateUser) {
-        mutableStateOf(privateUser?.verifiedOnlyFilter ?: false)
-    }
-
-    var hideOnlineStatus by remember(myProfile, privateUser) {
-        mutableStateOf(myProfile?.hideOnlineStatus ?: privateUser?.hideOnlineStatus ?: false)
-    }
-    var photosVisibility by remember(myProfile) {
-        mutableStateOf(myProfile?.photosVisibility ?: VisibilityLevel.EVERYONE)
-    }
-    var videosVisibility by remember(myProfile) {
-        mutableStateOf(myProfile?.videosVisibility ?: VisibilityLevel.EVERYONE)
-    }
-    var infoVisibility by remember(myProfile) {
-        mutableStateOf(myProfile?.infoVisibility ?: VisibilityLevel.EVERYONE)
-    }
-
-    var isFetchingGps by remember { mutableStateOf(false) }
-    var isPreparingVideo by remember { mutableStateOf(false) }
-    var pendingVideoUpload by remember { mutableStateOf<PreparedVideoUpload?>(null) }
-    var videoCaptionDraft by remember { mutableStateOf("") }
-
-    // Zero-permission Android Photo Picker supporting up to MAX_PROFILE_PHOTOS (Play Policy compliant)
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = KindredConstants.MAX_PROFILE_PHOTOS)
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            scope.launch {
-                val newlyCompressed = uris.mapNotNull { uri ->
-                    VerificationAnalyzer.compressUriToDataUrl(context, uri)
-                }
-                if (newlyCompressed.isNotEmpty()) {
-                    profilePhotos = (profilePhotos + newlyCompressed)
-                        .distinct()
-                        .take(KindredConstants.MAX_PROFILE_PHOTOS)
-                    onStatusMessage("Added ${newlyCompressed.size} photo(s) — tap Save Profile to publish")
-                } else {
-                    onStatusMessage("Could not process selected photo(s)")
-                }
-            }
-        }
-    }
-
-    val videoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            scope.launch {
-                isPreparingVideo = true
-                val res = VideoClipHelper.prepareVideoForUpload(context, uri)
-                isPreparingVideo = false
-                res.onSuccess { clip ->
-                    pendingVideoUpload = clip
-                }.onFailure { err ->
-                    onStatusMessage(err.localizedMessage ?: "Unable to prepare video")
-                }
-            }
-        }
-    }
-
-    fun fetchGps() {
-        isFetchingGps = true
-        scope.launch {
-            val resolved = LocationAndGeoHelper.fetchCurrentLocation(context)
-            isFetchingGps = false
-            if (resolved != null) {
-                latitude = resolved.exactLatitude
-                longitude = resolved.exactLongitude
-                cityLabel = resolved.cityLabel
-                if (resolved.countryName.isNotBlank()) {
-                    country = resolved.countryName
-                }
-                val locText = if (resolved.countryName.isNotBlank()) {
-                    "${resolved.cityLabel}, ${resolved.countryName}"
-                } else {
-                    resolved.cityLabel
-                }
-                onStatusMessage("Detected $locText")
-            } else {
-                onStatusMessage("Could not acquire GPS fix; select your country and city manually.")
-            }
-        }
-    }
-
-    val locationLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val granted = grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
-            grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        if (granted) {
-            fetchGps()
-        } else {
-            onStatusMessage("Location permission denied; enter your city manually.")
-        }
-    }
-
-    val completionSummary = remember(myProfile, myVideos.size) {
-        ProfileCompletionUtils.calculate(myProfile, myVideos.size)
-    }
-    val countryFlag = CountryFlagHelper.flagEmojiForCountry(country)
+    val postsCount = allGridEntries.size
+    val followersCount = whoLikedMeCount + friendsCount
+    val followingCount = friendsCount
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .navigationBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .background(MaterialTheme.colorScheme.background)
+            .testTag("profile_screen")
     ) {
-        Column(
+        LazyColumn(
             modifier = Modifier
-                .widthIn(max = 620.dp)
+                .fillMaxSize()
+                .widthIn(max = 680.dp)
                 .align(Alignment.TopCenter),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.profile_title),
-                    style = MaterialTheme.typography.displaySmall
-                )
+            // 1. Instagram Top Profile Header Bar: handle v   [+]  [=]
+            item(key = "ig_profile_top_bar") {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 6.dp, top = 8.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    VerifiedShieldBadge(
-                        isVerified = myProfile?.isProfileVerified == true,
-                        score = myProfile?.verificationScore?.toInt()
-                    )
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        IconButton(
-                            onClick = onOpenSettings,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .testTag("profile_settings_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = stringResource(R.string.settings_cd),
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Profile Completion Card
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.testTag("profile_completion_card")
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Profile Completion",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${completionSummary.percentage}%",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (completionSummary.percentage >= 80) EmeraldMint else CoralRose,
-                            modifier = Modifier.testTag("profile_completion_percent")
-                        )
-                    }
-                    LinearProgressIndicator(
-                        progress = { completionSummary.percentage / 100f },
-                        color = if (completionSummary.percentage >= 80) EmeraldMint else CoralRose,
-                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(CircleShape)
-                    )
-                    if (completionSummary.missingSteps.isNotEmpty()) {
-                        Text(
-                            text = "Next: ${completionSummary.missingSteps.take(2).joinToString(" • ")}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        Text(
-                            text = "All profile sections completed!",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = EmeraldMint
-                        )
-                    }
-                }
-            }
-
-            // Community & Connections Quick Hub
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onOpenFriendsHub,
-                    modifier = Modifier
-                        .height(48.dp)
-                        .testTag("profile_hub_friends_button")
-                ) {
-                    Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    val reqText = if (incomingFriendRequestCount > 0) " ($incomingFriendRequestCount new)" else ""
-                    Text("Friends ($friendsCount)$reqText")
-                }
-
-                OutlinedButton(
-                    onClick = onOpenWhoLikesMe,
-                    modifier = Modifier
-                        .height(48.dp)
-                        .testTag("profile_hub_likes_button")
-                ) {
-                    Icon(Icons.Filled.Favorite, contentDescription = null, tint = CoralRose, modifier = Modifier.size(17.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Likes ($whoLikedMeCount) • Views ($profileViewCount)")
-                }
-
-                OutlinedButton(
-                    onClick = onOpenActiveUsers,
-                    modifier = Modifier
-                        .height(48.dp)
-                        .testTag("profile_hub_active_button")
-                ) {
-                    Icon(Icons.Filled.RadioButtonChecked, contentDescription = null, tint = EmeraldMint, modifier = Modifier.size(17.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Active ($activeOnlineCount)")
-                }
-
-                OutlinedButton(
-                    onClick = onOpenVideoFeed,
-                    modifier = Modifier
-                        .height(48.dp)
-                        .testTag("profile_hub_videos_button")
-                ) {
-                    Icon(Icons.Filled.VideoLibrary, contentDescription = null, tint = ChampagneGold, modifier = Modifier.size(17.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Video Feed")
-                }
-
-                if (isAdmin) {
-                    Button(
-                        onClick = onOpenAdminDashboard,
-                        colors = ButtonDefaults.buttonColors(containerColor = ChampagneGold, contentColor = Color.Black),
-                        modifier = Modifier
-                            .height(48.dp)
-                            .testTag("profile_hub_admin_button")
-                    ) {
-                        Icon(Icons.Filled.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Admin Dashboard")
-                    }
-                }
-            }
-
-            // Photo & Account Header Card (up to MAX_PROFILE_PHOTOS)
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        ProfileAvatarImage(
-                            photoDataUrl = profilePhotos.firstOrNull(),
-                            displayName = displayName.ifBlank { "K" },
-                            seed = myProfile?.avatarSeed ?: currentUserId,
-                            modifier = Modifier.size(84.dp),
-                            shape = CircleShape,
-                            initialsFontSizeSp = 30
-                        )
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = buildString {
-                                    append(displayName.ifBlank { "New Kindred Member" })
-                                    ageText.toIntOrNull()?.let { append(", $it") }
-                                    if (countryFlag.isNotBlank()) append(" $countryFlag")
-                                },
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.testTag("profile_header_name_flag")
-                            )
-                            if (!userEmail.isNullOrBlank()) {
-                                Text(
-                                    text = userEmail,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(10.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    photoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                enabled = profilePhotos.size < KindredConstants.MAX_PROFILE_PHOTOS,
-                                modifier = Modifier.testTag("pick_photo_button")
-                            ) {
-                                Icon(Icons.Filled.AddAPhoto, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    "Add Photos (${profilePhotos.size}/${KindredConstants.MAX_PROFILE_PHOTOS})"
-                                )
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = "Profile Photos (${profilePhotos.size}/${KindredConstants.MAX_PROFILE_PHOTOS}) — used for anti-catfish selfie matching",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    val slotCount = maxOf(
-                        4,
-                        (profilePhotos.size + 1).coerceAtMost(KindredConstants.MAX_PROFILE_PHOTOS)
-                    )
-                    val rows = ((slotCount + 3) / 4).coerceAtLeast(1)
-                    for (row in 0 until rows) {
+                    Box {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            for (col in 0 until 4) {
-                                val slot = row * 4 + col
-                                if (slot >= KindredConstants.MAX_PROFILE_PHOTOS) {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                } else {
-                                    val slotPhoto = profilePhotos.getOrNull(slot)
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .aspectRatio(0.82f)
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                                            .border(
-                                                width = if (slot == 0 && slotPhoto != null) 2.dp else 1.dp,
-                                                color = if (slot == 0 && slotPhoto != null) {
-                                                    CoralRose
-                                                } else {
-                                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-                                                },
-                                                shape = RoundedCornerShape(16.dp)
-                                            )
-                                    ) {
-                                        if (slotPhoto != null) {
-                                            ProfileAvatarImage(
-                                                photoDataUrl = slotPhoto,
-                                                displayName = displayName.ifBlank { "K" },
-                                                seed = myProfile?.avatarSeed ?: currentUserId,
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clickable {
-                                                        if (slot > 0) {
-                                                            val reordered = profilePhotos.toMutableList()
-                                                            val chosen = reordered.removeAt(slot)
-                                                            reordered.add(0, chosen)
-                                                            profilePhotos = reordered
-                                                            onStatusMessage("Primary photo updated — tap Save Profile")
-                                                        }
-                                                    },
-                                                shape = RoundedCornerShape(16.dp),
-                                                initialsFontSizeSp = 22
-                                            )
-
-                                            if (slot == 0) {
-                                                Surface(
-                                                    color = CoralRose,
-                                                    shape = RoundedCornerShape(bottomEnd = 10.dp),
-                                                    modifier = Modifier.align(Alignment.TopStart)
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = Icons.Filled.Star,
-                                                            contentDescription = null,
-                                                            tint = Color.White,
-                                                            modifier = Modifier.size(10.dp)
-                                                        )
-                                                        Text(
-                                                            text = "Main",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = Color.White
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            IconButton(
-                                                onClick = {
-                                                    profilePhotos = profilePhotos.filterIndexed { index, _ -> index != slot }
-                                                },
-                                                modifier = Modifier
-                                                    .align(Alignment.TopEnd)
-                                                    .minimumInteractiveComponentSize()
-                                                    .testTag("remove_photo_$slot")
-                                            ) {
-                                                Surface(
-                                                    shape = CircleShape,
-                                                    color = Color.Black.copy(alpha = 0.65f),
-                                                    modifier = Modifier.size(24.dp)
-                                                ) {
-                                                    Box(contentAlignment = Alignment.Center) {
-                                                        Icon(
-                                                            imageVector = Icons.Filled.Close,
-                                                            contentDescription = "Remove photo ${slot + 1}",
-                                                            tint = Color.White,
-                                                            modifier = Modifier.size(14.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clickable {
-                                                        photoPickerLauncher.launch(
-                                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                                        )
-                                                    },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.AddAPhoto,
-                                                    contentDescription = "Add profile photo slot ${slot + 1}",
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                                    modifier = Modifier.size(22.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    val photosChangedWhileVerified = myProfile?.isProfileVerified == true &&
-                        profilePhotos != myProfile.allProfilePhotos()
-                    if (photosChangedWhileVerified) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = ChampagneGold.copy(alpha = 0.16f),
-                            border = BorderStroke(1.dp, ChampagneGold.copy(alpha = 0.45f))
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showAccountQuickMenu = true }
+                                .padding(vertical = 8.dp, horizontal = 2.dp)
+                                .testTag("profile_handle_menu_trigger")
                         ) {
                             Text(
-                                text = "Changing your profile photos will require a quick live selfie re-verification to keep your verified badge.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ChampagneGold,
-                                modifier = Modifier.padding(10.dp)
+                                text = handle,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = (-0.3).sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        }
-                    }
-
-                    FilledTonalButton(
-                        onClick = onEditProfile,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("open_edit_profile_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.btn_edit_profile),
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-            }
-
-            // Story Highlights Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.testTag("profile_highlights_card")
-            ) {
-                Box(modifier = Modifier.padding(18.dp)) {
-                    StoryHighlightsSection(
-                        highlights = highlights,
-                        isOwner = true,
-                        onOpenHighlight = { activeHighlightViewer = it },
-                        onOpenCreateHighlight = { showCreateHighlightDialog = true },
-                        onDeleteHighlight = onDeleteHighlight
-                    )
-                }
-            }
-
-            // Showcase Videos Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.testTag("profile_videos_card")
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Showcase Videos (${myVideos.size})", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = "Highlight clips displayed on your public profile",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                videoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            if (isVerified) {
+                                Icon(
+                                    imageVector = Icons.Filled.Verified,
+                                    contentDescription = "Verified profile",
+                                    tint = InstagramVerifiedBlue,
+                                    modifier = Modifier.size(18.dp)
                                 )
-                            },
-                            enabled = !isPreparingVideo && !isBusy,
-                            modifier = Modifier.testTag("profile_add_video_button")
-                        ) {
-                            if (isPreparingVideo) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Filled.VideoCall, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Upload")
                             }
-                        }
-                    }
-
-                    if (myVideos.isEmpty()) {
-                        Text(
-                            text = "Upload video clips of any length to stand out in Discover and User Profiles.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        LazyRow(
-                            contentPadding = PaddingValues(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            itemsIndexed(myVideos, key = { _, v -> v.id }) { _, video ->
-                                val thumb = remember(video.thumbnailDataUrl) {
-                                    video.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(width = 116.dp, height = 152.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(0xFF1A1423))
-                                ) {
-                                    if (thumb != null) {
-                                        Image(
-                                            bitmap = thumb,
-                                            contentDescription = video.caption.ifBlank { "Showcase video" },
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.Filled.PlayArrow,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .align(Alignment.Center)
-                                    )
-                                    IconButton(
-                                        onClick = { onDeleteVideo(video.id) },
-                                        modifier = Modifier
-                                            .align(Alignment.TopEnd)
-                                            .minimumInteractiveComponentSize()
-                                    ) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color.Black.copy(alpha = 0.65f),
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.DeleteOutline,
-                                                    contentDescription = "Delete video",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                    if (video.mediaDurationSec > 0L) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color.Black.copy(alpha = 0.65f),
-                                            modifier = Modifier
-                                                .align(Alignment.BottomEnd)
-                                                .padding(6.dp)
-                                        ) {
-                                            Text(
-                                                text = VideoClipHelper.formatDurationLabel(video.mediaDurationSec),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = Color.White,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Basic Details Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text("About You", style = MaterialTheme.typography.titleMedium)
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
-                            value = displayName,
-                            onValueChange = { if (it.length <= 40) displayName = it },
-                            label = { Text("Display Name") },
-                            singleLine = true,
-                            modifier = Modifier
-                                .weight(2f)
-                                .testTag("profile_name_input")
-                        )
-                        OutlinedTextField(
-                            value = ageText,
-                            onValueChange = { input ->
-                                if (input.length <= 2 && input.all { it.isDigit() }) {
-                                    ageText = input
-                                }
-                            },
-                            label = { Text("Age") },
-                            placeholder = { Text("18+") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("profile_age_input")
-                        )
-                    }
-
-                    Text("Gender", style = MaterialTheme.typography.titleSmall)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        KindredConstants.GENDER_OPTIONS.forEach { option ->
-                            FilterChip(
-                                selected = gender == option,
-                                onClick = { gender = option },
-                                label = { Text(option) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = CoralRose.copy(alpha = 0.2f),
-                                    selectedLabelColor = CoralRose
-                                )
+                            Icon(
+                                imageVector = Icons.Filled.KeyboardArrowDown,
+                                contentDescription = "Account menu",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                    }
 
-                    OutlinedTextField(
-                        value = bio,
-                        onValueChange = { if (it.length <= 400) bio = it },
-                        label = { Text("Bio (${bio.length}/400)") },
-                        minLines = 3,
-                        maxLines = 5,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("profile_bio_input")
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Location (Country & City)", style = MaterialTheme.typography.titleSmall)
-                        if (latestLocation?.isLiveGps == true) {
-                            Surface(
-                                shape = CircleShape,
-                                color = EmeraldMint.copy(alpha = 0.16f),
-                                border = BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.45f)),
-                                modifier = Modifier.testTag("profile_gps_verified_badge")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
+                        DropdownMenu(
+                            expanded = showAccountQuickMenu,
+                            onDismissRequest = { showAccountQuickMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(if (isVerified) "Identity Verified" else "Verify Identity")
+                                },
+                                leadingIcon = {
                                     Icon(
                                         imageVector = Icons.Filled.VerifiedUser,
                                         contentDescription = null,
-                                        tint = EmeraldMint,
-                                        modifier = Modifier.size(12.dp)
+                                        tint = if (isVerified) EmeraldMint else CoralRose
                                     )
-                                    Text(
-                                        text = "GPS Verified",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = EmeraldMint,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
+                                },
+                                onClick = {
+                                    showAccountQuickMenu = false
+                                    onOpenVerification()
                                 }
-                            }
-                        }
-                    }
-                    CountryAndCitySelector(
-                        country = country,
-                        cityLabel = cityLabel,
-                        onCountryChange = { country = it },
-                        onCityChange = { cityLabel = it },
-                        showGpsButton = true,
-                        isFetchingGps = isFetchingGps,
-                        onRequestGps = {
-                            if (LocationAndGeoHelper.hasLocationPermission(context)) {
-                                fetchGps()
-                            } else {
-                                locationLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_COARSE_LOCATION,
-                                        Manifest.permission.ACCESS_FINE_LOCATION
-                                    )
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Friends & Connections ($friendsCount)") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Group, contentDescription = null)
+                                },
+                                onClick = {
+                                    showAccountQuickMenu = false
+                                    onOpenFriendsHub()
+                                }
+                            )
+                            if (isAdmin) {
+                                DropdownMenuItem(
+                                    text = { Text("Admin Moderation") },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.AdminPanelSettings, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showAccountQuickMenu = false
+                                        onOpenAdminDashboard()
+                                    }
                                 )
                             }
-                        },
-                        testTagPrefix = "profile"
-                    )
-
-                    val coarseLatPreview = LocationAndGeoHelper.roundToCoarse(latitude)
-                    val coarseLngPreview = LocationAndGeoHelper.roundToCoarse(longitude)
-                    val previewGeoHash = GeoHashUtils.encode(coarseLatPreview, coarseLngPreview, 7)
-                    Text(
-                        text = "Coarse coordinates: $coarseLatPreview, $coarseLngPreview • GeoHash: $previewGeoHash",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Text(
-                        text = "Interests (${selectedInterests.size}/8)",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        KindredConstants.INTEREST_OPTIONS.forEach { tag ->
-                            val selected = tag in selectedInterests
-                            FilterChip(
-                                selected = selected,
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "Sign out",
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.Logout,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
                                 onClick = {
-                                    selectedInterests = if (selected) {
-                                        selectedInterests - tag
-                                    } else if (selectedInterests.size < 8) {
-                                        selectedInterests + tag
-                                    } else {
-                                        selectedInterests
-                                    }
-                                },
-                                label = { Text(tag) }
+                                    showAccountQuickMenu = false
+                                    GoogleAuthHelper.signOut(
+                                        credentialManager = credentialManager,
+                                        scope = scope,
+                                        onBeforeSignOut = onBeforeSignOut
+                                    )
+                                }
                             )
                         }
                     }
-                }
-            }
-
-            // Matching & Visibility Settings Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text("Discovery Settings", style = MaterialTheme.typography.titleMedium)
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Show me in Discovery", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = "Pause anytime without losing existing matches",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(checked = discoverable, onCheckedChange = { discoverable = it })
-                    }
-
-                    Text("Interested in", style = MaterialTheme.typography.titleSmall)
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        KindredConstants.INTERESTED_IN_OPTIONS.forEach { option ->
-                            FilterChip(
-                                selected = interestedIn == option,
-                                onClick = { interestedIn = option },
-                                label = { Text(option) }
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Max distance", style = MaterialTheme.typography.titleSmall)
-                        Text("${maxDistanceKm.roundToInt()} km", color = CoralRose, style = MaterialTheme.typography.titleSmall)
-                    }
-                    Slider(
-                        value = maxDistanceKm,
-                        onValueChange = { maxDistanceKm = it },
-                        valueRange = 5f..500f
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Preferred age", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "${agePrefRange.start.roundToInt()} – ${agePrefRange.endInclusive.roundToInt()}",
-                            color = CoralRose,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                    }
-                    RangeSlider(
-                        value = agePrefRange,
-                        onValueChange = { agePrefRange = it },
-                        valueRange = 18f..99f
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Verified profiles only", style = MaterialTheme.typography.titleSmall)
-                        Switch(checked = verifiedOnlyFilter, onCheckedChange = { verifiedOnlyFilter = it })
-                    }
-                }
-            }
-
-            // Privacy & Online Visibility Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.testTag("profile_privacy_card")
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Filled.Lock, contentDescription = null, tint = ChampagneGold, modifier = Modifier.size(18.dp))
-                        Text("Privacy & Visibility", style = MaterialTheme.typography.titleMedium)
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Hide Online Status", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = "Stay invisible in Active Users and hide your last seen time",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = hideOnlineStatus,
-                            onCheckedChange = { hideOnlineStatus = it },
-                            modifier = Modifier.testTag("profile_hide_online_switch")
-                        )
-                    }
-
-                    VisibilitySelectorRow(
-                        label = "Who sees my photos",
-                        selectedLevel = photosVisibility,
-                        onSelect = { photosVisibility = it }
-                    )
-                    VisibilitySelectorRow(
-                        label = "Who sees my videos",
-                        selectedLevel = videosVisibility,
-                        onSelect = { videosVisibility = it }
-                    )
-                    VisibilitySelectorRow(
-                        label = "Who sees my bio & interests",
-                        selectedLevel = infoVisibility,
-                        onSelect = { infoVisibility = it }
-                    )
-
-                    FilledTonalButton(
-                        onClick = {
-                            onUpdatePrivacy(hideOnlineStatus, photosVisibility, videosVisibility, infoVisibility)
-                        },
-                        enabled = !isBusy,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("profile_save_privacy_button")
-                    ) {
-                        Text("Apply Privacy Settings")
-                    }
-                }
-            }
-
-            // Push Alerts & Blocked Users Safety Card
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.testTag("safety_notifications_card")
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text("Push Alerts & Safety", style = MaterialTheme.typography.titleMedium)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (notificationsEnabled) {
-                                Icons.Filled.NotificationsActive
-                            } else {
-                                Icons.Filled.NotificationsOff
-                            },
-                            contentDescription = null,
-                            tint = if (notificationsEnabled) EmeraldMint else ChampagneGold,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (notificationsEnabled) {
-                                    "FCM Push Alerts Active"
-                                } else {
-                                    "Push Alerts Paused"
-                                },
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = if (notificationsEnabled) {
-                                    "Alerts enabled for new mutual matches and real-time chat messages."
-                                } else {
-                                    "Enable notifications to receive instant alerts for new matches and messages."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    if (!notificationsEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        FilledTonalButton(
-                            onClick = {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("enable_notifications_button")
+                        IconButton(
+                            onClick = { showCreateSheet = true },
+                            modifier = Modifier.testTag("profile_create_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.NotificationsActive,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                                imageVector = Icons.Outlined.AddBox,
+                                contentDescription = "Create post, story, reel, or highlight",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(26.dp)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.btn_enable_notifications))
                         }
-                    }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Block,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = "Blocked Profiles (${blockedUsers.size})",
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                    }
-
-                    if (blockedUsers.isEmpty()) {
-                        Text(
-                            text = "No blocked users. Anyone you block in Discover or Chat is removed from GeoHash matching and messaging.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            blockedUsers.forEach { blocked ->
-                                Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = blocked.displayName,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            Text(
-                                                text = "Blocked across matching & chat",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        OutlinedButton(
-                                            onClick = { onUnblockUser(blocked.blockedUid) },
-                                            modifier = Modifier
-                                                .minimumInteractiveComponentSize()
-                                                .testTag("unblock_button_${blocked.blockedUid}")
-                                        ) {
-                                            Text(stringResource(R.string.btn_unblock))
-                                        }
-                                    }
-                                }
+                        Box {
+                            IconButton(
+                                onClick = onOpenSettings,
+                                modifier = Modifier.testTag("profile_settings_menu_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Menu,
+                                    contentDescription = "Settings and activity",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(27.dp)
+                                )
+                            }
+                            if (incomingFriendRequestCount > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = (-9).dp, y = 11.dp)
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFFF3040))
+                                )
                             }
                         }
                     }
                 }
             }
 
-            Button(
-                onClick = {
-                    val parsedAge = ageText.toIntOrNull()
-                    if (parsedAge == null || parsedAge !in 18..99) {
-                        onStatusMessage("Please enter a valid age (18–99).")
-                        return@Button
-                    }
-                    onSaveProfile(
-                        displayName,
-                        parsedAge,
-                        gender,
-                        bio,
-                        cityLabel,
-                        country,
-                        latitude,
-                        longitude,
-                        selectedInterests,
-                        profilePhotos.firstOrNull(),
-                        profilePhotos,
-                        discoverable,
-                        interestedIn,
-                        agePrefRange.start.roundToInt(),
-                        agePrefRange.endInclusive.roundToInt(),
-                        maxDistanceKm.roundToInt(),
-                        verifiedOnlyFilter
+            // 2. Avatar + Posts / Followers / Following Counts Row
+            item(key = "ig_profile_header_stats") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    ProfileAvatarImage(
+                        photoDataUrl = primaryPhoto,
+                        displayName = displayName,
+                        seed = avatarSeed,
+                        modifier = Modifier
+                            .size(86.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onEditProfile)
+                            .testTag("profile_avatar_image"),
+                        shape = CircleShape,
+                        initialsFontSizeSp = 30
                     )
-                },
-                enabled = !isBusy && displayName.trim().length >= 2,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-                    .testTag("save_profile_button"),
-                colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White)
-            ) {
-                if (isBusy) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                } else {
-                    Text(stringResource(R.string.btn_save_profile), fontWeight = FontWeight.Bold)
+
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ProfileStatColumn(
+                            count = postsCount,
+                            label = "Posts",
+                            onClick = { selectedTab = 0 },
+                            modifier = Modifier.testTag("profile_stat_posts")
+                        )
+                        ProfileStatColumn(
+                            count = followersCount,
+                            label = "Followers",
+                            onClick = onOpenWhoLikesMe,
+                            modifier = Modifier.testTag("profile_stat_followers")
+                        )
+                        ProfileStatColumn(
+                            count = followingCount,
+                            label = "Following",
+                            onClick = onOpenFriendsHub,
+                            modifier = Modifier.testTag("profile_stat_following")
+                        )
+                    }
                 }
             }
 
-            OutlinedButton(
-                onClick = {
-                    GoogleAuthHelper.signOut(
-                        credentialManager = credentialManager,
-                        scope = scope,
-                        onBeforeSignOut = onBeforeSignOut
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .testTag("sign_out_button")
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.btn_sign_out))
+            // 3. Display Name + Verified Badge + Bio
+            item(key = "ig_profile_bio") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.5.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (isVerified) {
+                            Icon(
+                                imageVector = Icons.Filled.Verified,
+                                contentDescription = "Verified",
+                                tint = InstagramVerifiedBlue,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+
+                    if (bio.isNotBlank()) {
+                        Text(
+                            text = bio,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 19.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.testTag("profile_bio_text")
+                        )
+                    } else {
+                        Text(
+                            text = "Tap Edit profile to add your bio.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clickable(onClick = onEditProfile)
+                                .testTag("profile_bio_placeholder")
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // 4. Compact Professional Dashboard / Insights Banner
+            item(key = "ig_profile_insights") {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onOpenWhoLikesMe)
+                        .testTag("profile_insights_banner")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "Professional dashboard",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                                contentDescription = null,
+                                tint = EmeraldMint,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "$profileViewCount profile views in the last 30 days.",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 5. Two Side-by-Side Tonal Action Buttons: [Edit profile] [Share profile]
+            item(key = "ig_profile_action_buttons") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    InstagramProfileActionButton(
+                        label = "Edit profile",
+                        onClick = onEditProfile,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("edit_profile_button")
+                    )
+                    InstagramProfileActionButton(
+                        label = "Share profile",
+                        onClick = {
+                            val shareText = buildString {
+                                append("Connect with $displayName (@$handle) on Kindred")
+                                if (bio.isNotBlank()) {
+                                    append("\n\"$bio\"")
+                                }
+                            }
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                            }
+                            runCatching {
+                                context.startActivity(Intent.createChooser(shareIntent, "Share profile"))
+                            }.onFailure {
+                                onStatusMessage("Unable to open share menu")
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("share_profile_button")
+                    )
+                }
+            }
+
+            // 6. Story Highlights Tray (existing highlights first, thin outlined + New button after)
+            item(key = "ig_profile_highlights") {
+                Spacer(modifier = Modifier.height(14.dp))
+                StoryHighlightsSection(
+                    highlights = highlights,
+                    isOwner = true,
+                    onOpenHighlight = { activeHighlightViewer = it },
+                    onOpenCreateHighlight = { showCreateHighlightDialog = true },
+                    onDeleteHighlight = onDeleteHighlight,
+                    compactInstagramStyle = true
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            // 7. Three-Tab Selector Bar: Grid (Posts) | Reels | Saved
+            item(key = "ig_profile_tabs") {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ProfileGridTabItem(
+                            selected = selectedTab == 0,
+                            icon = if (selectedTab == 0) Icons.Filled.GridOn else Icons.Outlined.GridOn,
+                            contentDescription = "Posts",
+                            onClick = { selectedTab = 0 },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("profile_tab_posts")
+                        )
+                        ProfileGridTabItem(
+                            selected = selectedTab == 1,
+                            icon = if (selectedTab == 1) Icons.Filled.Movie else Icons.Outlined.Movie,
+                            contentDescription = "Reels",
+                            onClick = { selectedTab = 1 },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("profile_tab_reels")
+                        )
+                        ProfileGridTabItem(
+                            selected = selectedTab == 2,
+                            icon = if (selectedTab == 2) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                            contentDescription = "Saved",
+                            onClick = { selectedTab = 2 },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("profile_tab_saved")
+                        )
+                    }
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+                }
+            }
+
+            // 8. 3-Column Full-Bleed Media Grid or Clean Empty State
+            if (activeEntries.isEmpty()) {
+                item(key = "ig_profile_empty_$selectedTab") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)),
+                            color = Color.Transparent,
+                            modifier = Modifier.size(64.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = when (selectedTab) {
+                                        1 -> Icons.Outlined.Movie
+                                        2 -> Icons.Outlined.BookmarkBorder
+                                        else -> Icons.Outlined.CameraAlt
+                                    },
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = when (selectedTab) {
+                                1 -> "No Reels Yet"
+                                2 -> "No Saved Posts"
+                                else -> "No Posts Yet"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = when (selectedTab) {
+                                1 -> "Short videos you publish to Reels or your profile appear here."
+                                2 -> "Bookmark posts from your timeline to revisit them anytime."
+                                else -> "When you share photos and videos, they will appear on your profile."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        if (selectedTab != 2) {
+                            TextButton(
+                                onClick = {
+                                    if (selectedTab == 1) onOpenVideoFeed() else onOpenCreatePost()
+                                }
+                            ) {
+                                Text(
+                                    text = if (selectedTab == 1) "Open Reels" else "Share your first post",
+                                    color = InstagramVerifiedBlue,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                val rows = activeEntries.chunked(3)
+                items(
+                    count = rows.size,
+                    key = { rowIdx -> "grid_row_${selectedTab}_$rowIdx" }
+                ) { rowIdx ->
+                    val rowItems = rows[rowIdx]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 1.5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(1.5.dp)
+                    ) {
+                        for (col in 0 until 3) {
+                            val entry = rowItems.getOrNull(col)
+                            if (entry == null) {
+                                Spacer(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(if (selectedTab == 1) 0.72f else 1f)
+                                )
+                            } else {
+                                ProfileGridTile(
+                                    entry = entry,
+                                    aspectRatio = if (selectedTab == 1) 0.72f else 1f,
+                                    onClick = {
+                                        when (entry) {
+                                            is ProfileGridEntry.PostEntry -> selectedFeedPost = entry.post
+                                            is ProfileGridEntry.ShowcaseVideoEntry -> selectedShowcaseVideo = entry.video
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    pendingVideoUpload?.let { upload ->
-        AlertDialog(
-            onDismissRequest = {
-                pendingVideoUpload = null
-                videoCaptionDraft = ""
-            },
-            title = { Text("Upload Showcase Video") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Duration: ${VideoClipHelper.formatDurationLabel(upload.durationSec)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = videoCaptionDraft,
-                        onValueChange = { if (it.length <= 160) videoCaptionDraft = it },
-                        label = { Text("Caption (optional)") },
-                        maxLines = 2,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
+    // Create (+) Bottom Sheet matching Instagram Create Drawer
+    if (showCreateSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showCreateSheet = false },
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = 20.dp)
+            ) {
+                Text(
+                    text = "Create",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                CreateMenuOptionRow(
+                    icon = Icons.Outlined.GridOn,
+                    label = "Post",
                     onClick = {
-                        onUploadVideo(videoCaptionDraft.trim(), upload)
-                        pendingVideoUpload = null
-                        videoCaptionDraft = ""
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
-                ) {
-                    Text("Upload")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        pendingVideoUpload = null
-                        videoCaptionDraft = ""
+                        showCreateSheet = false
+                        onOpenCreatePost()
                     }
-                ) { Text("Cancel") }
+                )
+                CreateMenuOptionRow(
+                    icon = Icons.Outlined.Movie,
+                    label = "Reel",
+                    onClick = {
+                        showCreateSheet = false
+                        onOpenVideoFeed()
+                    }
+                )
+                CreateMenuOptionRow(
+                    icon = Icons.Outlined.AddCircleOutline,
+                    label = "Story",
+                    onClick = {
+                        showCreateSheet = false
+                        onOpenCreateStory()
+                    }
+                )
+                CreateMenuOptionRow(
+                    icon = Icons.Outlined.AutoAwesome,
+                    label = "Story highlight",
+                    onClick = {
+                        showCreateSheet = false
+                        showCreateHighlightDialog = true
+                    }
+                )
             }
+        }
+    }
+
+    // Full Post Detail Dialog when tapping a tile in Posts / Reels / Saved grid
+    selectedFeedPost?.let { opened ->
+        val livePost = (myPosts + savedPosts).firstOrNull { it.id == opened.id } ?: opened
+        val authorProfile = profilesByUid[livePost.userId]
+            ?: if (livePost.userId == currentUserId) myProfile else null
+        Dialog(
+            onDismissRequest = { selectedFeedPost = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                text = when (selectedTab) {
+                                    1 -> "Reels"
+                                    2 -> "Saved"
+                                    else -> "Posts"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = { selectedFeedPost = null }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back"
+                                )
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.background
+                        )
+                    )
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item(key = livePost.id) {
+                            InstagramFeedPostCard(
+                                post = livePost,
+                                authorProfile = authorProfile,
+                                currentUserId = currentUserId,
+                                friendStatus = friendStatusForUid(livePost.userId),
+                                onFriendAction = {
+                                    authorProfile?.let { onFriendAction(it) }
+                                },
+                                resolveVideoFile = resolveFeedPostVideoFile,
+                                onToggleLike = {
+                                    onToggleFeedPostLike(
+                                        livePost.id,
+                                        currentUserId in livePost.likedByUids
+                                    )
+                                },
+                                onToggleSave = {
+                                    onToggleFeedPostSave(
+                                        livePost.id,
+                                        currentUserId in livePost.savedByUids
+                                    )
+                                },
+                                onOpenComments = { activeCommentsPost = livePost },
+                                onDeletePost = {
+                                    onDeleteFeedPost(livePost.id)
+                                    selectedFeedPost = null
+                                },
+                                onOpenAuthor = {
+                                    if (livePost.userId != currentUserId) {
+                                        selectedFeedPost = null
+                                        onOpenUserProfile(livePost.userId)
+                                    }
+                                },
+                                isVisibleForAutoPlay = true
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Comments Sheet when tapping comment inside Post Detail Dialog
+    activeCommentsPost?.let { postForComments ->
+        PostCommentsSheet(
+            post = postForComments,
+            currentUserId = currentUserId,
+            myProfile = myProfile,
+            profilesByUid = profilesByUid,
+            observeComments = observeFeedComments,
+            onAddComment = onAddFeedPostComment,
+            onDeleteComment = onDeleteFeedPostComment,
+            onOpenProfile = { uid ->
+                activeCommentsPost = null
+                selectedFeedPost = null
+                if (uid != currentUserId) {
+                    onOpenUserProfile(uid)
+                }
+            },
+            onDismiss = { activeCommentsPost = null }
+        )
+    }
+
+    // Fullscreen Showcase Video Player Dialog
+    selectedShowcaseVideo?.let { video ->
+        ShowcaseVideoPlayerDialog(
+            video = video,
+            resolveProfileVideoFile = resolveProfileVideoFile,
+            onDelete = {
+                onDeleteVideo(video.id)
+                selectedShowcaseVideo = null
+            },
+            onDismiss = { selectedShowcaseVideo = null }
         )
     }
 
@@ -1507,31 +954,387 @@ fun ProfileScreen(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun VisibilitySelectorRow(
+private fun ProfileStatColumn(
+    count: Int,
     label: String,
-    selectedLevel: String,
-    onSelect: (String) -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val options = listOf(
-        VisibilityLevel.EVERYONE to "Everyone",
-        VisibilityLevel.MATCHES_AND_FRIENDS to "Matches & Friends",
-        VisibilityLevel.FRIENDS_ONLY to "Friends Only"
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(text = label, style = MaterialTheme.typography.labelLarge)
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp
+            ),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+private fun InstagramProfileActionButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .height(48.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(34.dp)
         ) {
-            options.forEach { (level, title) ->
-                FilterChip(
-                    selected = selectedLevel == level,
-                    onClick = { onSelect(level) },
-                    label = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileGridTabItem(
+    selected: Boolean,
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .height(48.dp)
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                },
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.8.dp)
+                .background(
+                    if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent
+                )
+        )
+    }
+}
+
+@Composable
+private fun ProfileGridTile(
+    entry: ProfileGridEntry,
+    aspectRatio: Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val thumbSource: String?
+    val isVideo: Boolean
+    val isCarousel: Boolean
+    val captionFallback: String
+
+    when (entry) {
+        is ProfileGridEntry.PostEntry -> {
+            val post = entry.post
+            val photos = post.allPhotoUrls()
+            isVideo = post.mediaType == "VIDEO"
+            isCarousel = !isVideo && photos.size > 1
+            thumbSource = if (isVideo) {
+                post.thumbnailDataUrl
+            } else {
+                photos.firstOrNull()
+            }
+            captionFallback = post.caption
+        }
+
+        is ProfileGridEntry.ShowcaseVideoEntry -> {
+            isVideo = true
+            isCarousel = false
+            thumbSource = entry.video.thumbnailDataUrl
+            captionFallback = entry.video.caption
+        }
+    }
+
+    val decodedBitmap = remember(thumbSource) {
+        if (!thumbSource.isNullOrBlank() && thumbSource.startsWith("data:image")) {
+            VerificationAnalyzer.decodeBase64DataUrl(thumbSource)
+        } else null
+    }
+
+    Box(
+        modifier = modifier
+            .aspectRatio(aspectRatio)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable(onClick = onClick)
+            .testTag("profile_grid_tile_${entry.key}")
+    ) {
+        if (decodedBitmap != null) {
+            Image(
+                bitmap = decodedBitmap,
+                contentDescription = captionFallback.ifBlank { "Profile post" },
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.High,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (!thumbSource.isNullOrBlank()) {
+            AsyncImage(
+                model = thumbSource,
+                contentDescription = captionFallback.ifBlank { "Profile post" },
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.High,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = captionFallback.ifBlank { "Kindred" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+
+        if (isVideo) {
+            Icon(
+                imageVector = Icons.Filled.Movie,
+                contentDescription = "Reel",
+                tint = Color.White.copy(alpha = 0.92f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(7.dp)
+                    .size(20.dp)
+            )
+        } else if (isCarousel) {
+            Icon(
+                imageVector = Icons.Filled.FilterNone,
+                contentDescription = "Multiple photos",
+                tint = Color.White.copy(alpha = 0.92f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(7.dp)
+                    .size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CreateMenuOptionRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(24.dp)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+private fun ShowcaseVideoPlayerDialog(
+    video: ProfileVideoItem,
+    resolveProfileVideoFile: suspend (ProfileVideoItem) -> Result<File>,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var resolvedFile by remember(video.id) { mutableStateOf<File?>(null) }
+    var loadingError by remember(video.id) { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+
+    LaunchedEffect(video.id) {
+        resolveProfileVideoFile(video)
+            .onSuccess { resolvedFile = it }
+            .onFailure { loadingError = it.localizedMessage ?: "Unable to play video" }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        ) {
+            val file = resolvedFile
+            when {
+                file != null -> {
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                setVideoURI(Uri.fromFile(file))
+                                setOnPreparedListener { mp ->
+                                    mp.isLooping = true
+                                    start()
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                loadingError != null -> {
+                    Text(
+                        text = loadingError ?: "Unable to play video",
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(24.dp)
+                    )
+                }
+
+                else -> {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Close video",
+                        tint = Color.White
+                    )
+                }
+                IconButton(onClick = { confirmDelete = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteOutline,
+                        contentDescription = "Delete video",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            if (video.caption.isNotBlank() || video.mediaDurationSec > 0L) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomStart)
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (video.mediaDurationSec > 0L) {
+                        Text(
+                            text = VideoClipHelper.formatDurationLabel(video.mediaDurationSec),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
+                    if (video.caption.isNotBlank()) {
+                        Text(
+                            text = video.caption,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete Video?") },
+            text = { Text("Remove this showcase video from your Kindred profile?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmDelete = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

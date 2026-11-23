@@ -87,6 +87,7 @@ fun StoryHighlightsSection(
     onOpenHighlight: (StoryHighlight) -> Unit,
     onOpenCreateHighlight: () -> Unit = {},
     onDeleteHighlight: (String) -> Unit = {},
+    compactInstagramStyle: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var highlightToDelete by remember { mutableStateOf<StoryHighlight?>(null) }
@@ -97,101 +98,90 @@ fun StoryHighlightsSection(
             .testTag("story_highlights_section"),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Story Highlights",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            if (isOwner && highlights.isNotEmpty()) {
-                TextButton(
-                    onClick = onOpenCreateHighlight,
-                    modifier = Modifier.testTag("add_highlight_text_btn")
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Add New", style = MaterialTheme.typography.labelMedium)
+        if (!compactInstagramStyle) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Story Highlights",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (isOwner && highlights.isNotEmpty()) {
+                    TextButton(
+                        onClick = onOpenCreateHighlight,
+                        modifier = Modifier.testTag("add_highlight_text_btn")
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add New", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }
 
         if (highlights.isEmpty() && !isOwner) {
-            Text(
-                text = "No story highlights added yet.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!compactInstagramStyle) {
+                Text(
+                    text = "No story highlights added yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         } else {
             LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(
+                    horizontal = if (compactInstagramStyle) 16.dp else 2.dp,
+                    vertical = 4.dp
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("highlights_tray_row")
             ) {
-                if (isOwner) {
+                if (!compactInstagramStyle && isOwner) {
                     item(key = "new_highlight_button") {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier
-                                .clickable(onClick = onOpenCreateHighlight)
-                                .testTag("create_highlight_bubble")
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(68.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                                    .border(
-                                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                                        shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = "New Highlight",
-                                    tint = CoralRose,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
-                            Text(
-                                text = "New",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
+                        HighlightNewBubble(
+                            compactInstagramStyle = false,
+                            onClick = onOpenCreateHighlight
+                        )
                     }
                 }
 
                 items(highlights, key = { it.id }) { highlight ->
                     val ringBrush = Brush.linearGradient(
-                        colors = listOf(
-                            CoralRose,
-                            ChampagneGold,
-                            Color(0xFFFF8A65)
-                        )
+                        colors = if (compactInstagramStyle) {
+                            listOf(
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f),
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+                            )
+                        } else {
+                            listOf(
+                                CoralRose,
+                                ChampagneGold,
+                                Color(0xFFFF8A65)
+                            )
+                        }
                     )
 
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                         modifier = Modifier
                             .clickable { onOpenHighlight(highlight) }
                             .testTag("highlight_bubble_${highlight.id}")
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(68.dp)
+                                .size(66.dp)
                                 .clip(CircleShape)
-                                .border(BorderStroke(2.dp, ringBrush), CircleShape)
+                                .border(
+                                    BorderStroke(if (compactInstagramStyle) 1.5.dp else 2.dp, ringBrush),
+                                    CircleShape
+                                )
                                 .padding(3.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.surfaceContainer),
@@ -228,12 +218,22 @@ fun StoryHighlightsSection(
 
                         Text(
                             text = highlight.title.ifBlank { "Highlight" },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Medium,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp),
+                            fontWeight = FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.width(68.dp)
+                        )
+                    }
+                }
+
+                if (compactInstagramStyle && isOwner) {
+                    item(key = "new_highlight_button") {
+                        HighlightNewBubble(
+                            compactInstagramStyle = true,
+                            onClick = onOpenCreateHighlight
                         )
                     }
                 }
@@ -262,6 +262,54 @@ fun StoryHighlightsSection(
                     Text("Cancel")
                 }
             }
+        )
+    }
+}
+
+@Composable
+private fun HighlightNewBubble(
+    compactInstagramStyle: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .testTag("create_highlight_bubble")
+    ) {
+        Box(
+            modifier = Modifier
+                .size(66.dp)
+                .clip(CircleShape)
+                .background(
+                    if (compactInstagramStyle) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+                .border(
+                    border = BorderStroke(
+                        width = if (compactInstagramStyle) 1.2.dp else 1.5.dp,
+                        color = if (compactInstagramStyle) {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant
+                        }
+                    ),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = "New Highlight",
+                tint = if (compactInstagramStyle) MaterialTheme.colorScheme.onSurface else CoralRose,
+                modifier = Modifier.size(28.dp)
+            )
+        }
+        Text(
+            text = "New",
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp),
+            fontWeight = FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }

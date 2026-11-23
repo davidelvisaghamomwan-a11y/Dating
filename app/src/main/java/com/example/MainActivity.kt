@@ -1144,36 +1144,31 @@ private fun MainKindredApp(
                                 }
 
                                 composable(ROUTE_PROFILE) {
+                                    val myFeedPosts = remember(feedPostsState, viewModel.currentUserId) {
+                                        feedPostsState.filter { it.userId == viewModel.currentUserId }
+                                    }
+                                    val savedFeedPosts = remember(feedPostsState, viewModel.currentUserId) {
+                                        feedPostsState.filter { viewModel.currentUserId in it.savedByUids }
+                                    }
                                     ProfileScreen(
                                         currentUserId = viewModel.currentUserId,
                                         userEmail = viewModel.userEmail,
                                         defaultDisplayName = viewModel.defaultDisplayName,
                                         myProfile = data.myProfile,
-                                        privateUser = data.privateUser,
-                                        isBusy = isBusy,
-                                        latestLocation = latestLocation,
-                                        onSaveProfile = { name, age, gender, bio, city, country, lat, lng, interests, photo, photos, discoverable, interestedIn, minAge, maxAge, maxDist, verifiedOnly ->
-                                            viewModel.saveProfile(
-                                                displayName = name,
-                                                age = age,
-                                                gender = gender,
-                                                bio = bio,
-                                                cityLabel = city,
-                                                country = country,
-                                                latitude = lat,
-                                                longitude = lng,
-                                                interests = interests,
-                                                photoDataUrl = photo,
-                                                profilePhotos = photos,
-                                                discoverable = discoverable,
-                                                interestedIn = interestedIn,
-                                                minAgePref = minAge,
-                                                maxAgePref = maxAge,
-                                                maxDistanceKm = maxDist,
-                                                verifiedOnlyFilter = verifiedOnly,
-                                                dateOfBirth = data.myProfile?.dateOfBirth.orEmpty(),
-                                                profileCompleted = true
-                                            )
+                                        myPosts = myFeedPosts,
+                                        savedPosts = savedFeedPosts,
+                                        profilesByUid = profilesByUid,
+                                        myVideos = myShowcaseVideos,
+                                        highlights = myHighlights,
+                                        archivedStories = myStoryArchive,
+                                        friendsCount = friendsCount,
+                                        whoLikedMeCount = whoLikedMeState.size,
+                                        profileViewCount = profileViewsState.size,
+                                        incomingFriendRequestCount = incomingFriendRequestCount,
+                                        isAdmin = isAdminUser,
+                                        friendStatusForUid = { uid -> friendStatusForUid(uid) },
+                                        onFriendAction = { target ->
+                                            handleFriendAction(target.userId, friendStatusForUid(target.userId))
                                         },
                                         onEditProfile = {
                                             navController.navigate(ROUTE_EDIT_PROFILE) {
@@ -1185,33 +1180,6 @@ private fun MainKindredApp(
                                                 launchSingleTop = true
                                             }
                                         },
-                                        blockedUsers = data.blockedUsers,
-                                        onUnblockUser = { targetUid ->
-                                            viewModel.unblockUser(targetUid)
-                                        },
-                                        onNotificationsGranted = {
-                                            viewModel.syncFcmToken()
-                                        },
-                                        onBeforeSignOut = {
-                                            KindredNotificationHelper.activeMatchIdInForeground = null
-                                            KindredBackgroundService.stop(context)
-                                            selectedMatchId?.let { viewModel.setTypingStatus(it, false) }
-                                            viewModel.unregisterFcmTokenOnSignOut()
-                                            viewModel.updatePresenceNow(false)
-                                        },
-                                        myVideos = myShowcaseVideos,
-                                        onUploadVideo = { caption, prepared ->
-                                            viewModel.uploadProfileVideo(caption, prepared)
-                                        },
-                                        onDeleteVideo = { videoId ->
-                                            viewModel.deleteProfileVideo(viewModel.currentUserId, videoId)
-                                        },
-                                        incomingFriendRequestCount = incomingFriendRequestCount,
-                                        friendsCount = friendsCount,
-                                        whoLikedMeCount = whoLikedMeState.size,
-                                        profileViewCount = profileViewsState.size,
-                                        activeOnlineCount = activeOnlineCount,
-                                        isAdmin = isAdminUser,
                                         onOpenFriendsHub = {
                                             navController.navigate(ROUTE_FRIENDS_HUB) {
                                                 launchSingleTop = true
@@ -1222,36 +1190,67 @@ private fun MainKindredApp(
                                                 launchSingleTop = true
                                             }
                                         },
-                                        onOpenActiveUsers = {
-                                            navController.navigate(ROUTE_ACTIVE_USERS) {
+                                        onOpenAdminDashboard = {
+                                            navController.navigate(ROUTE_ADMIN_DASHBOARD) {
                                                 launchSingleTop = true
                                             }
+                                        },
+                                        onOpenVerification = {
+                                            navigateToTab(ROUTE_VERIFY)
                                         },
                                         onOpenVideoFeed = {
                                             navController.navigate(ROUTE_VIDEO_FEED) {
                                                 launchSingleTop = true
                                             }
                                         },
-                                        onOpenAdminDashboard = {
-                                            navController.navigate(ROUTE_ADMIN_DASHBOARD) {
-                                                launchSingleTop = true
-                                            }
+                                        onOpenCreatePost = {
+                                            showGlobalCreatePostSheet = true
                                         },
-                                        onUpdatePrivacy = { hideOnline, photosVis, videosVis, infoVis ->
-                                            viewModel.updatePrivacyAndHideOnline(
-                                                hideOnlineStatus = hideOnline,
-                                                photosVisibility = photosVis,
-                                                videosVisibility = videosVis,
-                                                infoVisibility = infoVis
-                                            )
+                                        onOpenCreateStory = {
+                                            showGlobalCreateStoryStudio = true
                                         },
-                                        highlights = myHighlights,
-                                        archivedStories = myStoryArchive,
+                                        onOpenUserProfile = { targetUid ->
+                                            openUserProfileRoute(targetUid)
+                                        },
+                                        onToggleFeedPostLike = { postId, currentlyLiked ->
+                                            viewModel.toggleFeedPostLike(postId, currentlyLiked)
+                                        },
+                                        onToggleFeedPostSave = { postId, currentlySaved ->
+                                            viewModel.toggleFeedPostSave(postId, currentlySaved)
+                                        },
+                                        observeFeedComments = { postId ->
+                                            viewModel.observeFeedComments(postId)
+                                        },
+                                        onAddFeedPostComment = { postId, text, onDone ->
+                                            viewModel.addFeedPostComment(postId, text, onDone)
+                                        },
+                                        onDeleteFeedPostComment = { postId, commentId ->
+                                            viewModel.deleteFeedPostComment(postId, commentId)
+                                        },
+                                        onDeleteFeedPost = { postId ->
+                                            viewModel.deleteFeedPost(postId)
+                                        },
+                                        resolveFeedPostVideoFile = { post ->
+                                            viewModel.resolveFeedPostVideoFile(context, post)
+                                        },
+                                        resolveProfileVideoFile = { videoItem ->
+                                            viewModel.resolveProfileVideoFile(context, viewModel.currentUserId, videoItem)
+                                        },
+                                        onDeleteVideo = { videoId ->
+                                            viewModel.deleteProfileVideo(viewModel.currentUserId, videoId)
+                                        },
                                         onCreateHighlight = { title, coverUrl, items ->
                                             viewModel.createStoryHighlight(title, coverUrl, items)
                                         },
                                         onDeleteHighlight = { highlightId ->
                                             viewModel.deleteStoryHighlight(highlightId)
+                                        },
+                                        onBeforeSignOut = {
+                                            KindredNotificationHelper.activeMatchIdInForeground = null
+                                            KindredBackgroundService.stop(context)
+                                            selectedMatchId?.let { viewModel.setTypingStatus(it, false) }
+                                            viewModel.unregisterFcmTokenOnSignOut()
+                                            viewModel.updatePresenceNow(false)
                                         },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
@@ -1308,7 +1307,47 @@ private fun MainKindredApp(
                                         myProfile = data.myProfile,
                                         privateUser = data.privateUser,
                                         isBusy = isBusy,
+                                        blockedUsers = data.blockedUsers,
+                                        isAdmin = isAdminUser,
                                         onBack = { navController.popBackStack() },
+                                        onOpenEditProfile = {
+                                            navController.navigate(ROUTE_EDIT_PROFILE) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenVerification = {
+                                            navController.navigate(ROUTE_VERIFY) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenFriendsHub = {
+                                            navController.navigate(ROUTE_FRIENDS_HUB) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenWhoLikesMe = {
+                                            navController.navigate(ROUTE_WHO_LIKES_ME) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onOpenAdminDashboard = {
+                                            navController.navigate(ROUTE_ADMIN_DASHBOARD) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onUnblockUser = { targetUid ->
+                                            viewModel.unblockUser(targetUid)
+                                        },
+                                        onNotificationsGranted = {
+                                            viewModel.syncFcmToken()
+                                        },
+                                        onBeforeSignOut = {
+                                            KindredNotificationHelper.activeMatchIdInForeground = null
+                                            KindredBackgroundService.stop(context)
+                                            selectedMatchId?.let { viewModel.setTypingStatus(it, false) }
+                                            viewModel.unregisterFcmTokenOnSignOut()
+                                            viewModel.updatePresenceNow(false)
+                                        },
                                         onSavePreferences = { interestedIn, minAge, maxAge, maxDist, verifiedOnly, myGender, discoverable ->
                                             viewModel.saveSettingsPreferences(
                                                 interestedIn = interestedIn,
@@ -1341,6 +1380,9 @@ private fun MainKindredApp(
                                                 },
                                                 onRequiresRecentLogin = {}
                                             )
+                                        },
+                                        onStatusMessage = { msg ->
+                                            viewModel.postStatusMessage(msg)
                                         }
                                     )
                                 }

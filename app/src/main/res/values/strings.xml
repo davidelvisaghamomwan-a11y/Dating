@@ -55,8 +55,8 @@
     <string name="fcm_social_channel_name">Likes, Comments &amp; Activity</string>
     <string name="btn_enable_notifications">Enable Push Alerts</string>
     <string name="btn_unblock">Unblock</string>
-    <string name="settings_title">Dating Preferences</string>
-    <string name="settings_cd">Dating preferences settings</string>
+    <string name="settings_title">Settings and activity</string>
+    <string name="settings_cd">Settings and activity</string>
     <string name="settings_back_cd">Back from settings</string>
     <string name="btn_save_preferences">Save Preferences</string>
     <string name="chat_voice_call_cd">Start voice call</string>
