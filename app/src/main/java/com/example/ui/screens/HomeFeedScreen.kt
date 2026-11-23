@@ -344,25 +344,11 @@ fun HomeFeedScreen(
                     }
                 }
 
-                // Top Right: Search, Activity Heart (with badge), Direct Messages Send (with badge)
+                // Top Right: Activity Heart (with badge) & Direct Messages Send (with badge)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    IconButton(
-                        onClick = onOpenSearch,
-                        modifier = Modifier
-                            .size(42.dp)
-                            .testTag("home_search_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Search,
-                            contentDescription = "Search",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(25.dp)
-                        )
-                    }
-
                     IconButton(
                         onClick = { showNotificationsSheet = true },
                         modifier = Modifier

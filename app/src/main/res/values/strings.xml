@@ -5,6 +5,7 @@
     <string name="create_account_with_google">Create Account with Google</string>
     <string name="signing_in">Signing in...</string>
     <string name="nav_home">Home</string>
+    <string name="nav_search">Search</string>
     <string name="nav_create">Create</string>
     <string name="nav_reels">Reels</string>
     <string name="nav_matches">Inbox</string>

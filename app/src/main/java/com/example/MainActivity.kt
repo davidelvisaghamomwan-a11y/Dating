@@ -114,6 +114,7 @@ import com.example.ui.screens.ActiveUsersScreen
 import com.example.ui.screens.AdminDashboardScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.EditProfileScreen
+import com.example.ui.screens.ExploreSearchScreen
 import com.example.ui.screens.HomeFeedScreen
 import com.example.ui.screens.FriendsHubScreen
 import com.example.ui.screens.MatchesAndChatScreen
@@ -150,6 +151,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 const val ROUTE_HOME = "home"
+const val ROUTE_SEARCH = "search"
 const val ROUTE_MATCHES = "matches"
 const val ROUTE_VERIFY = "verify"
 const val ROUTE_PROFILE = "profile"
@@ -179,11 +181,11 @@ private val NAV_TABS = listOf(
         testTag = "nav_home_tab"
     ),
     NavTabItem(
-        route = ROUTE_VIDEO_FEED,
-        labelRes = R.string.nav_reels,
-        selectedIcon = Icons.Filled.Movie,
-        unselectedIcon = Icons.Outlined.Movie,
-        testTag = "nav_reels_tab"
+        route = ROUTE_SEARCH,
+        labelRes = R.string.nav_search,
+        selectedIcon = Icons.Filled.Search,
+        unselectedIcon = Icons.Outlined.Search,
+        testTag = "nav_search_tab"
     ),
     NavTabItem(
         route = "create",
@@ -193,11 +195,11 @@ private val NAV_TABS = listOf(
         testTag = "nav_create_tab"
     ),
     NavTabItem(
-        route = ROUTE_MATCHES,
-        labelRes = R.string.nav_matches,
-        selectedIcon = Icons.Filled.ChatBubble,
-        unselectedIcon = Icons.Outlined.ChatBubbleOutline,
-        testTag = "nav_matches_tab"
+        route = ROUTE_VIDEO_FEED,
+        labelRes = R.string.nav_reels,
+        selectedIcon = Icons.Filled.Movie,
+        unselectedIcon = Icons.Outlined.Movie,
+        testTag = "nav_reels_tab"
     ),
     NavTabItem(
         route = ROUTE_PROFILE,
@@ -901,7 +903,7 @@ private fun MainKindredApp(
                                         onLocationError = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         },
-                                        onOpenSearch = { showSearchSheet = true },
+                                        onOpenSearch = { navigateToTab(ROUTE_SEARCH) },
                                         onLocationPermissionGranted = {
                                             hasLocationPermission = true
                                         },
@@ -986,6 +988,49 @@ private fun MainKindredApp(
                                         },
                                         onNavigateToInbox = {
                                             navigateToTab(ROUTE_MATCHES)
+                                        }
+                                    )
+                                }
+
+                                composable(ROUTE_SEARCH) {
+                                    ExploreSearchScreen(
+                                        currentUserId = viewModel.currentUserId,
+                                        myProfile = data.myProfile,
+                                        searchableProfiles = data.searchableProfiles,
+                                        feedPosts = feedPostsState,
+                                        profilesByUid = profilesByUid,
+                                        friendStatusForUid = { uid -> friendStatusForUid(uid) },
+                                        onFriendAction = { target ->
+                                            handleFriendAction(target.userId, friendStatusForUid(target.userId))
+                                        },
+                                        onOpenUserProfile = { targetUid ->
+                                            openUserProfileRoute(targetUid)
+                                        },
+                                        onMessageProfile = { targetProfile ->
+                                            viewModel.startDirectConversation(targetProfile) {
+                                                navigateToTab(ROUTE_MATCHES)
+                                            }
+                                        },
+                                        onToggleFeedPostLike = { postId, currentlyLiked ->
+                                            viewModel.toggleFeedPostLike(postId, currentlyLiked)
+                                        },
+                                        onToggleFeedPostSave = { postId, currentlySaved ->
+                                            viewModel.toggleFeedPostSave(postId, currentlySaved)
+                                        },
+                                        observeFeedComments = { postId ->
+                                            viewModel.observeFeedComments(postId)
+                                        },
+                                        onAddFeedPostComment = { postId, text, onDone ->
+                                            viewModel.addFeedPostComment(postId, text, onDone)
+                                        },
+                                        onDeleteFeedPostComment = { postId, commentId ->
+                                            viewModel.deleteFeedPostComment(postId, commentId)
+                                        },
+                                        onDeleteFeedPost = { postId ->
+                                            viewModel.deleteFeedPost(postId)
+                                        },
+                                        resolveFeedPostVideoFile = { post ->
+                                            viewModel.resolveFeedPostVideoFile(context, post)
                                         }
                                     )
                                 }
