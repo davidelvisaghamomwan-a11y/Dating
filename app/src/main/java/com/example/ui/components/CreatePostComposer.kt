@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
@@ -180,6 +181,7 @@ fun CreatePostComposerSheet(
     myProfile: PublicProfile?,
     initialPhotos: List<String> = emptyList(),
     initialVideo: PreparedVideoUpload? = null,
+    onCreateStoryClick: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onPublish: (caption: String, photoDataUrl: String?, photoUrls: List<String>, video: PreparedVideoUpload?) -> Unit
 ) {
@@ -499,6 +501,22 @@ fun CreatePostComposerSheet(
                         Icon(Icons.Filled.VideoLibrary, contentDescription = null, tint = CoralRose)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Add Video")
+                    }
+                }
+
+                if (onCreateStoryClick != null) {
+                    FilledTonalButton(
+                        onClick = {
+                            onDismiss()
+                            onCreateStoryClick()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("composer_switch_to_story_btn")
+                    ) {
+                        Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = CoralRose)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Or Capture 24h Camera Story")
                     }
                 }
 

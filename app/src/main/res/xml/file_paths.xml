@@ -3,4 +3,7 @@
     <cache-path
         name="chat_video_capture"
         path="chat_video_capture/" />
+    <cache-path
+        name="story_media_capture"
+        path="story_media_capture/" />
 </paths>

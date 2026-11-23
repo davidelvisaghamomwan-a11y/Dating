@@ -1996,25 +1996,43 @@ class KindredViewModel(
 
     // --- 24-Hour Stories ---
 
-    fun postPhotoStory(photoDataUrl: String, caption: String) {
+    fun postPhotoStory(
+        photoDataUrl: String,
+        caption: String,
+        onComplete: (Boolean) -> Unit = {}
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
             val res = socialRepo.postPhotoStory(snap?.myProfile, defaultDisplayName, photoDataUrl, caption)
             _isBusy.value = false
-            res.onSuccess { _actionStatusMessage.value = "Story shared for 24 hours!" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not share story" }
+            res.onSuccess {
+                _actionStatusMessage.value = "Story shared for 24 hours!"
+                onComplete(true)
+            }.onFailure {
+                _actionStatusMessage.value = it.localizedMessage ?: "Could not share story"
+                onComplete(false)
+            }
         }
     }
 
-    fun postVideoStory(prepared: PreparedVideoUpload, caption: String) {
+    fun postVideoStory(
+        prepared: PreparedVideoUpload,
+        caption: String,
+        onComplete: (Boolean) -> Unit = {}
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
             val res = socialRepo.postVideoStory(snap?.myProfile, defaultDisplayName, prepared, caption)
             _isBusy.value = false
-            res.onSuccess { _actionStatusMessage.value = "Video story shared for 24 hours!" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not share story" }
+            res.onSuccess {
+                _actionStatusMessage.value = "Video story shared for 24 hours!"
+                onComplete(true)
+            }.onFailure {
+                _actionStatusMessage.value = it.localizedMessage ?: "Could not share story"
+                onComplete(false)
+            }
         }
     }
 

@@ -93,69 +93,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StoriesTrayRow(
     myProfile: PublicProfile?,
     stories: List<StoryItem>,
     currentUserId: String,
     onOpenStory: (Int) -> Unit,
-    onPostPhotoStory: (photoDataUrl: String, caption: String) -> Unit,
-    onPostVideoStory: (prepared: PreparedVideoUpload, caption: String) -> Unit,
+    onPostPhotoStory: (photoDataUrl: String, caption: String, onComplete: (Boolean) -> Unit) -> Unit,
+    onPostVideoStory: (prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean) -> Unit) -> Unit,
     onOpenVideoFeed: () -> Unit = {},
     onStatusMessage: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var showCreateStorySheet by remember { mutableStateOf(false) }
-    var pendingStoryCaption by remember { mutableStateOf("") }
-    var pendingPhotoDataUrl by remember { mutableStateOf<String?>(null) }
-    var pendingPreparedVideo by remember { mutableStateOf<PreparedVideoUpload?>(null) }
-    var isPreparingMedia by remember { mutableStateOf(false) }
-
-    val photoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            scope.launch {
-                isPreparingMedia = true
-                val dataUrl = VerificationAnalyzer.compressUriForFeedPostDataUrl(
-                    context = context,
-                    uri = uri,
-                    maxDim = 1280,
-                    maxRawBytes = 320_000
-                )
-                isPreparingMedia = false
-                if (dataUrl != null) {
-                    pendingPreparedVideo = null
-                    pendingPhotoDataUrl = dataUrl
-                    showCreateStorySheet = true
-                } else {
-                    onStatusMessage("Could not load photo for story")
-                }
-            }
-        }
-    }
-
-    val videoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            scope.launch {
-                isPreparingMedia = true
-                val prepared = VideoClipHelper.prepareVideoForUpload(context, uri)
-                isPreparingMedia = false
-                prepared.onSuccess { clip ->
-                    pendingPhotoDataUrl = null
-                    pendingPreparedVideo = clip
-                    showCreateStorySheet = true
-                }.onFailure { err ->
-                    onStatusMessage(err.localizedMessage ?: "Could not prepare story video")
-                }
-            }
-        }
-    }
+    var showCreateStoryStudio by remember { mutableStateOf(false) }
 
     LazyRow(
         modifier = modifier
@@ -170,7 +120,7 @@ fun StoriesTrayRow(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .width(74.dp)
-                    .clickable { showCreateStorySheet = true }
+                    .clickable { showCreateStoryStudio = true }
                     .testTag("add_story_button")
             ) {
                 Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
@@ -271,110 +221,15 @@ fun StoriesTrayRow(
         }
     }
 
-    if (showCreateStorySheet) {
-        ModalBottomSheet(
-            onDismissRequest = {
-                showCreateStorySheet = false
-                pendingPhotoDataUrl = null
-                pendingPreparedVideo = null
-                pendingStoryCaption = ""
-            },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 24.dp)
-                    .testTag("create_story_sheet"),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text("Share 24h Story", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(
-                    text = "Share a moment with nearby Kindred members and friends for 24 hours.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (isPreparingMedia) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), color = CoralRose, strokeWidth = 2.dp)
-                        Text("Preparing media…", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-
-                if (pendingPhotoDataUrl == null && pendingPreparedVideo == null) {
-                    FilledTonalButton(
-                        onClick = {
-                            photoLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .testTag("pick_photo_story_button")
-                    ) {
-                        Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Pick Photo Story")
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            videoLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .testTag("pick_video_story_button")
-                    ) {
-                        Icon(Icons.Filled.VideoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Pick Video Story")
-                    }
-                } else {
-                    OutlinedTextField(
-                        value = pendingStoryCaption,
-                        onValueChange = { if (it.length <= 160) pendingStoryCaption = it },
-                        label = { Text("Caption (optional)") },
-                        maxLines = 3,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("story_caption_input")
-                    )
-                    Button(
-                        onClick = {
-                            val photo = pendingPhotoDataUrl
-                            val vid = pendingPreparedVideo
-                            val cap = pendingStoryCaption.trim()
-                            showCreateStorySheet = false
-                            pendingPhotoDataUrl = null
-                            pendingPreparedVideo = null
-                            pendingStoryCaption = ""
-                            if (photo != null) {
-                                onPostPhotoStory(photo, cap)
-                            } else if (vid != null) {
-                                onPostVideoStory(vid, cap)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .testTag("publish_story_button")
-                    ) {
-                        Text("Publish Story", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
+    if (showCreateStoryStudio) {
+        CreateStoryStudioDialog(
+            myProfile = myProfile,
+            currentUserId = currentUserId,
+            onPostPhotoStory = onPostPhotoStory,
+            onPostVideoStory = onPostVideoStory,
+            onStatusMessage = onStatusMessage,
+            onDismiss = { showCreateStoryStudio = false }
+        )
     }
 }
 

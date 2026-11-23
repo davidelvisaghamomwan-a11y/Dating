@@ -104,6 +104,7 @@ import com.example.notifications.KindredNotificationHelper
 import com.example.security.configureAppCheck
 import com.example.service.GeoHashMatchingService
 import com.example.ui.components.CreatePostComposerSheet
+import com.example.ui.components.CreateStoryStudioDialog
 import com.example.ui.components.FullscreenIncomingCallDialog
 import com.example.ui.components.InAppCallOverlay
 import com.example.ui.components.NewMatchCelebrationDialog
@@ -383,6 +384,7 @@ private fun MainKindredApp(
         viewModel.observeUserStoriesArchive(user.uid)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
     var showGlobalCreatePostSheet by remember { mutableStateOf(false) }
+    var showGlobalCreateStoryStudio by remember { mutableStateOf(false) }
     val isAdminUser by viewModel.isAdminUser.collectAsStateWithLifecycle()
     val adminReportsState by viewModel.adminReportsState.collectAsStateWithLifecycle()
     val adminAllProfilesState by viewModel.adminAllProfilesState.collectAsStateWithLifecycle()
@@ -910,11 +912,11 @@ private fun MainKindredApp(
                                             }
                                         },
                                         stories = activeStoriesState,
-                                        onPostPhotoStory = { photoUrl, caption ->
-                                            viewModel.postPhotoStory(photoUrl, caption)
+                                        onPostPhotoStory = { photoUrl, caption, onDone ->
+                                            viewModel.postPhotoStory(photoUrl, caption, onDone)
                                         },
-                                        onPostVideoStory = { prepared, caption ->
-                                            viewModel.postVideoStory(prepared, caption)
+                                        onPostVideoStory = { prepared, caption, onDone ->
+                                            viewModel.postVideoStory(prepared, caption, onDone)
                                         },
                                         onMarkStoryViewed = { storyId ->
                                             viewModel.markStoryViewed(storyId)
@@ -1618,10 +1620,29 @@ private fun MainKindredApp(
                             if (showGlobalCreatePostSheet) {
                                 CreatePostComposerSheet(
                                     myProfile = data.myProfile,
+                                    onCreateStoryClick = {
+                                        showGlobalCreateStoryStudio = true
+                                    },
                                     onDismiss = { showGlobalCreatePostSheet = false },
                                     onPublish = { caption, photoDataUrl, photoUrls, video ->
                                         viewModel.publishFeedPost(caption, photoDataUrl, photoUrls, video) {}
                                     }
+                                )
+                            }
+                            if (showGlobalCreateStoryStudio) {
+                                CreateStoryStudioDialog(
+                                    myProfile = data.myProfile,
+                                    currentUserId = viewModel.currentUserId,
+                                    onPostPhotoStory = { photoUrl, caption, onDone ->
+                                        viewModel.postPhotoStory(photoUrl, caption, onDone)
+                                    },
+                                    onPostVideoStory = { prepared, caption, onDone ->
+                                        viewModel.postVideoStory(prepared, caption, onDone)
+                                    },
+                                    onStatusMessage = { msg ->
+                                        viewModel.postStatusMessage(msg)
+                                    },
+                                    onDismiss = { showGlobalCreateStoryStudio = false }
                                 )
                             }
                         }

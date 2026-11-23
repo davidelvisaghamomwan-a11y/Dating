@@ -276,4 +276,20 @@ object VideoClipHelper {
         val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
         return file to uri
     }
+
+    fun createCaptureStoryPhotoUri(context: Context): Pair<File, Uri> {
+        val dir = File(context.cacheDir, "story_media_capture").apply { mkdirs() }
+        val file = File(dir, "story_photo_${System.currentTimeMillis()}.jpg")
+        val authority = "${context.packageName}.fileprovider"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+        return file to uri
+    }
+
+    fun createCaptureStoryVideoUri(context: Context): Pair<File, Uri> {
+        val dir = File(context.cacheDir, "story_media_capture").apply { mkdirs() }
+        val file = File(dir, "story_video_${System.currentTimeMillis()}.mp4")
+        val authority = "${context.packageName}.fileprovider"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+        return file to uri
+    }
 }
