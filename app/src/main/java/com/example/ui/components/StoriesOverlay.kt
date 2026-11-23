@@ -3,9 +3,9 @@ package com.example.ui.components
 import android.net.Uri
 import android.view.ViewGroup
 import android.widget.VideoView
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -37,35 +38,22 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,8 +62,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,13 +70,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.model.PublicProfile
 import com.example.model.StoryItem
-import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.util.PreparedVideoUpload
 import com.example.util.VerificationAnalyzer
-import com.example.util.VideoClipHelper
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable
@@ -256,6 +238,9 @@ fun StoryViewerDialog(
     var resolvedVideo by remember(story.id) { mutableStateOf<File?>(null) }
     var isLoadingVideo by remember(story.id) { mutableStateOf(false) }
 
+    // Smooth remaining-time progress bar animation for the active story
+    val progressAnim = remember(story.id) { Animatable(0f) }
+
     LaunchedEffect(story.id) {
         if (story.id.isNotBlank() && currentUserId !in story.viewerUids) {
             onMarkViewed(story.id)
@@ -265,7 +250,11 @@ fun StoryViewerDialog(
             resolvedVideo = resolveVideoFile(story).getOrNull()
             isLoadingVideo = false
         } else {
-            delay(6_000L)
+            progressAnim.snapTo(0f)
+            progressAnim.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 6000, easing = LinearEasing)
+            )
             if (activeIndex < stories.lastIndex) {
                 activeIndex += 1
             } else {
@@ -341,13 +330,19 @@ fun StoryViewerDialog(
                     .padding(top = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Top Progress Bar Indicators matching Instagram story view
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     stories.indices.forEach { idx ->
+                        val pVal = when {
+                            idx < activeIndex -> 1f
+                            idx == activeIndex -> if (story.mediaType == "VIDEO") 1f else progressAnim.value
+                            else -> 0f
+                        }
                         LinearProgressIndicator(
-                            progress = { if (idx <= activeIndex) 1f else 0f },
+                            progress = { pVal },
                             color = CoralRose,
                             trackColor = Color.White.copy(alpha = 0.3f),
                             modifier = Modifier
