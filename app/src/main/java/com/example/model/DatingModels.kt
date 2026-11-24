@@ -526,10 +526,12 @@ data class FeedComment(
     @DocumentId val id: String = "",
     val postId: String = "",
     val userId: String = "",
+    val authorId: String = "",
     val authorName: String = "",
     val authorPhoto: String? = null,
     val authorVerified: Boolean = false,
     val text: String = "",
+    val likedByUids: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 

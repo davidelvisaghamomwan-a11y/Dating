@@ -204,6 +204,7 @@ fun HomeFeedScreen(
     observeFeedComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
     onAddFeedPostComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, cb -> cb() },
     onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
+    onToggleCommentLike: (postId: String, commentId: String, currentlyLiked: Boolean) -> Unit = { _, _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
     onToggleVideoPostLike: (postId: String, currentlyLiked: Boolean) -> Unit = { _, _ -> },
@@ -752,6 +753,7 @@ fun HomeFeedScreen(
             observeComments = observeFeedComments,
             onAddComment = onAddFeedPostComment,
             onDeleteComment = onDeleteFeedPostComment,
+            onToggleCommentLike = onToggleCommentLike,
             onOpenProfile = onOpenUserProfileById,
             onDismiss = { activeCommentsPost = null }
         )

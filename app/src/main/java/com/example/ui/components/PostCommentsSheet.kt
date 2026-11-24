@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.FeedComment
 import com.example.model.FeedPost
@@ -64,6 +67,7 @@ fun PostCommentsSheet(
     observeComments: (String) -> Flow<List<FeedComment>>,
     onAddComment: (postId: String, text: String, onDone: () -> Unit) -> Unit,
     onDeleteComment: (postId: String, commentId: String) -> Unit,
+    onToggleCommentLike: (postId: String, commentId: String, currentlyLiked: Boolean) -> Unit = { _, _, _ -> },
     onOpenProfile: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -237,17 +241,41 @@ fun PostCommentsSheet(
                                 }
                             }
 
-                            if (comment.userId == currentUserId || post.userId == currentUserId) {
+                            val isCommentLiked = currentUserId in comment.likedByUids
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 IconButton(
-                                    onClick = { onDeleteComment(post.id, comment.id) },
+                                    onClick = { onToggleCommentLike(post.id, comment.id, isCommentLiked) },
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Filled.DeleteOutline,
-                                        contentDescription = "Delete comment",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
+                                        imageVector = if (isCommentLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                        contentDescription = "Like comment",
+                                        tint = if (isCommentLiked) CoralRose else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(15.dp)
                                     )
+                                }
+                                if (comment.likedByUids.isNotEmpty()) {
+                                    Text(
+                                        text = "${comment.likedByUids.size}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (comment.userId == currentUserId || post.userId == currentUserId) {
+                                    IconButton(
+                                        onClick = { onDeleteComment(post.id, comment.id) },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.DeleteOutline,
+                                            contentDescription = "Delete comment",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

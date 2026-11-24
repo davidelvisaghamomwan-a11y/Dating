@@ -1112,10 +1112,10 @@ class SocialAndMediaRepository(
 
     fun observePostComments(postId: String, viewerUid: String): Flow<List<FeedComment>> {
         if (postId.isBlank() || viewerUid.isBlank()) return flowOf(emptyList())
-        val path = "feedPosts/$postId/comments"
+        val path = "posts/$postId/comments"
         return flow {
             emitAll(
-                db.collection("feedPosts")
+                db.collection("posts")
                     .document(postId)
                     .collection("comments")
                     .snapshots()
@@ -1361,18 +1361,24 @@ class SocialAndMediaRepository(
         if (cleanText.isBlank()) {
             return Result.failure(IllegalArgumentException("Comment cannot be empty."))
         }
-        var docPath = "feedPosts/$postId/comments"
+        var docPath = "posts/$postId/comments"
         return try {
             val uid = requireUserId()
-            val postRef = db.collection("feedPosts").document(postId)
-            val commentRef = postRef.collection("comments").document()
-            docPath = commentRef.path
+            val commentId = db.collection("posts").document(postId).collection("comments").document().id
+            val postRef1 = db.collection("posts").document(postId)
+            val commentRef1 = postRef1.collection("comments").document(commentId)
+            val postRef2 = db.collection("feedPosts").document(postId)
+            val commentRef2 = postRef2.collection("comments").document(commentId)
+
+            docPath = commentRef1.path
             val payload = mutableMapOf<String, Any>(
                 "postId" to postId,
                 "userId" to uid,
+                "authorId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
                 "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "text" to cleanText,
+                "likedByUids" to emptyList<String>(),
                 "createdAt" to FieldValue.serverTimestamp()
             )
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
@@ -1380,10 +1386,14 @@ class SocialAndMediaRepository(
                 payload["authorPhoto"] = authorPhoto
             }
             val batch = db.batch()
-            batch.set(commentRef, payload)
-            batch.update(postRef, "commentCount", FieldValue.increment(1L))
+            batch.set(commentRef1, payload)
+            batch.set(commentRef2, payload)
+            batch.update(postRef1, "commentCount", FieldValue.increment(1L))
+            batch.update(postRef1, "commentsCount", FieldValue.increment(1L))
+            batch.update(postRef2, "commentCount", FieldValue.increment(1L))
+            batch.update(postRef2, "commentsCount", FieldValue.increment(1L))
             batch.commit().await()
-            Result.success(commentRef.id)
+            Result.success(commentId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1393,21 +1403,48 @@ class SocialAndMediaRepository(
     }
 
     suspend fun deleteFeedPostComment(postId: String, commentId: String): Result<Unit> {
-        var docPath = "feedPosts/$postId/comments/$commentId"
+        var docPath = "posts/$postId/comments/$commentId"
         return try {
             requireUserId()
-            val postRef = db.collection("feedPosts").document(postId)
-            val commentRef = postRef.collection("comments").document(commentId)
-            docPath = commentRef.path
+            val postRef1 = db.collection("posts").document(postId)
+            val commentRef1 = postRef1.collection("comments").document(commentId)
+            val postRef2 = db.collection("feedPosts").document(postId)
+            val commentRef2 = postRef2.collection("comments").document(commentId)
+            docPath = commentRef1.path
             val batch = db.batch()
-            batch.delete(commentRef)
-            batch.update(postRef, "commentCount", FieldValue.increment(-1L))
+            batch.delete(commentRef1)
+            batch.delete(commentRef2)
+            batch.update(postRef1, "commentCount", FieldValue.increment(-1L))
+            batch.update(postRef1, "commentsCount", FieldValue.increment(-1L))
+            batch.update(postRef2, "commentCount", FieldValue.increment(-1L))
+            batch.update(postRef2, "commentsCount", FieldValue.increment(-1L))
             batch.commit().await()
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun toggleCommentLike(postId: String, commentId: String, currentlyLiked: Boolean): Result<Unit> {
+        var docPath = "posts/$postId/comments/$commentId"
+        return try {
+            val uid = requireUserId()
+            val ref1 = db.collection("posts").document(postId).collection("comments").document(commentId)
+            val ref2 = db.collection("feedPosts").document(postId).collection("comments").document(commentId)
+            docPath = ref1.path
+            val op = if (currentlyLiked) FieldValue.arrayRemove(uid) else FieldValue.arrayUnion(uid)
+            val batch = db.batch()
+            batch.update(ref1, "likedByUids", op)
+            batch.update(ref2, "likedByUids", op)
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
             Result.failure(e)
         }
     }

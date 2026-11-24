@@ -2156,6 +2156,12 @@ class KindredViewModel(
         }
     }
 
+    fun toggleCommentLike(postId: String, commentId: String, currentlyLiked: Boolean) {
+        viewModelScope.launch {
+            socialRepo.toggleCommentLike(postId, commentId, currentlyLiked)
+        }
+    }
+
     fun deleteFeedPost(postId: String) {
         viewModelScope.launch {
             socialRepo.deleteFeedPost(postId)
