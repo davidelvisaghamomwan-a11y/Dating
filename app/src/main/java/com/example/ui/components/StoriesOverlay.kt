@@ -75,6 +75,33 @@ import com.example.util.PreparedVideoUpload
 import com.example.util.VerificationAnalyzer
 import java.io.File
 
+private val InstagramStoryGradient = Brush.sweepGradient(
+    listOf(
+        Color(0xFFFBAA47),
+        Color(0xFFD91A46),
+        Color(0xFFA60F93),
+        Color(0xFF833AB4),
+        Color(0xFF4F5BD5),
+        Color(0xFFFBAA47)
+    )
+)
+
+private val ViewedStoryGrayBrush = Brush.linearGradient(
+    listOf(
+        Color(0xFF8E8E93),
+        Color(0xFF8E8E93)
+    )
+)
+
+private data class StoryAuthorTrayItem(
+    val authorId: String,
+    val authorName: String,
+    val authorPhoto: String?,
+    val targetStoryIndex: Int,
+    val allViewed: Boolean,
+    val representativeStoryId: String
+)
+
 @Composable
 fun StoriesTrayRow(
     myProfile: PublicProfile?,
@@ -89,6 +116,34 @@ fun StoriesTrayRow(
 ) {
     var showCreateStoryStudio by remember { mutableStateOf(false) }
 
+    val myStories = remember(stories, currentUserId) { stories.filter { it.userId == currentUserId } }
+    val myFirstStoryIndex = remember(stories, currentUserId) { stories.indexOfFirst { it.userId == currentUserId } }
+    val hasMyStory = myFirstStoryIndex >= 0
+    val isMyStoryAllViewed = hasMyStory && myStories.all { currentUserId in it.viewerUids }
+
+    val otherStoryAuthors = remember(stories, currentUserId) {
+        val authorMap = linkedMapOf<String, MutableList<Pair<Int, StoryItem>>>()
+        stories.forEachIndexed { index, story ->
+            if (story.userId != currentUserId) {
+                authorMap.getOrPut(story.userId) { mutableListOf() }.add(index to story)
+            }
+        }
+        authorMap.map { (uid, storyPairs) ->
+            val unviewedPair = storyPairs.firstOrNull { currentUserId !in it.second.viewerUids }
+            val targetPair = unviewedPair ?: storyPairs.first()
+            val allViewed = storyPairs.all { currentUserId in it.second.viewerUids }
+            val repStory = storyPairs.first().second
+            StoryAuthorTrayItem(
+                authorId = uid,
+                authorName = repStory.authorName.ifBlank { "Member" },
+                authorPhoto = repStory.authorPhoto,
+                targetStoryIndex = targetPair.first,
+                allViewed = allViewed,
+                representativeStoryId = repStory.id
+            )
+        }
+    }
+
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
@@ -97,30 +152,60 @@ fun StoriesTrayRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // First item: "Your Story" with + badge
         item(key = "add_story_ring") {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .width(74.dp)
-                    .clickable { showCreateStoryStudio = true }
+                    .clickable {
+                        if (hasMyStory) {
+                            onOpenStory(myFirstStoryIndex)
+                        } else {
+                            showCreateStoryStudio = true
+                        }
+                    }
                     .testTag("add_story_button")
             ) {
-                Box(modifier = Modifier.size(68.dp), contentAlignment = Alignment.Center) {
-                    ProfileAvatarImage(
-                        photoDataUrl = myProfile?.photoDataUrl,
-                        displayName = myProfile?.displayName ?: "You",
-                        seed = myProfile?.avatarSeed ?: currentUserId,
-                        modifier = Modifier.size(64.dp),
-                        shape = CircleShape,
-                        initialsFontSizeSp = 20
-                    )
+                Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(70.dp)
+                            .then(
+                                if (hasMyStory) {
+                                    Modifier
+                                        .border(
+                                            width = if (isMyStoryAllViewed) 1.5.dp else 2.5.dp,
+                                            brush = if (isMyStoryAllViewed) ViewedStoryGrayBrush else InstagramStoryGradient,
+                                            shape = CircleShape
+                                        )
+                                        .padding(3.5.dp)
+                                } else {
+                                    Modifier.padding(2.dp)
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ProfileAvatarImage(
+                            photoDataUrl = myProfile?.photoDataUrl,
+                            displayName = myProfile?.displayName ?: "You",
+                            seed = myProfile?.avatarSeed ?: currentUserId,
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            initialsFontSizeSp = 20
+                        )
+                    }
+
+                    // Circular + badge on bottom right
                     Surface(
                         shape = CircleShape,
                         color = Color(0xFF0095F6),
-                        border = BorderStroke(2.5.dp, MaterialTheme.colorScheme.background),
+                        border = BorderStroke(2.dp, MaterialTheme.colorScheme.background),
                         modifier = Modifier
                             .size(24.dp)
                             .align(Alignment.BottomEnd)
+                            .clickable { showCreateStoryStudio = true }
+                            .testTag("your_story_plus_badge")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -134,58 +219,40 @@ fun StoriesTrayRow(
                 }
                 Spacer(modifier = Modifier.height(5.dp))
                 Text(
-                    text = "Your story",
+                    text = "Your Story",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (hasMyStory && !isMyStoryAllViewed) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
         }
 
-        items(stories.size, key = { idx -> stories[idx].id.ifBlank { "story_$idx" } }) { index ->
-            val story = stories[index]
-            val seen = currentUserId in story.viewerUids
-            val igStoryBrush = Brush.linearGradient(
-                listOf(
-                    Color(0xFFFEDA75),
-                    Color(0xFFFA7E1E),
-                    Color(0xFFD62976),
-                    Color(0xFF962FBF),
-                    Color(0xFF4F5BD5)
-                )
-            )
+        // Active stories for other users
+        items(otherStoryAuthors, key = { it.authorId }) { authorGroup ->
+            val seen = authorGroup.allViewed
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .width(74.dp)
-                    .clickable { onOpenStory(index) }
-                    .testTag("story_ring_${story.id}")
+                    .clickable { onOpenStory(authorGroup.targetStoryIndex) }
+                    .testTag("story_ring_${authorGroup.representativeStoryId}")
             ) {
                 Box(
                     modifier = Modifier
                         .size(70.dp)
                         .border(
                             width = if (seen) 1.5.dp else 2.5.dp,
-                            brush = if (seen) {
-                                Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.outlineVariant,
-                                        MaterialTheme.colorScheme.outlineVariant
-                                    )
-                                )
-                            } else {
-                                igStoryBrush
-                            },
+                            brush = if (seen) ViewedStoryGrayBrush else InstagramStoryGradient,
                             shape = CircleShape
                         )
                         .padding(3.5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     ProfileAvatarImage(
-                        photoDataUrl = story.authorPhoto,
-                        displayName = story.authorName.ifBlank { "Member" },
-                        seed = story.userId,
+                        photoDataUrl = authorGroup.authorPhoto,
+                        displayName = authorGroup.authorName,
+                        seed = authorGroup.authorId,
                         modifier = Modifier.fillMaxSize(),
                         shape = CircleShape,
                         initialsFontSizeSp = 20
@@ -193,9 +260,10 @@ fun StoriesTrayRow(
                 }
                 Spacer(modifier = Modifier.height(5.dp))
                 Text(
-                    text = if (story.userId == currentUserId) "You" else story.authorName,
+                    text = authorGroup.authorName,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = if (seen) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (seen) FontWeight.Normal else FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
