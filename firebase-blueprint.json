@@ -44,7 +44,7 @@
     },
     "PublicProfile": {
       "title": "PublicProfile",
-      "description": "Discoverable dating profile card with up to 12 photos, GeoHash index, privacy settings, and verification badge.",
+      "description": "Discoverable social profile with up to 12 photos, GeoHash index, privacy settings, and verification badge.",
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
@@ -66,9 +66,9 @@
         "discoverable": { "type": "boolean" },
         "suspended": { "type": "boolean" },
         "hideOnlineStatus": { "type": "boolean" },
-        "photosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY"] },
-        "videosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY"] },
-        "infoVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY"] },
+        "photosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
+        "videosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
+        "infoVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
         "verificationStatus": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"] },
         "verificationId": { "type": "string" },
         "verificationScore": { "type": "integer" },
@@ -159,7 +159,7 @@
     },
     "Match": {
       "title": "Match",
-      "description": "Mutual match or direct conversation between two users.",
+      "description": "Direct conversation thread between two users.",
       "type": "object",
       "properties": {
         "participantUids": { "type": "array" },
@@ -352,6 +352,19 @@
       },
       "required": ["participantUids", "createdBy", "createdAt"]
     },
+    "FollowRecord": {
+      "title": "FollowRecord",
+      "description": "Social follow edge keyed by {followerUid}_{followingUid}.",
+      "type": "object",
+      "properties": {
+        "followerUid": { "type": "string" },
+        "followingUid": { "type": "string" },
+        "followerName": { "type": "string" },
+        "followerPhoto": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["followerUid", "followingUid", "createdAt"]
+    },
     "ProfileViewRecord": {
       "title": "ProfileViewRecord",
       "description": "Profile view audit entry keyed by {viewerUid}_{targetUid}.",
@@ -456,6 +469,7 @@
     "/reports/{reportId}": { "schema": { "$ref": "#/entities/ReportRecord" } },
     "/friendRequests/{requestId}": { "schema": { "$ref": "#/entities/FriendRequestRecord" } },
     "/friendships/{friendshipId}": { "schema": { "$ref": "#/entities/FriendshipRecord" } },
+    "/follows/{followId}": { "schema": { "$ref": "#/entities/FollowRecord" } },
     "/profileViews/{viewId}": { "schema": { "$ref": "#/entities/ProfileViewRecord" } },
     "/profileLikes/{likeId}": { "schema": { "$ref": "#/entities/ProfileLikeRecord" } },
     "/stories/{storyId}": { "schema": { "$ref": "#/entities/StoryItem" } },

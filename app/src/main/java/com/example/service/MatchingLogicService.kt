@@ -369,11 +369,9 @@ class MatchingLogicService(
                 .asSequence()
                 .filter { it.userId.isNotBlank() && it.userId != criteria.currentUserId }
                 .filter { it.discoverable }
+                .filter { !it.suspended }
                 .filter { it.userId !in criteria.excludedUserIds }
                 .filter { it.userId !in criteria.blockedUserIds }
-                .filter { it.age in criteria.minAge..criteria.maxAge }
-                .filter { matchesGenderPreference(it.gender, criteria.interestedIn) }
-                .filter { !criteria.verifiedOnly || it.isProfileVerified }
                 .map { candidate ->
                     val distKm = if (myLat != null && myLng != null) {
                         LocationAndGeoHelper.calculateDistanceKm(
@@ -448,7 +446,6 @@ class MatchingLogicService(
                         trustScore = verifiedPoints
                     )
                 }
-                .filter { myLat == null || it.distanceKm <= criteria.maxDistanceKm }
                 .sortedWith(
                     compareByDescending<DiscoveryCandidate> { it.proximityMatchScore }
                         .thenBy { it.distanceKm }

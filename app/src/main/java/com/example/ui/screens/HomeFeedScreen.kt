@@ -117,9 +117,6 @@ import coil.compose.AsyncImage
 import com.example.model.DiscoveryCandidate
 import com.example.model.FeedComment
 import com.example.model.FeedPost
-import com.example.model.FriendRequestRecord
-import com.example.model.FriendStatus
-import com.example.model.ProfileLikeRecord
 import com.example.model.PublicProfile
 import com.example.model.StoryItem
 import com.example.model.VideoPost
@@ -129,7 +126,6 @@ import com.example.ui.components.PostCommentsSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.StoriesTrayRow
 import com.example.ui.components.StoryViewerDialog
-import com.example.ui.components.TimelineNotificationsSheet
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.CountryFlagHelper
@@ -198,8 +194,8 @@ fun HomeFeedScreen(
     feedPosts: List<FeedPost> = emptyList(),
     videoPosts: List<VideoPost> = emptyList(),
     currentUserId: String = myProfile?.userId ?: "",
-    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
-    onFriendAction: (PublicProfile) -> Unit = {},
+    isFollowingUid: (String) -> Boolean = { false },
+    onToggleFollow: (PublicProfile) -> Unit = {},
     onOpenUserProfile: (PublicProfile) -> Unit = {},
     onOpenUserProfileById: (String) -> Unit = {},
     onPublishFeedPost: (caption: String, photoDataUrl: String?, photoUrls: List<String>, preparedVideo: PreparedVideoUpload?, onComplete: () -> Unit) -> Unit = { _, _, _, _, cb -> cb() },
@@ -221,11 +217,8 @@ fun HomeFeedScreen(
     onRefreshFeed: () -> Unit = {},
     unreadMessageCount: Int = 0,
     incomingNotificationCount: Int = 0,
-    friendRequests: List<FriendRequestRecord> = emptyList(),
-    profileLikes: List<ProfileLikeRecord> = emptyList(),
     profilesByUid: Map<String, PublicProfile> = emptyMap(),
-    onAcceptFriendRequest: (String) -> Unit = {},
-    onRejectFriendRequest: (String) -> Unit = {},
+    onOpenActivity: () -> Unit = {},
     onNavigateToInbox: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -237,7 +230,6 @@ fun HomeFeedScreen(
     var showPostComposerSheet by remember { mutableStateOf(false) }
     var activeCommentsPost by remember { mutableStateOf<FeedPost?>(null) }
     var activeCommentsReel by remember { mutableStateOf<VideoPost?>(null) }
-    var showNotificationsSheet by remember { mutableStateOf(false) }
 
     fun fetchAndApplyGps() {
         scope.launch {
@@ -263,14 +255,14 @@ fun HomeFeedScreen(
         }
     }
 
-    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId) {
+    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId, isFollowingUid) {
         val rawCombined = buildList<HomeTimelineItem> {
             feedPosts.forEach { add(HomeTimelineItem.PostItem(it)) }
             videoPosts.forEach { add(HomeTimelineItem.ReelItem(it)) }
         }
         val filtered = if (filterMode == FeedFilterMode.FOLLOWING) {
             rawCombined.filter { item ->
-                item.userId == currentUserId || friendStatusForUid(item.userId) == FriendStatus.FRIENDS
+                item.userId == currentUserId || isFollowingUid(item.userId)
             }
         } else {
             rawCombined
@@ -282,10 +274,10 @@ fun HomeFeedScreen(
     }
 
     // Prioritize other people's Reels for the "Suggested reels" horizontal shelf on Home
-    val shelfReels = remember(videoPosts, filterMode, currentUserId) {
+    val shelfReels = remember(videoPosts, filterMode, currentUserId, isFollowingUid) {
         val base = if (filterMode == FeedFilterMode.FOLLOWING) {
             videoPosts.filter {
-                it.userId != currentUserId && friendStatusForUid(it.userId) == FriendStatus.FRIENDS
+                it.userId != currentUserId && isFollowingUid(it.userId)
             }
         } else {
             val others = videoPosts.filter { it.userId != currentUserId }
@@ -466,7 +458,7 @@ fun HomeFeedScreen(
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     IconButton(
-                        onClick = { showNotificationsSheet = true },
+                        onClick = onOpenActivity,
                         modifier = Modifier
                             .size(42.dp)
                             .testTag("home_notifications_button")
@@ -591,7 +583,7 @@ fun HomeFeedScreen(
                                 )
                                 Text(
                                     text = if (filterMode == FeedFilterMode.FOLLOWING) {
-                                        "No Posts from Friends Yet"
+                                        "No Posts from Following Yet"
                                     } else {
                                         "Welcome to Kindred"
                                     },
@@ -622,10 +614,10 @@ fun HomeFeedScreen(
                                 SuggestedPeopleStrip(
                                     peopleToKnow = peopleToKnow,
                                     activeOnlineCount = activeOnlineCount,
-                                    friendStatusForUid = friendStatusForUid,
+                                    isFollowingUid = isFollowingUid,
                                     onOpenActiveUsers = onOpenActiveUsers,
                                     onOpenUserProfile = onOpenUserProfile,
-                                    onFriendAction = onFriendAction
+                                    onToggleFollow = onToggleFollow
                                 )
                             }
                         }
@@ -638,10 +630,13 @@ fun HomeFeedScreen(
                                         post = post,
                                         authorProfile = profilesByUid[post.userId],
                                         currentUserId = currentUserId,
-                                        friendStatus = friendStatusForUid(post.userId),
-                                        onFriendAction = {
-                                            val profile = profilesByUid[post.userId]
-                                            if (profile != null) onFriendAction(profile)
+                                        isFollowing = isFollowingUid(post.userId),
+                                        onToggleFollow = {
+                                            val profile = profilesByUid[post.userId] ?: PublicProfile(
+                                                userId = post.userId,
+                                                displayName = post.authorName
+                                            )
+                                            onToggleFollow(profile)
                                         },
                                         resolveVideoFile = resolveFeedPostVideoFile,
                                         onToggleLike = {
@@ -669,13 +664,13 @@ fun HomeFeedScreen(
                                         reel = reel,
                                         authorProfile = profilesByUid[reel.userId],
                                         currentUserId = currentUserId,
-                                        friendStatus = friendStatusForUid(reel.userId),
-                                        onFriendAction = {
+                                        isFollowing = isFollowingUid(reel.userId),
+                                        onToggleFollow = {
                                             val profile = profilesByUid[reel.userId] ?: PublicProfile(
                                                 userId = reel.userId,
                                                 displayName = reel.authorName
                                             )
-                                            onFriendAction(profile)
+                                            onToggleFollow(profile)
                                         },
                                         resolveVideoFile = resolveVideoPostFile,
                                         onToggleLike = {
@@ -710,10 +705,10 @@ fun HomeFeedScreen(
                                     SuggestedPeopleStrip(
                                         peopleToKnow = peopleToKnow,
                                         activeOnlineCount = activeOnlineCount,
-                                        friendStatusForUid = friendStatusForUid,
+                                        isFollowingUid = isFollowingUid,
                                         onOpenActiveUsers = onOpenActiveUsers,
                                         onOpenUserProfile = onOpenUserProfile,
-                                        onFriendAction = onFriendAction
+                                        onToggleFollow = onToggleFollow
                                     )
                                 }
                             }
@@ -791,28 +786,16 @@ fun HomeFeedScreen(
             onDismiss = { activeCommentsReel = null }
         )
     }
-
-    if (showNotificationsSheet) {
-        TimelineNotificationsSheet(
-            friendRequests = friendRequests,
-            profileLikes = profileLikes,
-            profilesByUid = profilesByUid,
-            onAcceptRequest = onAcceptFriendRequest,
-            onRejectRequest = onRejectFriendRequest,
-            onOpenProfile = onOpenUserProfileById,
-            onDismiss = { showNotificationsSheet = false }
-        )
-    }
 }
 
 @Composable
 private fun SuggestedPeopleStrip(
     peopleToKnow: List<DiscoveryCandidate>,
     activeOnlineCount: Int,
-    friendStatusForUid: (String) -> FriendStatus,
+    isFollowingUid: (String) -> Boolean,
     onOpenActiveUsers: () -> Unit,
     onOpenUserProfile: (PublicProfile) -> Unit,
-    onFriendAction: (PublicProfile) -> Unit
+    onToggleFollow: (PublicProfile) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -851,7 +834,7 @@ private fun SuggestedPeopleStrip(
             items(peopleToKnow, key = { it.profile.userId }) { candidate ->
                 val person = candidate.profile
                 val flag = person.flagEmoji()
-                val fStatus = friendStatusForUid(person.userId)
+                val isFollowingPerson = isFollowingUid(person.userId)
                 Card(
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -905,20 +888,15 @@ private fun SuggestedPeopleStrip(
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center
                         )
-                        val friendBtnLabel = when (fStatus) {
-                            FriendStatus.NONE -> "Follow"
-                            FriendStatus.OUTGOING_PENDING -> "Requested"
-                            FriendStatus.INCOMING_PENDING -> "Accept"
-                            FriendStatus.FRIENDS -> "Following"
-                        }
+                        val followBtnLabel = if (isFollowingPerson) "Following" else "Follow"
                         FilledTonalButton(
-                            onClick = { onFriendAction(person) },
+                            onClick = { onToggleFollow(person) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .minimumInteractiveComponentSize()
                                 .testTag("feed_add_friend_${person.userId}")
                         ) {
-                            Text(friendBtnLabel, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            Text(followBtnLabel, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
                     }
                 }
@@ -931,3 +909,777 @@ private fun SuggestedPeopleStrip(
         )
     }
 }
+
+@Composable
+private fun SuggestedReelsShelf(
+    reels: List<VideoPost>,
+    profilesByUid: Map<String, PublicProfile>,
+    onOpenReel: (VideoPost) -> Unit,
+    onSeeAllReels: () -> Unit,
+    onOpenAuthor: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+            .testTag("home_suggested_reels_shelf"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Movie,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Reels",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            Text(
+                text = "See all",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF0095F6),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable(onClick = onSeeAllReels)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .testTag("home_reels_see_all")
+            )
+        }
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp),
+            modifier = Modifier.testTag("home_reels_carousel")
+        ) {
+            items(reels, key = { "shelf_reel_${it.id}" }) { reel ->
+                val author = profilesByUid[reel.userId]
+                val authorName = author?.displayName?.takeIf { it.isNotBlank() }
+                    ?: reel.authorName.ifBlank { "Member" }
+                val authorPhoto = author?.allProfilePhotos()?.firstOrNull() ?: reel.authorPhoto
+                val isVerified = author?.isProfileVerified ?: reel.authorVerified
+                val thumbBitmap = remember(reel.thumbnailDataUrl) {
+                    reel.thumbnailDataUrl?.takeIf { it.startsWith("data:image") }
+                        ?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .width(136.dp)
+                        .aspectRatio(9f / 16f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF141218))
+                        .clickable { onOpenReel(reel) }
+                        .testTag("home_shelf_reel_${reel.id}")
+                ) {
+                    if (thumbBitmap != null) {
+                        Image(
+                            bitmap = thumbBitmap,
+                            contentDescription = reel.caption.ifBlank { "Reel by $authorName" },
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.High,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (!reel.thumbnailDataUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = reel.thumbnailDataUrl,
+                            contentDescription = reel.caption.ifBlank { "Reel by $authorName" },
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        ProfileAvatarImage(
+                            photoDataUrl = authorPhoto,
+                            displayName = authorName,
+                            seed = reel.userId,
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(0.dp),
+                            initialsFontSizeSp = 28
+                        )
+                    }
+
+                    // Bottom readability scrim
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.Black.copy(alpha = 0.18f),
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = 0.78f)
+                                    )
+                                )
+                            )
+                    )
+
+                    // Top-right Reels indicator
+                    Icon(
+                        imageVector = Icons.Filled.Movie,
+                        contentDescription = "Reel",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .size(18.dp)
+                    )
+
+                    if (reel.mediaDurationSec > 0L) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color.Black.copy(alpha = 0.55f),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(8.dp)
+                        ) {
+                            Text(
+                                text = VideoClipHelper.formatDurationLabel(reel.mediaDurationSec),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    // Bottom creator & caption preview
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.clickable { onOpenAuthor(reel.userId) }
+                        ) {
+                            ProfileAvatarImage(
+                                photoDataUrl = authorPhoto,
+                                displayName = authorName,
+                                seed = reel.userId,
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .border(1.dp, Color.White.copy(alpha = 0.85f), CircleShape),
+                                shape = CircleShape,
+                                initialsFontSizeSp = 9
+                            )
+                            Text(
+                                text = authorName,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (isVerified) {
+                                Icon(
+                                    imageVector = Icons.Filled.Verified,
+                                    contentDescription = "Verified",
+                                    tint = Color(0xFF0095F6),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
+                        if (reel.caption.isNotBlank()) {
+                            Text(
+                                text = reel.caption,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.88f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    }
+}
+
+@Composable
+private fun HomeReelPostCard(
+    reel: VideoPost,
+    authorProfile: PublicProfile? = null,
+    currentUserId: String,
+    isFollowing: Boolean,
+    onToggleFollow: () -> Unit,
+    resolveVideoFile: suspend (VideoPost) -> Result<File>,
+    onToggleLike: () -> Unit,
+    onOpenComments: () -> Unit,
+    onDeleteReel: () -> Unit,
+    onOpenAuthor: () -> Unit,
+    onOpenFullScreenReel: () -> Unit,
+    onReportReel: () -> Unit = {},
+    isVisibleForAutoPlay: Boolean = false
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val isLiked = currentUserId in reel.likedByUids
+    val isOwner = reel.userId == currentUserId
+
+    val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
+        ?: reel.authorName.ifBlank { "Kindred Member" }
+    val displayAuthorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull() ?: reel.authorPhoto
+    val isAuthorVerified = authorProfile?.isProfileVerified ?: reel.authorVerified
+    val displayCountry = authorProfile?.country?.takeIf { it.isNotBlank() } ?: reel.authorCountry.orEmpty()
+    val flag = CountryFlagHelper.flagEmojiForCountry(displayCountry)
+
+    val timeLabel = remember(reel.createdAt) {
+        reel.createdAt?.toDate()?.let { date ->
+            val diffMs = (System.currentTimeMillis() - date.time).coerceAtLeast(0L)
+            val diffMinutes = diffMs / 60_000
+            val diffHours = diffMinutes / 60
+            val diffDays = diffHours / 24
+            when {
+                diffMinutes < 1 -> "Just now"
+                diffMinutes < 60 -> "${diffMinutes}m ago"
+                diffHours < 24 -> "${diffHours}h ago"
+                diffDays < 7 -> "${diffDays}d ago"
+                else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(date)
+            }
+        } ?: "Just now"
+    }
+
+    var showMenu by remember { mutableStateOf(false) }
+    var showHeartPop by remember { mutableStateOf(false) }
+    val likeScale = remember { Animatable(1f) }
+    var userPaused by remember(reel.id) { mutableStateOf(false) }
+    var isMuted by remember(reel.id) { mutableStateOf(false) }
+    var resolvedVideoFile by remember(reel.id) { mutableStateOf<File?>(null) }
+    var loadingVideo by remember(reel.id) { mutableStateOf(false) }
+    var activeMediaPlayer by remember(reel.id) { mutableStateOf<android.media.MediaPlayer?>(null) }
+
+    LaunchedEffect(isVisibleForAutoPlay) {
+        if (!isVisibleForAutoPlay) {
+            userPaused = false
+        }
+    }
+
+    val playVideo = isVisibleForAutoPlay && !userPaused
+
+    LaunchedEffect(isMuted, activeMediaPlayer) {
+        activeMediaPlayer?.let { mp ->
+            runCatching {
+                val vol = if (isMuted) 0f else 1f
+                mp.setVolume(vol, vol)
+            }
+        }
+    }
+
+    LaunchedEffect(reel.id) {
+        if (resolvedVideoFile == null && !loadingVideo) {
+            loadingVideo = true
+            resolvedVideoFile = resolveVideoFile(reel).getOrNull()
+            loadingVideo = false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .testTag("home_reel_card_${reel.id}")
+    ) {
+        // 1. Instagram-style Header (Avatar, Username + Verified, Original Audio • Reel, Follow, More)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenAuthor)
+            ) {
+                ProfileAvatarImage(
+                    photoDataUrl = displayAuthorPhoto,
+                    displayName = displayAuthorName,
+                    seed = reel.userId,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .border(
+                            0.5.dp,
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            CircleShape
+                        ),
+                    shape = CircleShape,
+                    initialsFontSizeSp = 14
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = displayAuthorName,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp
+                            ),
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isAuthorVerified) {
+                            Icon(
+                                imageVector = Icons.Filled.Verified,
+                                contentDescription = "Verified creator",
+                                tint = Color(0xFF0095F6),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                        if (flag.isNotBlank()) {
+                            Text(text = flag, fontSize = 12.sp)
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MusicNote,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "$displayAuthorName • Original audio",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 15.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                if (!isOwner) {
+                    TextButton(
+                        onClick = onToggleFollow,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("reel_follow_btn_${reel.id}")
+                    ) {
+                        Text(
+                            text = if (isFollowing) "Following" else "Follow",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = if (isFollowing) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                Color(0xFF0095F6)
+                            }
+                        )
+                    }
+                }
+
+                Box {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "Reel options",
+                            tint = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Watch in Reels") },
+                            leadingIcon = { Icon(Icons.Filled.Movie, contentDescription = null) },
+                            onClick = {
+                                showMenu = false
+                                onOpenFullScreenReel()
+                            }
+                        )
+                        if (isOwner) {
+                            DropdownMenuItem(
+                                text = { Text("Delete Reel") },
+                                leadingIcon = { Icon(Icons.Filled.DeleteOutline, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onDeleteReel()
+                                }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Report Reel") },
+                                leadingIcon = { Icon(Icons.Filled.Flag, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onReportReel()
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Share Reel") },
+                            leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                            onClick = {
+                                showMenu = false
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TEXT, "$displayAuthorName's reel on Kindred: ${reel.caption}")
+                                    type = "text/plain"
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share reel"))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. Full-bleed 4:5 Reel Video Player
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.8f)
+                .background(Color(0xFF0D0C10))
+                .pointerInput(reel.id) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            if (!isLiked) {
+                                onToggleLike()
+                            }
+                            scope.launch {
+                                showHeartPop = true
+                                likeScale.animateTo(1.3f, spring(Spring.DampingRatioMediumBouncy))
+                                likeScale.animateTo(1f)
+                                delay(400L)
+                                showHeartPop = false
+                            }
+                        },
+                        onTap = {
+                            userPaused = !userPaused
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            val file = resolvedVideoFile
+            if (file != null) {
+                AndroidView(
+                    factory = { ctx ->
+                        VideoView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            setOnErrorListener { _, _, _ -> true }
+                            setVideoURI(Uri.fromFile(file))
+                            setOnPreparedListener { mp ->
+                                activeMediaPlayer = mp
+                                mp.isLooping = true
+                                val vol = if (isMuted) 0f else 1f
+                                mp.setVolume(vol, vol)
+                                if (playVideo) start()
+                            }
+                        }
+                    },
+                    update = { vv ->
+                        if (playVideo && !vv.isPlaying) {
+                            runCatching { vv.start() }
+                        } else if (!playVideo && vv.isPlaying) {
+                            runCatching { vv.pause() }
+                        }
+                    },
+                    onRelease = {
+                        activeMediaPlayer = null
+                        runCatching { it.stopPlayback() }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            if (file == null || (!playVideo && !loadingVideo)) {
+                val thumb = remember(reel.thumbnailDataUrl) {
+                    reel.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                }
+                if (file == null && thumb != null) {
+                    Image(
+                        bitmap = thumb,
+                        contentDescription = "Reel preview",
+                        contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.High,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (loadingVideo && file == null) {
+                    CircularProgressIndicator(color = CoralRose)
+                } else if (userPaused || file == null) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.45f),
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.PlayArrow,
+                                contentDescription = "Play reel",
+                                tint = Color.White,
+                                modifier = Modifier.size(34.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Top-right clickable "Reels" pill badge to open full-screen Reels viewer
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = 0.55f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable(onClick = onOpenFullScreenReel)
+                    .testTag("reel_expand_pill_${reel.id}")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Movie,
+                        contentDescription = "Watch full Reel",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "Reel",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
+            // Mute/Unmute toggle bottom-right
+            IconButton(
+                onClick = { isMuted = !isMuted },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(10.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                    .size(34.dp)
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                    contentDescription = if (isMuted) "Unmute audio" else "Mute audio",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showHeartPop,
+                enter = scaleIn(spring(Spring.DampingRatioMediumBouncy)) + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Favorite,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.95f),
+                    modifier = Modifier
+                        .size(90.dp)
+                        .scale(likeScale.value)
+                )
+            }
+        }
+
+        // 3. Action Bar: Like, Comment, Share, Watch in Reels
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clickable {
+                            scope.launch {
+                                likeScale.animateTo(1.35f, spring(Spring.DampingRatioMediumBouncy))
+                                likeScale.animateTo(1f)
+                            }
+                            onToggleLike()
+                        }
+                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                        .testTag("home_reel_like_${reel.id}")
+                ) {
+                    Icon(
+                        imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = "Like reel",
+                        tint = if (isLiked) CoralRose else MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier
+                            .size(25.dp)
+                            .scale(likeScale.value)
+                    )
+                    if (reel.likedByUids.isNotEmpty()) {
+                        Text(
+                            text = "${reel.likedByUids.size}",
+                            style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp),
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onOpenComments,
+                    modifier = Modifier.testTag("home_reel_comment_${reel.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ChatBubbleOutline,
+                        contentDescription = "Comment on reel",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(23.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = {
+                        val sendIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_TEXT, "Watch $displayAuthorName's reel on Kindred: ${reel.caption}")
+                            type = "text/plain"
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share reel"))
+                    },
+                    modifier = Modifier.testTag("home_reel_share_${reel.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Share reel",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(23.dp)
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onOpenFullScreenReel,
+                modifier = Modifier.testTag("home_reel_open_viewer_${reel.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Movie,
+                    contentDescription = "Open Reels Viewer",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        // 4. Caption, Comment trigger & Timestamp
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (reel.caption.isNotBlank()) {
+                val captionAnnotated = remember(reel.caption, displayAuthorName) {
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                            append(displayAuthorName)
+                            append(" ")
+                        }
+                        val tokens = reel.caption.split(" ")
+                        tokens.forEachIndexed { idx, token ->
+                            if (token.startsWith("#") && token.length > 1) {
+                                withStyle(SpanStyle(color = Color(0xFF0095F6), fontWeight = FontWeight.Medium)) {
+                                    append(token)
+                                }
+                            } else {
+                                append(token)
+                            }
+                            if (idx < tokens.lastIndex) append(" ")
+                        }
+                    }
+                }
+                Text(
+                    text = captionAnnotated,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 19.sp
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+
+            Text(
+                text = "Add a comment...",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                modifier = Modifier
+                    .clickable(onClick = onOpenComments)
+                    .padding(vertical = 1.dp)
+            )
+
+            Text(
+                text = timeLabel,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+            )
+        }
+
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    }
+}
+

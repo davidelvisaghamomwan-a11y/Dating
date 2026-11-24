@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,8 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material3.Button
@@ -52,52 +51,49 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.model.FriendRequestRecord
-import com.example.model.FriendshipRecord
 import com.example.model.PublicProfile
-import com.example.model.SuggestedFriendItem
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
-import com.example.ui.theme.EmeraldMint
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FriendsHubScreen(
     currentUserId: String,
-    friendships: List<FriendshipRecord>,
-    friendRequests: List<FriendRequestRecord>,
-    suggestedFriends: List<SuggestedFriendItem>,
+    followerIds: Set<String>,
+    followingIds: Set<String>,
+    suggestedProfiles: List<PublicProfile>,
     profilesByUid: Map<String, PublicProfile>,
+    initialTab: Int = 0,
     onBack: () -> Unit,
     onOpenProfile: (PublicProfile) -> Unit,
     onMessageProfile: (PublicProfile) -> Unit,
-    onAcceptRequest: (fromUid: String) -> Unit,
-    onRejectRequest: (fromUid: String) -> Unit,
-    onCancelRequest: (toUid: String) -> Unit,
-    onSendFriendRequest: (targetUid: String) -> Unit,
-    onRemoveFriend: (targetUid: String) -> Unit
+    onToggleFollow: (targetUid: String) -> Unit,
+    onRemoveFollower: (followerUid: String) -> Unit
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    BackHandler { onBack() }
 
-    val connectedProfiles = remember(friendships, profilesByUid, currentUserId) {
-        friendships
-            .filter { currentUserId in it.participantUids }
-            .mapNotNull { fs ->
-                val otherUid = fs.participantUids.firstOrNull { it != currentUserId } ?: return@mapNotNull null
-                profilesByUid[otherUid]
-            }
+    var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 2)) }
+
+    val followerProfiles = remember(followerIds, profilesByUid, currentUserId) {
+        followerIds
+            .filter { it != currentUserId }
+            .mapNotNull { profilesByUid[it] }
+            .sortedBy { it.displayName.lowercase() }
     }
-    val incomingRequests = remember(friendRequests, currentUserId) {
-        friendRequests.filter { it.toUid == currentUserId && it.status == "PENDING" }
+    val followingProfiles = remember(followingIds, profilesByUid, currentUserId) {
+        followingIds
+            .filter { it != currentUserId }
+            .mapNotNull { profilesByUid[it] }
+            .sortedBy { it.displayName.lowercase() }
     }
-    val outgoingRequests = remember(friendRequests, currentUserId) {
-        friendRequests.filter { it.fromUid == currentUserId && it.status == "PENDING" }
+    val filteredSuggested = remember(suggestedProfiles, followingIds, currentUserId) {
+        suggestedProfiles.filter { it.userId != currentUserId && it.userId !in followingIds }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Friends & Requests") },
+                title = { Text("Followers & Following") },
                 navigationIcon = {
                     IconButton(
                         onClick = onBack,
@@ -121,17 +117,20 @@ fun FriendsHubScreen(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Friends (${connectedProfiles.size})", maxLines = 1) }
+                    text = { Text("Followers (${followerProfiles.size})", maxLines = 1) },
+                    modifier = Modifier.testTag("hub_tab_followers")
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Requests (${incomingRequests.size})", maxLines = 1) }
+                    text = { Text("Following (${followingProfiles.size})", maxLines = 1) },
+                    modifier = Modifier.testTag("hub_tab_following")
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Suggested (${suggestedFriends.size})", maxLines = 1) }
+                    text = { Text("Suggested (${filteredSuggested.size})", maxLines = 1) },
+                    modifier = Modifier.testTag("hub_tab_suggested")
                 )
             }
 
@@ -146,230 +145,178 @@ fun FriendsHubScreen(
                 ) {
                     when (selectedTab) {
                         0 -> {
-                            if (connectedProfiles.isEmpty()) {
+                            if (followerProfiles.isEmpty()) {
                                 item {
                                     Text(
-                                        text = "No connections yet. Check the Suggested tab or Explore feed to follow people!",
+                                        text = "No followers yet. Share photos and reels so creators can discover and follow you.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             } else {
-                                items(connectedProfiles, key = { it.userId }) { friend ->
-                                    val flag = friend.flagEmoji()
-                                    Card(
-                                        shape = RoundedCornerShape(18.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onOpenProfile(friend) }
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(14.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            ProfileAvatarImage(
-                                                photoDataUrl = friend.photoDataUrl,
-                                                displayName = friend.displayName,
-                                                seed = friend.avatarSeed,
-                                                modifier = Modifier.size(50.dp),
-                                                shape = CircleShape,
-                                                initialsFontSizeSp = 17
-                                            )
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = buildString {
-                                                        append("${friend.displayName}, ${friend.age}")
-                                                        if (flag.isNotBlank()) append(" $flag")
-                                                    },
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                                Text(
-                                                    text = friend.formattedLocation(),
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                            IconButton(
-                                                onClick = { onMessageProfile(friend) },
-                                                modifier = Modifier.minimumInteractiveComponentSize()
-                                            ) {
-                                                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Message", tint = CoralRose)
-                                            }
-                                            IconButton(
-                                                onClick = { onRemoveFriend(friend.userId) },
-                                                modifier = Modifier.minimumInteractiveComponentSize()
-                                            ) {
-                                                Icon(Icons.Filled.PersonRemove, contentDescription = "Unfriend", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                        }
-                                    }
+                                items(followerProfiles, key = { it.userId }) { follower ->
+                                    val isFollowingBack = follower.userId in followingIds
+                                    FollowUserRowCard(
+                                        profile = follower,
+                                        primaryActionLabel = if (isFollowingBack) "Following" else "Follow back",
+                                        isPrimaryFilled = !isFollowingBack,
+                                        onOpenProfile = { onOpenProfile(follower) },
+                                        onMessageProfile = { onMessageProfile(follower) },
+                                        onPrimaryAction = { onToggleFollow(follower.userId) },
+                                        onSecondaryRemove = { onRemoveFollower(follower.userId) },
+                                        primaryTestTag = "follower_toggle_btn_${follower.userId}"
+                                    )
                                 }
                             }
                         }
 
                         1 -> {
-                            if (incomingRequests.isEmpty() && outgoingRequests.isEmpty()) {
+                            if (followingProfiles.isEmpty()) {
                                 item {
                                     Text(
-                                        text = "No pending friend requests right now.",
+                                        text = "You aren't following anyone yet. Browse Explore or Suggested creators to follow.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             } else {
-                                if (incomingRequests.isNotEmpty()) {
-                                    item {
-                                        Text("Incoming Requests", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                    }
-                                    items(incomingRequests, key = { it.id }) { req ->
-                                        val sender = profilesByUid[req.fromUid]
-                                        Card(
-                                            shape = RoundedCornerShape(18.dp),
-                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable(enabled = sender != null) { if (sender != null) onOpenProfile(sender) }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(14.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                ProfileAvatarImage(
-                                                    photoDataUrl = sender?.photoDataUrl,
-                                                    displayName = sender?.displayName ?: "Member",
-                                                    seed = req.fromUid,
-                                                    modifier = Modifier.size(46.dp),
-                                                    shape = CircleShape,
-                                                    initialsFontSizeSp = 15
-                                                )
-                                                Spacer(modifier = Modifier.width(12.dp))
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = sender?.displayName ?: "Kindred Member",
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        fontWeight = FontWeight.SemiBold
-                                                    )
-                                                    Text(
-                                                        text = sender?.formattedLocation() ?: "Sent you a friend request",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
-                                                }
-                                                IconButton(
-                                                    onClick = { onAcceptRequest(req.fromUid) },
-                                                    modifier = Modifier.minimumInteractiveComponentSize()
-                                                ) {
-                                                    Icon(Icons.Filled.Check, contentDescription = "Accept", tint = EmeraldMint)
-                                                }
-                                                IconButton(
-                                                    onClick = { onRejectRequest(req.fromUid) },
-                                                    modifier = Modifier.minimumInteractiveComponentSize()
-                                                ) {
-                                                    Icon(Icons.Filled.Close, contentDescription = "Decline", tint = MaterialTheme.colorScheme.error)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (outgoingRequests.isNotEmpty()) {
-                                    item {
-                                        Text("Sent Requests", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                    }
-                                    items(outgoingRequests, key = { it.id }) { req ->
-                                        val target = profilesByUid[req.toUid]
-                                        Card(
-                                            shape = RoundedCornerShape(18.dp),
-                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(14.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = target?.displayName ?: "Kindred Member",
-                                                    style = MaterialTheme.typography.titleSmall,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                OutlinedButton(onClick = { onCancelRequest(req.toUid) }) {
-                                                    Text("Cancel")
-                                                }
-                                            }
-                                        }
-                                    }
+                                items(followingProfiles, key = { it.userId }) { person ->
+                                    FollowUserRowCard(
+                                        profile = person,
+                                        primaryActionLabel = "Following",
+                                        isPrimaryFilled = false,
+                                        onOpenProfile = { onOpenProfile(person) },
+                                        onMessageProfile = { onMessageProfile(person) },
+                                        onPrimaryAction = { onToggleFollow(person.userId) },
+                                        primaryTestTag = "following_toggle_btn_${person.userId}"
+                                    )
                                 }
                             }
                         }
 
                         else -> {
-                            items(suggestedFriends, key = { it.profile.userId }) { suggestion ->
-                                val p = suggestion.profile
-                                val flag = p.flagEmoji()
-                                Card(
-                                    shape = RoundedCornerShape(18.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onOpenProfile(p) }
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(14.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        ProfileAvatarImage(
-                                            photoDataUrl = p.photoDataUrl,
-                                            displayName = p.displayName,
-                                            seed = p.avatarSeed,
-                                            modifier = Modifier.size(50.dp),
-                                            shape = CircleShape,
-                                            initialsFontSizeSp = 17
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = buildString {
-                                                    append("${p.displayName}, ${p.age}")
-                                                    if (flag.isNotBlank()) append(" $flag")
-                                                },
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            Text(
-                                                text = buildString {
-                                                    append(p.formattedLocation())
-                                                    if (suggestion.sharedInterests.isNotEmpty()) {
-                                                        append(" • ${suggestion.sharedInterests.size} shared interests")
-                                                    }
-                                                },
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        Button(
-                                            onClick = { onSendFriendRequest(p.userId) },
-                                            colors = ButtonDefaults.buttonColors(containerColor = CoralRose, contentColor = Color.White),
-                                            modifier = Modifier.testTag("suggested_add_friend_${p.userId}")
-                                        ) {
-                                            Icon(Icons.Filled.PersonAdd, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Add")
-                                        }
-                                    }
+                            if (filteredSuggested.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "You're caught up with suggested creators right now.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            } else {
+                                items(filteredSuggested, key = { it.userId }) { person ->
+                                    FollowUserRowCard(
+                                        profile = person,
+                                        primaryActionLabel = "Follow",
+                                        isPrimaryFilled = true,
+                                        onOpenProfile = { onOpenProfile(person) },
+                                        onMessageProfile = { onMessageProfile(person) },
+                                        onPrimaryAction = { onToggleFollow(person.userId) },
+                                        primaryTestTag = "suggested_follow_btn_${person.userId}"
+                                    )
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FollowUserRowCard(
+    profile: PublicProfile,
+    primaryActionLabel: String,
+    isPrimaryFilled: Boolean,
+    onOpenProfile: () -> Unit,
+    onMessageProfile: () -> Unit,
+    onPrimaryAction: () -> Unit,
+    onSecondaryRemove: (() -> Unit)? = null,
+    primaryTestTag: String
+) {
+    val flag = profile.flagEmoji()
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenProfile)
+            .testTag("follow_hub_card_${profile.userId}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ProfileAvatarImage(
+                photoDataUrl = profile.photoDataUrl,
+                displayName = profile.displayName,
+                seed = profile.avatarSeed,
+                modifier = Modifier.size(50.dp),
+                shape = CircleShape,
+                initialsFontSizeSp = 17
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = buildString {
+                        append(profile.displayName)
+                        if (flag.isNotBlank()) append(" $flag")
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = profile.formattedLocation().ifBlank { "Kindred Creator" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
+                onClick = onMessageProfile,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("follow_hub_msg_${profile.userId}")
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Message", tint = CoralRose)
+            }
+            if (isPrimaryFilled) {
+                Button(
+                    onClick = onPrimaryAction,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF0095F6),
+                        contentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag(primaryTestTag)
+                ) {
+                    Icon(Icons.Filled.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(primaryActionLabel, style = MaterialTheme.typography.labelMedium)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onPrimaryAction,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag(primaryTestTag)
+                ) {
+                    Text(primaryActionLabel, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+            if (onSecondaryRemove != null) {
+                IconButton(
+                    onClick = onSecondaryRemove,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("remove_follower_${profile.userId}")
+                ) {
+                    Icon(
+                        Icons.Filled.PersonRemove,
+                        contentDescription = "Remove follower",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

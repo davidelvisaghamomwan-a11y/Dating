@@ -256,7 +256,7 @@ fun VerificationScreen(
                         subtitle = if (locationGranted) {
                             "GPS permission active • coarse coordinates rounded"
                         } else {
-                            "Grant location in Discover or Profile for +15 trust points"
+                            "Grant location in Explore or Profile for +15 trust points"
                         },
                         completed = locationGranted
                     )
@@ -276,7 +276,7 @@ fun VerificationScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Save your basic dating card with at least one clear face photo before running verification.",
+                            text = "Save your basic profile details with at least one clear face photo before running verification.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSecondaryContainer
                         )

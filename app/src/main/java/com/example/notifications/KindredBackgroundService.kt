@@ -12,8 +12,8 @@ import com.example.communication.CallRingtoneController
 import com.example.model.CallSession
 import com.example.model.FeedComment
 import com.example.model.FeedPost
+import com.example.model.FollowRecord
 import com.example.model.MatchRecord
-import com.example.model.ProfileLikeRecord
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
@@ -24,7 +24,7 @@ import com.google.firebase.firestore.ListenerRegistration
 class KindredBackgroundService : Service() {
     private var matchesRegistration: ListenerRegistration? = null
     private var myPostsRegistration: ListenerRegistration? = null
-    private var profileLikesRegistration: ListenerRegistration? = null
+    private var followsRegistration: ListenerRegistration? = null
 
     private val callRegistrations = mutableMapOf<String, ListenerRegistration>()
     private val commentRegistrations = mutableMapOf<String, ListenerRegistration>()
@@ -39,8 +39,8 @@ class KindredBackgroundService : Service() {
     private val initializedCommentPosts = mutableSetOf<String>()
     private val seenCommentIds = mutableSetOf<String>()
 
-    private val seenProfileLikeIds = mutableSetOf<String>()
-    private var profileLikesInitialized = false
+    private val seenFollowIds = mutableSetOf<String>()
+    private var followsInitialized = false
 
     private var ringtoneController: CallRingtoneController? = null
 
@@ -150,35 +150,35 @@ class KindredBackgroundService : Service() {
                 }
         }
 
-        // 3. Real-time Profile Likes
-        if (profileLikesRegistration == null) {
-            profileLikesRegistration = db.collection("profileLikes")
-                .whereEqualTo("toUid", uid)
+        // 3. Real-time New Followers
+        if (followsRegistration == null) {
+            followsRegistration = db.collection("follows")
+                .whereEqualTo("followingUid", uid)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        Log.w(TAG, "Background profile likes listener error", error)
+                        Log.w(TAG, "Background follows listener error", error)
                         return@addSnapshotListener
                     }
-                    val likes = snapshot?.documents?.mapNotNull { doc ->
-                        doc.toObject(ProfileLikeRecord::class.java)
+                    val follows = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(FollowRecord::class.java)
                             ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
                     }.orEmpty()
 
-                    if (!profileLikesInitialized) {
-                        likes.forEach { seenProfileLikeIds += it.id }
-                        profileLikesInitialized = true
+                    if (!followsInitialized) {
+                        follows.forEach { seenFollowIds += it.id }
+                        followsInitialized = true
                         return@addSnapshotListener
                     }
 
-                    likes.forEach { like ->
-                        if (seenProfileLikeIds.add(like.id) && like.fromUid != uid) {
-                            resolveDisplayName(db, like.fromUid, "Kindred Member") { likerName ->
+                    follows.forEach { follow ->
+                        if (seenFollowIds.add(follow.id) && follow.followerUid != uid) {
+                            resolveDisplayName(db, follow.followerUid, follow.followerName.ifBlank { "Kindred Member" }) { followerName ->
                                 KindredNotificationHelper.showSocialNotification(
                                     context = this,
-                                    title = "Someone Likes You!",
-                                    body = "$likerName liked your Kindred profile.",
-                                    notificationType = KindredNotificationHelper.TYPE_PROFILE_LIKE,
-                                    tagKey = "plike_${like.fromUid}"
+                                    title = "New Follower",
+                                    body = "$followerName started following you.",
+                                    notificationType = KindredNotificationHelper.TYPE_NEW_FOLLOWER,
+                                    tagKey = "follow_${follow.followerUid}"
                                 )
                             }
                         }
@@ -211,7 +211,7 @@ class KindredBackgroundService : Service() {
                     !KindredNotificationHelper.shouldSuppressForegroundMessageNotification(match.id)
                 ) {
                     val previewText = match.lastMessageText?.takeIf { it.isNotBlank() } ?: "Sent you a new message"
-                    resolveDisplayName(db, senderId, "Kindred Match") { senderName ->
+                    resolveDisplayName(db, senderId, "Kindred Member") { senderName ->
                         KindredNotificationHelper.showMessageNotification(
                             context = this,
                             matchId = match.id,
@@ -344,7 +344,7 @@ class KindredBackgroundService : Service() {
 
         ringingForMe.forEach { session ->
             if (activeRingingCallIds.add(session.id)) {
-                resolveDisplayName(db, session.callerUid, "Kindred Match") { callerName ->
+                resolveDisplayName(db, session.callerUid, "Kindred Member") { callerName ->
                     KindredNotificationHelper.showIncomingCallNotification(
                         context = this,
                         matchId = matchId,
@@ -365,8 +365,8 @@ class KindredBackgroundService : Service() {
         matchesRegistration = null
         myPostsRegistration?.remove()
         myPostsRegistration = null
-        profileLikesRegistration?.remove()
-        profileLikesRegistration = null
+        followsRegistration?.remove()
+        followsRegistration = null
         callRegistrations.values.forEach { it.remove() }
         callRegistrations.clear()
         commentRegistrations.values.forEach { it.remove() }
@@ -376,7 +376,7 @@ class KindredBackgroundService : Service() {
         knownPostLikes.clear()
         initializedCommentPosts.clear()
         seenCommentIds.clear()
-        seenProfileLikeIds.clear()
+        seenFollowIds.clear()
         ringtoneController?.release()
         ringtoneController = null
         super.onDestroy()

@@ -56,11 +56,11 @@ class KindredMessagingService : FirebaseMessagingService() {
 
         when (type) {
             KindredNotificationHelper.TYPE_NEW_MATCH, "MATCH" -> {
-                KindredNotificationHelper.showMatchNotification(
+                KindredNotificationHelper.showMessageNotification(
                     context = applicationContext,
                     matchId = matchId,
-                    partnerName = senderName,
-                    body = body ?: "You matched with $senderName! Start chatting now."
+                    senderName = senderName,
+                    messageText = body ?: "Started a conversation with you on Kindred"
                 )
             }
 
@@ -87,12 +87,22 @@ class KindredMessagingService : FirebaseMessagingService() {
                 )
             }
 
+            KindredNotificationHelper.TYPE_NEW_FOLLOWER, "FOLLOW", "FOLLOWER" -> {
+                KindredNotificationHelper.showSocialNotification(
+                    context = applicationContext,
+                    title = title ?: "New Follower",
+                    body = body ?: "$senderName started following you on Kindred.",
+                    notificationType = KindredNotificationHelper.TYPE_NEW_FOLLOWER,
+                    tagKey = "follow_${senderId ?: senderName}"
+                )
+            }
+
             KindredNotificationHelper.TYPE_FRIEND_REQUEST -> {
                 KindredNotificationHelper.showSocialNotification(
                     context = applicationContext,
-                    title = title ?: "New friend request",
-                    body = body ?: "$senderName sent you a friend request on Kindred",
-                    notificationType = KindredNotificationHelper.TYPE_FRIEND_REQUEST,
+                    title = title ?: "New Follower",
+                    body = body ?: "$senderName started following you on Kindred.",
+                    notificationType = KindredNotificationHelper.TYPE_NEW_FOLLOWER,
                     tagKey = "fr_${senderId ?: senderName}"
                 )
             }
@@ -100,8 +110,8 @@ class KindredMessagingService : FirebaseMessagingService() {
             KindredNotificationHelper.TYPE_PROFILE_LIKE, "LIKE" -> {
                 KindredNotificationHelper.showSocialNotification(
                     context = applicationContext,
-                    title = title ?: "Someone liked your profile!",
-                    body = body ?: "$senderName liked your profile on Kindred",
+                    title = title ?: "New Activity",
+                    body = body ?: "$senderName interacted with you on Kindred",
                     notificationType = KindredNotificationHelper.TYPE_PROFILE_LIKE,
                     tagKey = "like_${senderId ?: senderName}"
                 )

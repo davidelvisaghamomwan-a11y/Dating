@@ -103,7 +103,6 @@ import coil.compose.AsyncImage
 import com.example.auth.GoogleAuthHelper
 import com.example.model.FeedComment
 import com.example.model.FeedPost
-import com.example.model.FriendStatus
 import com.example.model.ProfileVideoItem
 import com.example.model.PublicProfile
 import com.example.model.StoryHighlight
@@ -152,17 +151,17 @@ fun ProfileScreen(
     myVideos: List<ProfileVideoItem> = emptyList(),
     highlights: List<StoryHighlight> = emptyList(),
     archivedStories: List<StoryItem> = emptyList(),
-    friendsCount: Int = 0,
-    whoLikedMeCount: Int = 0,
+    followersCount: Int = 0,
+    followingCount: Int = 0,
     profileViewCount: Int = 0,
-    incomingFriendRequestCount: Int = 0,
+    activityBadgeCount: Int = 0,
     isAdmin: Boolean = false,
-    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
-    onFriendAction: (PublicProfile) -> Unit = {},
+    isFollowingUid: (String) -> Boolean = { false },
+    onToggleFollow: (PublicProfile) -> Unit = {},
     onEditProfile: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onOpenFriendsHub: () -> Unit = {},
-    onOpenWhoLikesMe: () -> Unit = {},
+    onOpenFollowersFollowing: (Int) -> Unit = {},
+    onOpenActivity: () -> Unit = {},
     onOpenAdminDashboard: () -> Unit = {},
     onOpenVerification: () -> Unit = {},
     onOpenVideoFeed: () -> Unit = {},
@@ -240,8 +239,6 @@ fun ProfileScreen(
     }
 
     val postsCount = allGridEntries.size
-    val followersCount = whoLikedMeCount + friendsCount
-    val followingCount = friendsCount
 
     Box(
         modifier = Modifier
@@ -322,13 +319,13 @@ fun ProfileScreen(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Friends & Connections ($friendsCount)") },
+                                text = { Text("Followers & Following (${followersCount + followingCount})") },
                                 leadingIcon = {
                                     Icon(Icons.Filled.Group, contentDescription = null)
                                 },
                                 onClick = {
                                     showAccountQuickMenu = false
-                                    onOpenFriendsHub()
+                                    onOpenFollowersFollowing(0)
                                 }
                             )
                             if (isAdmin) {
@@ -398,7 +395,7 @@ fun ProfileScreen(
                                     modifier = Modifier.size(27.dp)
                                 )
                             }
-                            if (incomingFriendRequestCount > 0) {
+                            if (activityBadgeCount > 0) {
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.TopEnd)
@@ -449,13 +446,13 @@ fun ProfileScreen(
                         ProfileStatColumn(
                             count = followersCount,
                             label = "Followers",
-                            onClick = onOpenWhoLikesMe,
+                            onClick = { onOpenFollowersFollowing(0) },
                             modifier = Modifier.testTag("profile_stat_followers")
                         )
                         ProfileStatColumn(
                             count = followingCount,
                             label = "Following",
-                            onClick = onOpenFriendsHub,
+                            onClick = { onOpenFollowersFollowing(1) },
                             modifier = Modifier.testTag("profile_stat_following")
                         )
                     }
@@ -524,7 +521,7 @@ fun ProfileScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .clickable(onClick = onOpenWhoLikesMe)
+                        .clickable(onClick = onOpenActivity)
                         .testTag("profile_insights_banner")
                 ) {
                     Column(
@@ -865,9 +862,9 @@ fun ProfileScreen(
                                 post = livePost,
                                 authorProfile = authorProfile,
                                 currentUserId = currentUserId,
-                                friendStatus = friendStatusForUid(livePost.userId),
-                                onFriendAction = {
-                                    authorProfile?.let { onFriendAction(it) }
+                                isFollowing = isFollowingUid(livePost.userId),
+                                onToggleFollow = {
+                                    authorProfile?.let { onToggleFollow(it) }
                                 },
                                 resolveVideoFile = resolveFeedPostVideoFile,
                                 onToggleLike = {

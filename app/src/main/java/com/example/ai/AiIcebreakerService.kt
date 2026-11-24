@@ -33,8 +33,8 @@ class AiIcebreakerService(
     private val modelProvider: () -> GenerativeModel = {
         val suggestionItem = Schema.obj(
             properties = mapOf(
-                "prompt" to Schema.string(description = "A concise, warm, respectful dating app opener message under 140 characters"),
-                "tone" to Schema.string(description = "One-word or two-word tone label like Playful, Curious, Shared Vibe, Date Idea"),
+                "prompt" to Schema.string(description = "A concise, warm, respectful social DM opener message under 140 characters"),
+                "tone" to Schema.string(description = "One-word or two-word tone label like Friendly, Curious, Shared Vibe, Hangout Idea"),
                 "reason" to Schema.string(description = "Brief explanation of what profile detail inspired this opener")
             )
         )
@@ -42,7 +42,7 @@ class AiIcebreakerService(
             properties = mapOf(
                 "openers" to Schema.array(
                     items = suggestionItem,
-                    description = "Four distinct conversation openers tailored to the match profile"
+                    description = "Four distinct conversation openers tailored to the creator or friend profile"
                 )
             )
         )
@@ -63,7 +63,7 @@ class AiIcebreakerService(
         partnerProfile: PublicProfile?,
         tonePreference: String = "Balanced"
     ): Result<List<IcebreakerSuggestion>> {
-        val partnerName = partnerProfile?.displayName?.ifBlank { "your match" } ?: "your match"
+        val partnerName = partnerProfile?.displayName?.ifBlank { "them" } ?: "them"
         val partnerBio = partnerProfile?.bio?.ifBlank { "Enjoys thoughtful conversation and exploring the city." }
             ?: "Enjoys thoughtful conversation and exploring the city."
         val partnerInterests = partnerProfile?.interests.orEmpty()
@@ -74,12 +74,12 @@ class AiIcebreakerService(
         }
 
         val prompt = buildString {
-            append("Generate 4 natural, charming, respectful first messages for a dating app user to send to $partnerName.\n")
+            append("Generate 4 natural, friendly, respectful direct messages for a social app member to send to $partnerName.\n")
             append("Requested tone: $tonePreference.\n")
-            if (partnerCity.isNotBlank()) append("Match city: $partnerCity.\n")
-            if (partnerInterests.isNotEmpty()) append("Match interests: ${partnerInterests.joinToString(", ")}.\n")
+            if (partnerCity.isNotBlank()) append("Recipient city: $partnerCity.\n")
+            if (partnerInterests.isNotEmpty()) append("Recipient interests: ${partnerInterests.joinToString(", ")}.\n")
             if (sharedInterests.isNotEmpty()) append("Shared interests between both users: ${sharedInterests.joinToString(", ")}.\n")
-            append("Match bio: $partnerBio\n")
+            append("Recipient bio: $partnerBio\n")
             if (myInterests.isNotEmpty()) append("Sender interests: ${myInterests.joinToString(", ")}.\n")
             append("Keep each opener conversational, specific to their profile details, free of clichés, and under 140 characters.")
         }
@@ -158,11 +158,11 @@ class AiIcebreakerService(
             if (city != null) {
                 list += IcebreakerSuggestion(
                     prompt = if (secondInterest != null) {
-                        "Quick vote in $city: $secondInterest afternoon or sunset coffee walk?"
+                        "Quick vote in $city: $secondInterest hangout or afternoon coffee walk?"
                     } else {
-                        "What's your underrated neighborhood gem in $city for a first coffee?"
+                        "What's your favorite neighborhood spot in $city for good coffee?"
                     },
-                    tone = "Date Idea",
+                    tone = "Local Vibe",
                     reason = "Local to $city"
                 )
             }
@@ -171,9 +171,9 @@ class AiIcebreakerService(
                 val keyword = bioSnippet.split(" ", ",", ".").firstOrNull { it.length >= 5 }
                 list += IcebreakerSuggestion(
                     prompt = if (keyword != null) {
-                        "Your bio caught my eye ($keyword!) — give me the story behind that."
+                        "Your bio caught my eye ($keyword!) — what's the story behind that?"
                     } else {
-                        "Loved your bio, $name! What's been the highlight of your week so far?"
+                        "Hey $name! What's been the highlight of your week so far?"
                     },
                     tone = "Bio Hook",
                     reason = "Inspired by profile bio"
@@ -181,9 +181,9 @@ class AiIcebreakerService(
             }
 
             list += IcebreakerSuggestion(
-                prompt = "Two truths and your best weekend plan — ready to play, $name?",
-                tone = "Playful",
-                reason = "Easy spark opener"
+                prompt = "What are you creating or obsessed with lately, $name?",
+                tone = "Friendly",
+                reason = "Easy conversation starter"
             )
 
             return list.distinctBy { it.prompt }.take(4)

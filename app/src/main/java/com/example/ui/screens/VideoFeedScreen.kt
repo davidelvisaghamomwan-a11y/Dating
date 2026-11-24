@@ -5,6 +5,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.view.ViewGroup
 import android.widget.VideoView
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -89,7 +90,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.model.VideoPost
 import com.example.ui.components.ProfileAvatarImage
@@ -114,14 +114,15 @@ fun VideoFeedScreen(
     onOpenAuthorProfile: (String) -> Unit,
     onBack: () -> Unit,
     onStatusMessage: (String) -> Unit = {},
-    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
-    onFriendAction: (String) -> Unit = {},
+    isFollowingUid: (String) -> Boolean = { false },
+    onToggleFollow: (String) -> Unit = {},
     myProfile: PublicProfile? = null,
     observeComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
     onAddComment: (String, String) -> Unit = { _, _ -> },
     onDeleteComment: (String, String) -> Unit = { _, _ -> },
     initialPostId: String? = null
 ) {
+    BackHandler { onBack() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingUpload by remember { mutableStateOf<PreparedVideoUpload?>(null) }
@@ -241,13 +242,13 @@ fun VideoFeedScreen(
                         isActive = isSettledActive,
                         isMuted = isMuted,
                         currentUserId = currentUserId,
-                        friendStatus = friendStatusForUid(post.userId),
+                        isFollowing = isFollowingUid(post.userId),
                         resolveVideoFile = resolveVideoFile,
                         onToggleMute = { isMuted = !isMuted },
                         onToggleLike = { onToggleLike(post.id, currentUserId in post.likedByUids) },
                         onDelete = { onDeletePost(post.id) },
                         onOpenAuthor = { onOpenAuthorProfile(post.userId) },
-                        onFriendAction = { onFriendAction(post.userId) },
+                        onToggleFollow = { onToggleFollow(post.userId) },
                         onOpenComments = { activeCommentsVideoPost = post }
                     )
                 }
@@ -399,13 +400,13 @@ private fun ReelPageItem(
     isActive: Boolean,
     isMuted: Boolean,
     currentUserId: String,
-    friendStatus: FriendStatus,
+    isFollowing: Boolean,
     resolveVideoFile: suspend (VideoPost) -> Result<File>,
     onToggleMute: () -> Unit,
     onToggleLike: () -> Unit,
     onDelete: () -> Unit,
     onOpenAuthor: () -> Unit,
-    onFriendAction: () -> Unit,
+    onToggleFollow: () -> Unit,
     onOpenComments: () -> Unit
 ) {
     val context = LocalContext.current
@@ -594,17 +595,14 @@ private fun ReelPageItem(
                 }
 
                 if (!isOwner) {
-                    val label = when (friendStatus) {
-                        FriendStatus.NONE -> "Follow"
-                        FriendStatus.OUTGOING_PENDING -> "Requested"
-                        FriendStatus.INCOMING_PENDING -> "Accept"
-                        FriendStatus.FRIENDS -> "Following"
-                    }
+                    val label = if (isFollowing) "Following" else "Follow"
                     OutlinedButton(
-                        onClick = onFriendAction,
+                        onClick = onToggleFollow,
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.8f)),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp)
+                        modifier = Modifier
+                            .height(30.dp)
+                            .testTag("reel_follow_btn_${post.id}")
                     ) {
                         Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall)
                     }

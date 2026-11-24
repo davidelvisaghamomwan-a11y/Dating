@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -88,8 +90,8 @@ import java.util.Locale
 private enum class InboxFilterTab(val label: String, val tag: String) {
     ALL("All", "inbox_filter_all"),
     UNREAD("Unread", "inbox_filter_unread"),
-    DIRECT("Direct", "inbox_filter_direct"),
-    MATCHES("Matches", "inbox_filter_matches")
+    FOLLOWING("Following", "inbox_filter_following"),
+    ONLINE("Online", "inbox_filter_online")
 }
 
 @Composable
@@ -99,6 +101,9 @@ fun MatchesAndChatScreen(
     matches: List<MatchThreadItem>,
     selectedMatchId: String?,
     messagesState: UiState<List<ChatMessage>>,
+    followingProfiles: List<PublicProfile> = emptyList(),
+    onlineUserIds: Set<String> = emptySet(),
+    onMessageProfile: (PublicProfile) -> Unit = {},
     activePartnerPresence: UserPresence? = null,
     activePartnerTyping: TypingStatus? = null,
     activeCallSession: CallSession? = null,
@@ -173,7 +178,10 @@ fun MatchesAndChatScreen(
                     currentUserId = currentUserId,
                     matches = matches,
                     selectedMatchId = selectedMatchId,
+                    followingProfiles = followingProfiles,
+                    onlineUserIds = onlineUserIds,
                     onSelectMatch = { onSelectMatch(it) },
+                    onMessageProfile = onMessageProfile,
                     onOpenSearch = onOpenSearch,
                     modifier = Modifier
                         .width(380.dp)
@@ -289,7 +297,10 @@ fun MatchesAndChatScreen(
                     currentUserId = currentUserId,
                     matches = matches,
                     selectedMatchId = null,
+                    followingProfiles = followingProfiles,
+                    onlineUserIds = onlineUserIds,
                     onSelectMatch = { onSelectMatch(it) },
+                    onMessageProfile = onMessageProfile,
                     onOpenSearch = onOpenSearch,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -303,7 +314,10 @@ private fun InboxListPane(
     currentUserId: String,
     matches: List<MatchThreadItem>,
     selectedMatchId: String?,
+    followingProfiles: List<PublicProfile>,
+    onlineUserIds: Set<String>,
     onSelectMatch: (String) -> Unit,
+    onMessageProfile: (PublicProfile) -> Unit,
     onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -313,15 +327,18 @@ private fun InboxListPane(
     val unreadCount = remember(matches, currentUserId) {
         matches.count { it.match.isUnreadFor(currentUserId) }
     }
+    val followingIds = remember(followingProfiles) {
+        followingProfiles.map { it.userId }.toSet()
+    }
 
-    val filteredMatches = remember(matches, filterQuery, activeFilterTab, currentUserId) {
+    val filteredMatches = remember(matches, filterQuery, activeFilterTab, currentUserId, followingIds, onlineUserIds) {
         val q = filterQuery.trim()
         matches.filter { item ->
             val tabOk = when (activeFilterTab) {
                 InboxFilterTab.ALL -> true
                 InboxFilterTab.UNREAD -> item.match.isUnreadFor(currentUserId)
-                InboxFilterTab.DIRECT -> item.match.conversationType == "DIRECT"
-                InboxFilterTab.MATCHES -> item.match.conversationType != "DIRECT"
+                InboxFilterTab.FOLLOWING -> item.partnerId in followingIds
+                InboxFilterTab.ONLINE -> item.partnerId in onlineUserIds
             }
             val partner = item.partnerProfile
             val queryOk = if (q.isBlank()) {
@@ -447,6 +464,64 @@ private fun InboxListPane(
             Spacer(modifier = Modifier.height(12.dp))
         }
 
+        if (followingProfiles.isNotEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Following • Direct Message",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.testTag("inbox_following_dm_strip")
+                ) {
+                    items(followingProfiles, key = { "dm_follow_${it.userId}" }) { person ->
+                        val isOnline = person.userId in onlineUserIds
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .width(64.dp)
+                                .clickable { onMessageProfile(person) }
+                                .testTag("inbox_following_dm_${person.userId}")
+                        ) {
+                            Box {
+                                ProfileAvatarImage(
+                                    photoDataUrl = person.photoDataUrl,
+                                    displayName = person.displayName,
+                                    seed = person.avatarSeed,
+                                    modifier = Modifier.size(52.dp),
+                                    initialsFontSizeSp = 18
+                                )
+                                if (isOnline) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(13.dp)
+                                            .align(Alignment.BottomEnd)
+                                            .border(2.dp, MaterialTheme.colorScheme.background, CircleShape)
+                                            .clip(CircleShape)
+                                            .background(EmeraldMint)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = person.displayName.ifBlank { "Member" },
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         if (matches.isEmpty()) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -474,7 +549,7 @@ private fun InboxListPane(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Like profiles in Discover or search anyone by name to start a live conversation right here.",
+                        text = "Follow creators in Explore or search anyone by name to send a direct message.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -535,14 +610,12 @@ private fun InboxListPane(
                     val partner = item.partnerProfile
                     val isSelected = item.match.id == selectedMatchId
                     val isUnread = item.match.isUnreadFor(currentUserId)
-                    val isDirect = item.match.conversationType == "DIRECT"
+                    val isPartnerOnline = item.partnerId in onlineUserIds
                     val timestampLabel = formatInboxTimestamp(
                         item.match.lastMessageAt ?: item.match.updatedAt ?: item.match.createdAt
                     )
                     val previewText = when {
-                        item.match.lastMessageText.isNullOrBlank() -> {
-                            if (isDirect) "Direct conversation • Say hello" else "Matched! Tap to say hello."
-                        }
+                        item.match.lastMessageText.isNullOrBlank() -> "Start a conversation • Say hello."
                         item.match.lastMessageSenderId == currentUserId -> {
                             "You: ${item.match.lastMessageText}"
                         }
@@ -580,7 +653,7 @@ private fun InboxListPane(
                             Box {
                                 ProfileAvatarImage(
                                     photoDataUrl = partner?.photoDataUrl,
-                                    displayName = partner?.displayName ?: "Match",
+                                    displayName = partner?.displayName ?: "Member",
                                     seed = partner?.avatarSeed ?: item.partnerId,
                                     modifier = Modifier.size(58.dp),
                                     initialsFontSizeSp = 22
@@ -593,6 +666,15 @@ private fun InboxListPane(
                                             .clip(CircleShape)
                                             .background(CoralRose)
                                             .testTag("unread_dot_${item.match.id}")
+                                    )
+                                } else if (isPartnerOnline) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .align(Alignment.BottomEnd)
+                                            .border(2.dp, MaterialTheme.colorScheme.surfaceContainer, CircleShape)
+                                            .clip(CircleShape)
+                                            .background(EmeraldMint)
                                     )
                                 }
                             }
@@ -629,20 +711,6 @@ private fun InboxListPane(
                                                 tint = EmeraldMint,
                                                 modifier = Modifier.size(16.dp)
                                             )
-                                        }
-                                        if (isDirect) {
-                                            Surface(
-                                                shape = RoundedCornerShape(50),
-                                                color = ChampagneGold.copy(alpha = 0.2f),
-                                                border = BorderStroke(1.dp, ChampagneGold.copy(alpha = 0.45f))
-                                            ) {
-                                                Text(
-                                                    text = "Direct",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = ChampagneGold,
-                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                                )
-                                            }
                                         }
                                     }
 

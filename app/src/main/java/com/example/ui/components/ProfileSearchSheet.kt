@@ -61,7 +61,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.model.DiscoveryCandidate
-import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
@@ -74,8 +73,8 @@ fun ProfileSearchSheet(
     onMessageProfile: (PublicProfile) -> Unit,
     onReportProfile: (profile: PublicProfile, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
     onBlockProfile: (PublicProfile) -> Unit = {},
-    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
-    onFriendAction: ((PublicProfile, FriendStatus) -> Unit)? = null,
+    isFollowingUid: (String) -> Boolean = { false },
+    onToggleFollow: ((PublicProfile) -> Unit)? = null,
     onOpenFullProfile: ((PublicProfile) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
@@ -90,8 +89,8 @@ fun ProfileSearchSheet(
             onMessageProfile = onMessageProfile,
             onReportProfile = onReportProfile,
             onBlockProfile = onBlockProfile,
-            friendStatusForUid = friendStatusForUid,
-            onFriendAction = onFriendAction,
+            isFollowingUid = isFollowingUid,
+            onToggleFollow = onToggleFollow,
             onOpenFullProfile = onOpenFullProfile,
             onClose = onDismiss
         )
@@ -105,8 +104,8 @@ fun ProfileSearchContent(
     onMessageProfile: (PublicProfile) -> Unit,
     onReportProfile: (profile: PublicProfile, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _ -> },
     onBlockProfile: (PublicProfile) -> Unit = {},
-    friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
-    onFriendAction: ((PublicProfile, FriendStatus) -> Unit)? = null,
+    isFollowingUid: (String) -> Boolean = { false },
+    onToggleFollow: ((PublicProfile) -> Unit)? = null,
     onOpenFullProfile: ((PublicProfile) -> Unit)? = null,
     onClose: () -> Unit = {}
 ) {
@@ -471,7 +470,7 @@ fun ProfileSearchContent(
     }
 
     inspectingCandidate?.let { candidate ->
-        val status = friendStatusForUid(candidate.profile.userId)
+        val following = isFollowingUid(candidate.profile.userId)
         ModalBottomSheet(
             onDismissRequest = { inspectingCandidate = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -481,8 +480,8 @@ fun ProfileSearchContent(
                 PartnerProfileQuickSheet(
                     partner = candidate.profile,
                     distanceKm = candidate.distanceKm.takeIf { it > 0.0 },
-                    friendStatus = status,
-                    onFriendAction = onFriendAction?.let { cb -> { cb(candidate.profile, status) } },
+                    isFollowing = following,
+                    onToggleFollow = onToggleFollow?.let { cb -> { cb(candidate.profile) } },
                     onOpenFullProfile = onOpenFullProfile?.let { cb ->
                         {
                             inspectingCandidate = null
@@ -523,7 +522,7 @@ fun ProfileSearchContent(
             onDismissRequest = { blockTarget = null },
             title = { Text("Block ${target.displayName}?") },
             text = {
-                Text("They will be removed from search, discovery, and prevented from matching or messaging you.")
+                Text("They will be removed from search and explore, and prevented from following or messaging you.")
             },
             confirmButton = {
                 TextButton(

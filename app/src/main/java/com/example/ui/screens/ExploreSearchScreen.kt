@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -86,16 +88,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.example.model.ActiveMemberPresenceItem
 import com.example.model.DiscoveryCandidate
 import com.example.model.FeedComment
 import com.example.model.FeedPost
-import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.model.VideoPost
 import com.example.ui.components.InstagramFeedPostCard
 import com.example.ui.components.PostCommentsSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
+import com.example.ui.theme.EmeraldMint
 import com.example.util.CountryFlagHelper
 import com.example.util.VerificationAnalyzer
 import kotlinx.coroutines.flow.Flow
@@ -154,8 +157,10 @@ fun ExploreSearchScreen(
     feedPosts: List<FeedPost>,
     videoPosts: List<VideoPost> = emptyList(),
     profilesByUid: Map<String, PublicProfile>,
-    friendStatusForUid: (String) -> FriendStatus,
-    onFriendAction: (PublicProfile) -> Unit,
+    activeMembers: List<ActiveMemberPresenceItem> = emptyList(),
+    onOpenActiveUsers: () -> Unit = {},
+    isFollowingUid: (String) -> Boolean = { false },
+    onToggleFollow: (PublicProfile) -> Unit = {},
     onOpenUserProfile: (String) -> Unit,
     onToggleFeedPostLike: (postId: String, currentlyLiked: Boolean) -> Unit,
     onToggleFeedPostSave: (postId: String, currentlySaved: Boolean) -> Unit,
@@ -379,6 +384,103 @@ fun ExploreSearchScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 24.dp)
             ) {
+                if (query.isBlank() && activeMembers.isNotEmpty()) {
+                    item(key = "explore_active_now_strip") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(EmeraldMint)
+                                    )
+                                    Text(
+                                        text = "Active now",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Text(
+                                    text = "See all",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = ExploreInstagramBlue,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clickable(onClick = onOpenActiveUsers)
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        .testTag("explore_active_see_all")
+                                )
+                            }
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.testTag("explore_active_users_row")
+                            ) {
+                                items(activeMembers.take(16), key = { "active_${it.profile.userId}" }) { member ->
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier
+                                            .width(64.dp)
+                                            .clickable { onOpenUserProfile(member.profile.userId) }
+                                            .testTag("explore_active_user_${member.profile.userId}")
+                                    ) {
+                                        Box {
+                                            ProfileAvatarImage(
+                                                photoDataUrl = member.profile.photoDataUrl,
+                                                displayName = member.profile.displayName,
+                                                seed = member.profile.avatarSeed,
+                                                modifier = Modifier
+                                                    .size(54.dp)
+                                                    .border(
+                                                        1.5.dp,
+                                                        if (member.isOnline) EmeraldMint else MaterialTheme.colorScheme.outlineVariant,
+                                                        CircleShape
+                                                    )
+                                                    .padding(2.dp),
+                                                shape = CircleShape,
+                                                initialsFontSizeSp = 18
+                                            )
+                                            if (member.isOnline) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(13.dp)
+                                                        .align(Alignment.BottomEnd)
+                                                        .border(2.dp, MaterialTheme.colorScheme.background, CircleShape)
+                                                        .clip(CircleShape)
+                                                        .background(EmeraldMint)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = member.profile.displayName.ifBlank { "Member" },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Only show matching People rows while actively typing a search query
                 if (query.isNotBlank() && matchingUsers.isNotEmpty()) {
                     item(key = "matching_users_header") {
@@ -396,6 +498,8 @@ fun ExploreSearchScreen(
                     ) { candidate ->
                         ExploreSearchUserRow(
                             candidate = candidate,
+                            isFollowing = isFollowingUid(candidate.profile.userId),
+                            onToggleFollow = { onToggleFollow(candidate.profile) },
                             onClick = { onOpenUserProfile(candidate.profile.userId) }
                         )
                     }
@@ -568,13 +672,13 @@ fun ExploreSearchScreen(
                                             post = livePost,
                                             authorProfile = authorProfile,
                                             currentUserId = currentUserId,
-                                            friendStatus = friendStatusForUid(livePost.userId),
-                                            onFriendAction = {
+                                            isFollowing = isFollowingUid(livePost.userId),
+                                            onToggleFollow = {
                                                 val target = authorProfile ?: PublicProfile(
                                                     userId = livePost.userId,
                                                     displayName = livePost.authorName
                                                 )
-                                                onFriendAction(target)
+                                                onToggleFollow(target)
                                             },
                                             resolveVideoFile = resolveFeedPostVideoFile,
                                             onToggleLike = {
@@ -610,7 +714,7 @@ fun ExploreSearchScreen(
                                             videoPost = liveReel,
                                             authorProfile = authorProfile,
                                             currentUserId = currentUserId,
-                                            friendStatus = friendStatusForUid(liveReel.userId),
+                                            isFollowing = isFollowingUid(liveReel.userId),
                                             resolveVideoFile = resolveVideoPostFile,
                                             isVisibleForAutoPlay = autoPlayKey == exploreItem.key,
                                             onToggleLike = {
@@ -619,12 +723,12 @@ fun ExploreSearchScreen(
                                                     currentUserId in liveReel.likedByUids
                                                 )
                                             },
-                                            onFriendAction = {
+                                            onToggleFollow = {
                                                 val target = authorProfile ?: PublicProfile(
                                                     userId = liveReel.userId,
                                                     displayName = liveReel.authorName
                                                 )
-                                                onFriendAction(target)
+                                                onToggleFollow(target)
                                             },
                                             onOpenAuthor = {
                                                 selectedExploreIndex = null
@@ -680,6 +784,8 @@ fun ExploreSearchScreen(
 @Composable
 private fun ExploreSearchUserRow(
     candidate: DiscoveryCandidate,
+    isFollowing: Boolean,
+    onToggleFollow: () -> Unit,
     onClick: () -> Unit
 ) {
     val profile = candidate.profile
@@ -736,6 +842,16 @@ private fun ExploreSearchUserRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+        }
+        TextButton(
+            onClick = onToggleFollow,
+            modifier = Modifier.testTag("explore_user_follow_${profile.userId}")
+        ) {
+            Text(
+                text = if (isFollowing) "Following" else "Follow",
+                color = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else ExploreInstagramBlue,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -807,11 +923,11 @@ private fun ExploreReelFeedCard(
     videoPost: VideoPost,
     authorProfile: PublicProfile?,
     currentUserId: String,
-    friendStatus: FriendStatus,
+    isFollowing: Boolean,
     resolveVideoFile: suspend (VideoPost) -> Result<File>,
     isVisibleForAutoPlay: Boolean,
     onToggleLike: () -> Unit,
-    onFriendAction: () -> Unit,
+    onToggleFollow: () -> Unit,
     onOpenAuthor: () -> Unit,
     onOpenComments: () -> Unit
 ) {
@@ -903,16 +1019,10 @@ private fun ExploreReelFeedCard(
             }
 
             if (!isOwner) {
-                val followLabel = when (friendStatus) {
-                    FriendStatus.NONE -> "Follow"
-                    FriendStatus.OUTGOING_PENDING -> "Requested"
-                    FriendStatus.INCOMING_PENDING -> "Accept"
-                    FriendStatus.FRIENDS -> "Following"
-                }
-                TextButton(onClick = onFriendAction) {
+                TextButton(onClick = onToggleFollow) {
                     Text(
-                        text = followLabel,
-                        color = if (friendStatus == FriendStatus.NONE) ExploreInstagramBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = if (isFollowing) "Following" else "Follow",
+                        color = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else ExploreInstagramBlue,
                         fontWeight = FontWeight.SemiBold
                     )
                 }

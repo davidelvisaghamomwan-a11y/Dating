@@ -91,12 +91,13 @@ data class PublicProfile(
 
 object VisibilityLevel {
     const val EVERYONE = "EVERYONE"
+    const val FOLLOWERS_ONLY = "FOLLOWERS_ONLY"
     const val MATCHES_AND_FRIENDS = "MATCHES_AND_FRIENDS"
     const val FRIENDS_ONLY = "FRIENDS_ONLY"
 
     fun labelFor(level: String): String = when (level) {
-        FRIENDS_ONLY -> "Friends Only"
-        MATCHES_AND_FRIENDS -> "Matches & Friends"
+        FOLLOWERS_ONLY -> "Followers Only"
+        FRIENDS_ONLY, MATCHES_AND_FRIENDS -> "Mutual Followers"
         else -> "Everyone"
     }
 }
@@ -311,6 +312,78 @@ data class FriendshipRecord(
     val createdBy: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null
 )
+
+@Keep
+@IgnoreExtraProperties
+data class FollowRecord(
+    @DocumentId val id: String = "",
+    val followerUid: String = "",
+    val followingUid: String = "",
+    val followerName: String = "",
+    val followerPhoto: String? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+sealed interface SocialActivityItem {
+    val id: String
+    val timestampMs: Long
+    val actorUid: String
+    val actorName: String
+    val actorPhoto: String?
+    val actorVerified: Boolean
+
+    data class NewFollower(
+        override val id: String,
+        override val timestampMs: Long,
+        override val actorUid: String,
+        override val actorName: String,
+        override val actorPhoto: String?,
+        override val actorVerified: Boolean,
+        val follow: FollowRecord
+    ) : SocialActivityItem
+
+    data class PostLike(
+        override val id: String,
+        override val timestampMs: Long,
+        override val actorUid: String,
+        override val actorName: String,
+        override val actorPhoto: String?,
+        override val actorVerified: Boolean,
+        val post: FeedPost
+    ) : SocialActivityItem
+
+    data class ReelLike(
+        override val id: String,
+        override val timestampMs: Long,
+        override val actorUid: String,
+        override val actorName: String,
+        override val actorPhoto: String?,
+        override val actorVerified: Boolean,
+        val reel: VideoPost
+    ) : SocialActivityItem
+
+    data class PostComment(
+        override val id: String,
+        override val timestampMs: Long,
+        override val actorUid: String,
+        override val actorName: String,
+        override val actorPhoto: String?,
+        override val actorVerified: Boolean,
+        val post: FeedPost,
+        val comment: FeedComment
+    ) : SocialActivityItem
+
+    data class ReelComment(
+        override val id: String,
+        override val timestampMs: Long,
+        override val actorUid: String,
+        override val actorName: String,
+        override val actorPhoto: String?,
+        override val actorVerified: Boolean,
+        val reel: VideoPost,
+        val comment: FeedComment
+    ) : SocialActivityItem
+}
 
 @Keep
 @IgnoreExtraProperties

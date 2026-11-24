@@ -19,8 +19,7 @@ import com.example.model.DiscoveryCandidate
 import com.example.model.FavoriteRecord
 import com.example.model.FeedComment
 import com.example.model.FeedPost
-import com.example.model.FriendRequestRecord
-import com.example.model.FriendshipRecord
+import com.example.model.FollowRecord
 import com.example.model.KindredConstants
 import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
@@ -31,10 +30,10 @@ import com.example.model.ProfileVideoItem
 import com.example.model.ProfileViewRecord
 import com.example.model.PublicProfile
 import com.example.model.ReportRecord
+import com.example.model.SocialActivityItem
 import com.example.model.StoryHighlight
 import com.example.model.StoryItem
 import com.example.model.SuggestedFriendItem
-import com.example.model.SwipeRecord
 import com.example.model.TypingStatus
 import com.example.model.UiState
 import com.example.model.UserPresence
@@ -78,7 +77,6 @@ import java.io.File
 import java.util.UUID
 
 sealed interface KindredPushAlert {
-    data class NewMatch(val matchId: String, val partnerName: String) : KindredPushAlert
     data class NewMessage(val matchId: String, val senderName: String, val messageText: String) : KindredPushAlert
     data class IncomingCall(
         val matchId: String,
@@ -86,8 +84,7 @@ sealed interface KindredPushAlert {
         val callerName: String,
         val callType: String
     ) : KindredPushAlert
-    data class FriendRequestAlert(val fromUid: String, val fromName: String) : KindredPushAlert
-    data class ProfileLikeAlert(val fromUid: String, val fromName: String) : KindredPushAlert
+    data class NewFollowerAlert(val fromUid: String, val fromName: String) : KindredPushAlert
 }
 
 data class IncomingCallAlert(
@@ -159,7 +156,6 @@ class KindredViewModel(
     private val privateUserFlow = repository.observePrivateUser(currentUserId)
     private val myProfileFlow = repository.observeMyPublicProfile(currentUserId)
     private val allProfilesFlow = repository.observeDiscoverableProfiles(currentUserId)
-    private val outgoingSwipesFlow = repository.observeMyOutgoingSwipes(currentUserId)
     private val matchesFlow = repository.observeMyMatches(currentUserId)
     private val verificationsFlow = repository.observeVerifications(currentUserId)
     private val usersIBlockedFlow = repository.observeUsersIBlocked(currentUserId)
@@ -210,22 +206,6 @@ class KindredViewModel(
             }
         }
 
-    private val _pendingSwipes = MutableStateFlow<Map<String, String>>(emptyMap())
-
-    private data class UndoableSwipe(
-        val targetUserId: String,
-        val displayName: String
-    )
-
-    private val _lastUndoableSwipe = MutableStateFlow<UndoableSwipe?>(null)
-    val canUndoLastSwipe: StateFlow<Boolean> = _lastUndoableSwipe
-        .map { it != null }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = false
-        )
-
     private val blockingStateFlow: Flow<BlockingSnapshot> = combine(
         usersIBlockedFlow,
         usersWhoBlockedMeFlow
@@ -234,13 +214,6 @@ class KindredViewModel(
             usersIBlocked = iBlocked,
             usersWhoBlockedMe = blockedMe
         )
-    }
-
-    private val effectiveSwipedIdsFlow: Flow<Set<String>> = combine(
-        outgoingSwipesFlow,
-        _pendingSwipes
-    ) { swipes, pendingSwipes ->
-        swipes.map { it.toUserId }.toSet() + pendingSwipes.keys
     }
 
     private val sortedMatchesFlow: Flow<List<MatchRecord>> = matchesFlow
@@ -254,7 +227,6 @@ class KindredViewModel(
         effectiveLocationFlow,
         allProfilesFlow,
         spatialGeoCellsFlow,
-        effectiveSwipedIdsFlow,
         sortedMatchesFlow,
         verificationsFlow,
         blockingStateFlow
@@ -268,22 +240,14 @@ class KindredViewModel(
         val allProfiles = values[1] as List<PublicProfile>
         val spatialSnapshot = values[2] as GeoHashSpatialSnapshot?
         @Suppress("UNCHECKED_CAST")
-        val swipedIds = values[3] as Set<String>
+        val matches = values[3] as List<MatchRecord>
         @Suppress("UNCHECKED_CAST")
-        val matches = values[4] as List<MatchRecord>
-        @Suppress("UNCHECKED_CAST")
-        val verifications = values[5] as List<VerificationRecord>
-        val blocking = values[6] as BlockingSnapshot
+        val verifications = values[4] as List<VerificationRecord>
+        val blocking = values[5] as BlockingSnapshot
 
         val blockedIds = blocking.allBlockedIds
         val myLat = liveLocation?.exactLatitude ?: privateUser?.exactLatitude ?: myProfile?.coarseLatitude
         val myLng = liveLocation?.exactLongitude ?: privateUser?.exactLongitude ?: myProfile?.coarseLongitude
-
-        val minAge = (privateUser?.minAgePref ?: 18L).toInt()
-        val maxAge = (privateUser?.maxAgePref ?: 99L).toInt()
-        val maxDistKm = (privateUser?.maxDistanceKm ?: 100L).toDouble()
-        val interestedIn = privateUser?.interestedIn ?: "Everyone"
-        val verifiedOnly = privateUser?.verifiedOnlyFilter ?: false
         val myInterests = myProfile?.interests ?: emptyList()
 
         val myGeoHash = spatialSnapshot?.centerGeoHash ?: if (myLat != null && myLng != null) {
@@ -292,8 +256,6 @@ class KindredViewModel(
             ""
         }
 
-        // Primary source: GeoHash spatial cells queried from Firestore /geoCells/{cellId}/profiles.
-        // Any legacy publicProfiles without geoCells yet are merged by userId only if within GeoHash bounds.
         val firestoreProfiles = if (spatialSnapshot != null && spatialSnapshot.profiles.isNotEmpty()) {
             val cellMap = spatialSnapshot.profiles.associateBy { it.userId }.toMutableMap()
             allProfiles.forEach { legacy ->
@@ -312,13 +274,13 @@ class KindredViewModel(
             myLat = myLat,
             myLng = myLng,
             myGeoHash = myGeoHash,
-            maxDistanceKm = maxDistKm,
-            minAge = minAge,
-            maxAge = maxAge,
-            interestedIn = interestedIn,
-            verifiedOnly = verifiedOnly,
+            maxDistanceKm = 500.0,
+            minAge = 18,
+            maxAge = 99,
+            interestedIn = "Everyone",
+            verifiedOnly = false,
             myInterests = myInterests,
-            excludedUserIds = swipedIds,
+            excludedUserIds = emptySet(),
             blockedUserIds = blockedIds
         )
 
@@ -680,53 +642,55 @@ class KindredViewModel(
         initialValue = emptyList()
     )
 
-    // --- Friend Requests, Friendships & Suggested Friends ---
+    // --- Social Graph: Follows, Followers, Following & Suggested Profiles ---
 
-    val friendRequestsState: StateFlow<List<FriendRequestRecord>> = socialRepo.observeFriendRequestsForUser(currentUserId)
-        .catch { error ->
-            if (error is CancellationException) throw error
-            emit(emptyList())
+    val allFollowsState: StateFlow<List<FollowRecord>> = combine(
+        socialRepo.observeAllFollows(currentUserId).catch { emit(emptyList()) },
+        blockingStateFlow
+    ) { follows, blocking ->
+        val blocked = blocking.allBlockedIds
+        follows.filter { it.followerUid !in blocked && it.followingUid !in blocked }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    val followingIdsState: StateFlow<Set<String>> = allFollowsState
+        .map { list ->
+            list.filter { it.followerUid == currentUserId }.map { it.followingUid }.toSet()
         }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = emptyList()
+            initialValue = emptySet()
         )
 
-    val friendshipsState: StateFlow<List<FriendshipRecord>> = socialRepo.observeAllFriendships(currentUserId)
-        .catch { error ->
-            if (error is CancellationException) throw error
-            emit(emptyList())
+    val followerIdsState: StateFlow<Set<String>> = allFollowsState
+        .map { list ->
+            list.filter { it.followingUid == currentUserId }.map { it.followerUid }.toSet()
         }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = emptyList()
+            initialValue = emptySet()
         )
 
-    val suggestedFriendsState: StateFlow<List<SuggestedFriendItem>> = combine(
+    fun isFollowingUid(uid: String): Boolean = uid in followingIdsState.value
+
+    val suggestedProfilesState: StateFlow<List<SuggestedFriendItem>> = combine(
         dashboardState,
-        friendshipsState,
-        friendRequestsState
-    ) { dashUi, friendships, requests ->
+        followingIdsState
+    ) { dashUi, followingIds ->
         val snap = (dashUi as? UiState.Success)?.data ?: return@combine emptyList()
         val myProfile = snap.myProfile
         val myInterests = myProfile?.interests.orEmpty()
         val myCity = myProfile?.cityLabel.orEmpty()
         val myCountry = myProfile?.country.orEmpty()
 
-        val connectedIds = friendships
-            .filter { currentUserId in it.participantUids }
-            .flatMap { it.participantUids }
-            .toSet()
-        val pendingIds = requests
-            .filter { it.status == "PENDING" }
-            .flatMap { listOf(it.fromUid, it.toUid) }
-            .toSet()
-
         snap.searchableProfiles
             .filter { c ->
-                c.profile.userId !in connectedIds && c.profile.userId !in pendingIds
+                c.profile.userId !in followingIds && c.profile.userId != currentUserId
             }
             .map { candidate ->
                 val p = candidate.profile
@@ -753,7 +717,7 @@ class KindredViewModel(
         initialValue = emptyList()
     )
 
-    // --- Profile Views, Likes, Who Likes Me & Favorites ---
+    // --- Profile Views & Favorites ---
 
     val profileViewsState: StateFlow<List<ProfileViewRecord>> = socialRepo.observeIncomingProfileViews(currentUserId)
         .catch { error ->
@@ -766,12 +730,6 @@ class KindredViewModel(
             initialValue = emptyList()
         )
 
-    private val incomingSwipesFlow = socialRepo.observeIncomingSwipes(currentUserId)
-        .catch { error ->
-            if (error is CancellationException) throw error
-            emit(emptyList())
-        }
-
     val profileLikesState: StateFlow<List<ProfileLikeRecord>> = socialRepo.observeProfileLikes(currentUserId)
         .catch { error ->
             if (error is CancellationException) throw error
@@ -782,25 +740,6 @@ class KindredViewModel(
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
             initialValue = emptyList()
         )
-
-    val whoLikedMeState: StateFlow<List<DiscoveryCandidate>> = combine(
-        dashboardState,
-        incomingSwipesFlow,
-        profileLikesState
-    ) { dashUi, incomingSwipes, profileLikes ->
-        val snap = (dashUi as? UiState.Success)?.data ?: return@combine emptyList()
-        val matchedPartnerIds = snap.matches.map { it.partnerId }.toSet()
-        val swipeLikers = incomingSwipes.filter { it.direction == "LIKE" }.map { it.fromUserId }.toSet()
-        val profileLikers = profileLikes.filter { it.toUid == currentUserId }.map { it.fromUid }.toSet()
-        val allLikerIds = (swipeLikers + profileLikers) - matchedPartnerIds
-        snap.searchableProfiles
-            .filter { it.profile.userId in allLikerIds }
-            .sortedByDescending { it.profile.userId in swipeLikers }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-        initialValue = emptyList()
-    )
 
     val favoritesState: StateFlow<List<FavoriteRecord>> = socialRepo.observeFavorites(currentUserId)
         .catch { error ->
@@ -878,15 +817,167 @@ class KindredViewModel(
         initialValue = emptyList()
     )
 
-    val friendsFeedPostsState: StateFlow<List<FeedPost>> = combine(
+    val followingFeedPostsState: StateFlow<List<FeedPost>> = combine(
         feedPostsState,
-        friendshipsState
-    ) { posts, friendships ->
-        val friendIds = friendships
-            .filter { currentUserId in it.participantUids }
-            .flatMap { it.participantUids }
-            .toSet() + currentUserId
-        posts.filter { it.userId in friendIds }
+        followingIdsState
+    ) { posts, followingIds ->
+        val visibleIds = followingIds + currentUserId
+        posts.filter { it.userId in visibleIds }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+        initialValue = emptyList()
+    )
+
+    private val myPostCommentsActivityFlow: Flow<List<Pair<FeedPost, List<FeedComment>>>> = feedPostsState
+        .map { posts -> posts.filter { it.userId == currentUserId }.take(10) }
+        .distinctUntilChanged { a, b -> a.map { it.id } == b.map { it.id } }
+        .flatMapLatest { myPosts ->
+            if (myPosts.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                val perPost = myPosts.map { post ->
+                    socialRepo.observePostComments(post.id, currentUserId)
+                        .catch { emit(emptyList()) }
+                        .map { comments -> post to comments }
+                }
+                combine(perPost) { it.toList() }
+            }
+        }
+
+    private val myReelCommentsActivityFlow: Flow<List<Pair<VideoPost, List<FeedComment>>>> = videoFeedState
+        .map { reels -> reels.filter { it.userId == currentUserId }.take(10) }
+        .distinctUntilChanged { a, b -> a.map { it.id } == b.map { it.id } }
+        .flatMapLatest { myReels ->
+            if (myReels.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                val perReel = myReels.map { reel ->
+                    socialRepo.observeVideoPostComments(reel.id, currentUserId)
+                        .catch { emit(emptyList()) }
+                        .map { comments -> reel to comments }
+                }
+                combine(perReel) { it.toList() }
+            }
+        }
+
+    val socialActivityState: StateFlow<List<SocialActivityItem>> = combine(
+        allFollowsState,
+        feedPostsState,
+        videoFeedState,
+        myPostCommentsActivityFlow,
+        myReelCommentsActivityFlow,
+        allProfilesFlow,
+        blockingStateFlow
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        val follows = values[0] as List<FollowRecord>
+        @Suppress("UNCHECKED_CAST")
+        val posts = values[1] as List<FeedPost>
+        @Suppress("UNCHECKED_CAST")
+        val reels = values[2] as List<VideoPost>
+        @Suppress("UNCHECKED_CAST")
+        val postCommentPairs = values[3] as List<Pair<FeedPost, List<FeedComment>>>
+        @Suppress("UNCHECKED_CAST")
+        val reelCommentPairs = values[4] as List<Pair<VideoPost, List<FeedComment>>>
+        @Suppress("UNCHECKED_CAST")
+        val profiles = values[5] as List<PublicProfile>
+        val blocking = values[6] as BlockingSnapshot
+
+        val blocked = blocking.allBlockedIds
+        val profileMap = profiles.associateBy { it.userId }
+        val items = mutableListOf<SocialActivityItem>()
+
+        // New followers
+        follows.filter { it.followingUid == currentUserId && it.followerUid != currentUserId && it.followerUid !in blocked }
+            .forEach { follow ->
+                val actor = profileMap[follow.followerUid]
+                items += SocialActivityItem.NewFollower(
+                    id = "follow_${follow.id}",
+                    timestampMs = follow.createdAt?.toDate()?.time ?: 0L,
+                    actorUid = follow.followerUid,
+                    actorName = actor?.displayName ?: follow.followerName.ifBlank { "Kindred Member" },
+                    actorPhoto = actor?.allProfilePhotos()?.firstOrNull() ?: follow.followerPhoto,
+                    actorVerified = actor?.isProfileVerified == true,
+                    follow = follow
+                )
+            }
+
+        // Likes on user's posts
+        posts.filter { it.userId == currentUserId }
+            .forEach { post ->
+                val baseTs = post.createdAt?.toDate()?.time ?: 0L
+                post.likedByUids.filter { it != currentUserId && it !in blocked }
+                    .forEach { likerUid ->
+                        val actor = profileMap[likerUid]
+                        items += SocialActivityItem.PostLike(
+                            id = "postlike_${post.id}_$likerUid",
+                            timestampMs = baseTs,
+                            actorUid = likerUid,
+                            actorName = actor?.displayName ?: "Kindred Member",
+                            actorPhoto = actor?.allProfilePhotos()?.firstOrNull(),
+                            actorVerified = actor?.isProfileVerified == true,
+                            post = post
+                        )
+                    }
+            }
+
+        // Likes on user's reels
+        reels.filter { it.userId == currentUserId }
+            .forEach { reel ->
+                val baseTs = reel.createdAt?.toDate()?.time ?: 0L
+                reel.likedByUids.filter { it != currentUserId && it !in blocked }
+                    .forEach { likerUid ->
+                        val actor = profileMap[likerUid]
+                        items += SocialActivityItem.ReelLike(
+                            id = "reellike_${reel.id}_$likerUid",
+                            timestampMs = baseTs,
+                            actorUid = likerUid,
+                            actorName = actor?.displayName ?: "Kindred Member",
+                            actorPhoto = actor?.allProfilePhotos()?.firstOrNull(),
+                            actorVerified = actor?.isProfileVerified == true,
+                            reel = reel
+                        )
+                    }
+            }
+
+        // Comments on user's posts
+        postCommentPairs.forEach { (post, comments) ->
+            comments.filter { it.userId != currentUserId && it.userId !in blocked }
+                .forEach { comment ->
+                    val actor = profileMap[comment.userId]
+                    items += SocialActivityItem.PostComment(
+                        id = "postcomment_${post.id}_${comment.id}",
+                        timestampMs = comment.createdAt?.toDate()?.time ?: (post.createdAt?.toDate()?.time ?: 0L),
+                        actorUid = comment.userId,
+                        actorName = actor?.displayName ?: comment.authorName.ifBlank { "Kindred Member" },
+                        actorPhoto = actor?.allProfilePhotos()?.firstOrNull() ?: comment.authorPhoto,
+                        actorVerified = actor?.isProfileVerified == true || comment.authorVerified,
+                        post = post,
+                        comment = comment
+                    )
+                }
+        }
+
+        // Comments on user's reels
+        reelCommentPairs.forEach { (reel, comments) ->
+            comments.filter { it.userId != currentUserId && it.userId !in blocked }
+                .forEach { comment ->
+                    val actor = profileMap[comment.userId]
+                    items += SocialActivityItem.ReelComment(
+                        id = "reelcomment_${reel.id}_${comment.id}",
+                        timestampMs = comment.createdAt?.toDate()?.time ?: (reel.createdAt?.toDate()?.time ?: 0L),
+                        actorUid = comment.userId,
+                        actorName = actor?.displayName ?: comment.authorName.ifBlank { "Kindred Member" },
+                        actorPhoto = actor?.allProfilePhotos()?.firstOrNull() ?: comment.authorPhoto,
+                        actorVerified = actor?.isProfileVerified == true || comment.authorVerified,
+                        reel = reel,
+                        comment = comment
+                    )
+                }
+        }
+
+        items.sortedByDescending { it.timestampMs }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -933,9 +1024,6 @@ class KindredViewModel(
 
     private val _actionStatusMessage = MutableStateFlow<String?>(null)
     val actionStatusMessage: StateFlow<String?> = _actionStatusMessage.asStateFlow()
-
-    private val _newMatchPopup = MutableStateFlow<MatchThreadItem?>(null)
-    val newMatchPopup: StateFlow<MatchThreadItem?> = _newMatchPopup.asStateFlow()
 
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
@@ -990,16 +1078,8 @@ class KindredViewModel(
 
                     visibleMatches.forEach { match ->
                         val partnerId = match.participantUids.firstOrNull { it != currentUserId } ?: ""
-                        val partnerName = profileMap[partnerId]?.displayName ?: "Kindred Match"
-                        val isBrandNewMatch = knownMatchIds.add(match.id)
-                        if (isBrandNewMatch && match.createdBy != currentUserId) {
-                            _pushAlerts.tryEmit(
-                                KindredPushAlert.NewMatch(
-                                    matchId = match.id,
-                                    partnerName = partnerName
-                                )
-                            )
-                        }
+                        val partnerName = profileMap[partnerId]?.displayName ?: "Kindred Member"
+                        knownMatchIds.add(match.id)
 
                         val latestMsgMs = match.lastMessageAt?.toDate()?.time ?: 0L
                         val previousMsgMs = knownLastMessageAt[match.id] ?: 0L
@@ -1023,7 +1103,7 @@ class KindredViewModel(
                 }
         }
 
-        // Real-time incoming call notification emitter across all matches
+        // Real-time incoming call notification emitter across all conversations
         viewModelScope.launch {
             val notifiedIncomingCallIds = mutableSetOf<String>()
             combine(
@@ -1041,7 +1121,7 @@ class KindredViewModel(
                         .filter { it.status == "RINGING" && it.calleeUid == currentUserId }
                         .forEach { ringingCall ->
                             if (notifiedIncomingCallIds.add(ringingCall.id)) {
-                                val callerName = profileMap[ringingCall.callerUid]?.displayName ?: "Kindred Match"
+                                val callerName = profileMap[ringingCall.callerUid]?.displayName ?: "Kindred Member"
                                 _pushAlerts.tryEmit(
                                     KindredPushAlert.IncomingCall(
                                         matchId = ringingCall.matchId,
@@ -1055,36 +1135,29 @@ class KindredViewModel(
                 }
         }
 
-        // Friend request & profile like alert emitters
+        // New follower real-time alert emitter
         viewModelScope.launch {
-            var initializedSocial = false
-            val seenReqIds = mutableSetOf<String>()
-            val seenLikeIds = mutableSetOf<String>()
+            var initializedFollows = false
+            val seenFollowIds = mutableSetOf<String>()
             combine(
-                socialRepo.observeFriendRequestsForUser(currentUserId).catch { emit(emptyList()) },
-                socialRepo.observeProfileLikes(currentUserId).catch { emit(emptyList()) },
+                allFollowsState,
                 allProfilesFlow
-            ) { reqs, likes, profiles ->
-                Triple(reqs, likes, profiles.associateBy { it.userId })
-            }.collect { (reqs, likes, profileMap) ->
-                val incomingReqs = reqs.filter { it.toUid == currentUserId && it.status == "PENDING" }
-                val incomingLikes = likes.filter { it.toUid == currentUserId }
-                if (!initializedSocial) {
-                    incomingReqs.forEach { seenReqIds += it.id }
-                    incomingLikes.forEach { seenLikeIds += it.id }
-                    initializedSocial = true
+            ) { follows, profiles ->
+                follows to profiles.associateBy { it.userId }
+            }.collect { (follows, profileMap) ->
+                val incomingFollows = follows.filter {
+                    it.followingUid == currentUserId && it.followerUid != currentUserId
+                }
+                if (!initializedFollows) {
+                    incomingFollows.forEach { seenFollowIds += it.id }
+                    initializedFollows = true
                     return@collect
                 }
-                incomingReqs.forEach { req ->
-                    if (seenReqIds.add(req.id)) {
-                        val name = profileMap[req.fromUid]?.displayName ?: "Kindred Member"
-                        _pushAlerts.tryEmit(KindredPushAlert.FriendRequestAlert(req.fromUid, name))
-                    }
-                }
-                incomingLikes.forEach { like ->
-                    if (seenLikeIds.add(like.id)) {
-                        val name = profileMap[like.fromUid]?.displayName ?: "Kindred Member"
-                        _pushAlerts.tryEmit(KindredPushAlert.ProfileLikeAlert(like.fromUid, name))
+                incomingFollows.forEach { follow ->
+                    if (seenFollowIds.add(follow.id)) {
+                        val name = profileMap[follow.followerUid]?.displayName
+                            ?: follow.followerName.ifBlank { "Kindred Member" }
+                        _pushAlerts.tryEmit(KindredPushAlert.NewFollowerAlert(follow.followerUid, name))
                     }
                 }
             }
@@ -1144,10 +1217,6 @@ class KindredViewModel(
             val hidden = isHideOnlinePreferred()
             repository.updatePresence(online = online && !hidden, hideOnlineStatus = hidden)
         }
-    }
-
-    fun dismissNewMatchPopup() {
-        _newMatchPopup.value = null
     }
 
     fun clearStatusMessage() {
@@ -1232,66 +1301,6 @@ class KindredViewModel(
                 _actionStatusMessage.value = "Location verified: $locLabel (GeoHash $cell)"
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to update location"
-            }
-        }
-    }
-
-    fun swipeProfile(candidate: DiscoveryCandidate, direction: String) {
-        val targetId = candidate.profile.userId
-        val targetName = candidate.profile.displayName
-
-        if (targetId in _pendingSwipes.value) return
-        _pendingSwipes.value = _pendingSwipes.value + (targetId to direction)
-        _lastUndoableSwipe.value = UndoableSwipe(
-            targetUserId = targetId,
-            displayName = targetName
-        )
-
-        viewModelScope.launch {
-            val result = repository.recordSwipe(targetId, direction)
-            result.onSuccess { createdMatchId ->
-                if (!createdMatchId.isNullOrBlank()) {
-                    // Mutual matches cannot be rewound silently after a match record is created
-                    if (_lastUndoableSwipe.value?.targetUserId == targetId) {
-                        _lastUndoableSwipe.value = null
-                    }
-                    _newMatchPopup.value = MatchThreadItem(
-                        match = MatchRecord(
-                            id = createdMatchId,
-                            participantUids = listOf(currentUserId, targetId).sorted(),
-                            createdBy = currentUserId
-                        ),
-                        partnerId = targetId,
-                        partnerProfile = candidate.profile,
-                        distanceKm = candidate.distanceKm
-                    )
-                }
-            }.onFailure { err ->
-                _pendingSwipes.value = _pendingSwipes.value - targetId
-                if (_lastUndoableSwipe.value?.targetUserId == targetId) {
-                    _lastUndoableSwipe.value = null
-                }
-                _actionStatusMessage.value = err.localizedMessage ?: "Could not save swipe"
-            }
-        }
-    }
-
-    fun undoLastSwipe() {
-        val entry = _lastUndoableSwipe.value ?: return
-        _lastUndoableSwipe.value = null
-
-        val previousPending = _pendingSwipes.value[entry.targetUserId]
-        _pendingSwipes.value = _pendingSwipes.value - entry.targetUserId
-
-        viewModelScope.launch {
-            val result = repository.deleteSwipe(entry.targetUserId)
-            result.onSuccess {
-                _actionStatusMessage.value = "Brought ${entry.displayName} back to your deck"
-            }.onFailure { err ->
-                if (previousPending != null) {
-                    _pendingSwipes.value = _pendingSwipes.value + (entry.targetUserId to previousPending)
-                }
-                _actionStatusMessage.value = err.localizedMessage ?: "Could not undo swipe"
             }
         }
     }
@@ -1565,9 +1574,9 @@ class KindredViewModel(
                 if (_selectedMatchId.value == matchId) {
                     _selectedMatchId.value = null
                 }
-                _actionStatusMessage.value = "Match removed"
+                _actionStatusMessage.value = "Conversation removed"
             }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Failed to unmatch"
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to remove conversation"
             }
         }
     }
@@ -1588,7 +1597,7 @@ class KindredViewModel(
                 if (_selectedMatchId.value == potentialMatchId) {
                     _selectedMatchId.value = null
                 }
-                _actionStatusMessage.value = "Blocked $displayName and excluded from matching"
+                _actionStatusMessage.value = "Blocked $displayName"
                 onBlocked()
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to block user"
@@ -1743,57 +1752,20 @@ class KindredViewModel(
         }
     }
 
-    fun updateFilters(
-        interestedIn: String,
-        minAgePref: Int,
-        maxAgePref: Int,
-        maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean
-    ) {
-        viewModelScope.launch {
-            val result = repository.updateDiscoveryFilters(
-                interestedIn = interestedIn,
-                minAgePref = minAgePref,
-                maxAgePref = maxAgePref,
-                maxDistanceKm = maxDistanceKm,
-                verifiedOnlyFilter = verifiedOnlyFilter
-            )
-            result.onSuccess {
-                _actionStatusMessage.value = "Discovery preferences updated"
-            }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Save your profile first to store filters"
-            }
-        }
-    }
-
-    fun saveSettingsPreferences(
-        interestedIn: String,
-        minAgePref: Int,
-        maxAgePref: Int,
-        maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean,
-        myGender: String?,
-        discoverable: Boolean?,
-        onComplete: () -> Unit = {}
-    ) {
+    fun updateDiscoverable(discoverable: Boolean, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             _isBusy.value = true
-            val result = repository.saveSettingsPreferences(
-                email = userEmail,
-                interestedIn = interestedIn,
-                minAgePref = minAgePref,
-                maxAgePref = maxAgePref,
-                maxDistanceKm = maxDistanceKm,
-                verifiedOnlyFilter = verifiedOnlyFilter,
-                myGender = myGender,
-                discoverable = discoverable
-            )
+            val result = repository.updateDiscoverable(discoverable)
             _isBusy.value = false
             result.onSuccess {
-                _actionStatusMessage.value = "Dating preferences saved to Firestore"
+                _actionStatusMessage.value = if (discoverable) {
+                    "Your profile is visible in Explore"
+                } else {
+                    "Profile hidden from Explore"
+                }
                 onComplete()
             }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Failed to save dating preferences"
+                _actionStatusMessage.value = err.localizedMessage ?: "Failed to update visibility"
             }
         }
     }
@@ -1845,49 +1817,35 @@ class KindredViewModel(
         }
     }
 
-    // --- Friend Requests & Friends ---
+    // --- Followers / Following Social Graph ---
 
-    fun sendFriendRequest(targetUid: String) {
+    fun toggleFollow(targetUid: String) {
+        if (targetUid.isBlank() || targetUid == currentUserId) return
+        val snap = (dashboardState.value as? UiState.Success)?.data
+        val currentlyFollowing = targetUid in followingIdsState.value
         viewModelScope.launch {
-            socialRepo.sendFriendRequest(targetUid)
-                .onSuccess { _actionStatusMessage.value = "Friend request sent" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not send friend request" }
+            if (currentlyFollowing) {
+                socialRepo.unfollowUser(targetUid)
+                    .onSuccess { _actionStatusMessage.value = "Unfollowed" }
+                    .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not unfollow" }
+            } else {
+                socialRepo.followUser(targetUid, snap?.myProfile, defaultDisplayName)
+                    .onSuccess { _actionStatusMessage.value = "Following" }
+                    .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not follow user" }
+            }
         }
     }
 
-    fun cancelFriendRequest(targetUid: String) {
+    fun removeFollower(followerUid: String) {
+        if (followerUid.isBlank() || followerUid == currentUserId) return
         viewModelScope.launch {
-            socialRepo.cancelFriendRequest(targetUid)
-                .onSuccess { _actionStatusMessage.value = "Friend request canceled" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not cancel request" }
+            socialRepo.removeFollower(followerUid)
+                .onSuccess { _actionStatusMessage.value = "Removed follower" }
+                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not remove follower" }
         }
     }
 
-    fun acceptFriendRequest(fromUid: String) {
-        viewModelScope.launch {
-            socialRepo.acceptFriendRequest(fromUid)
-                .onSuccess { _actionStatusMessage.value = "Friend added!" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not accept request" }
-        }
-    }
-
-    fun rejectFriendRequest(fromUid: String) {
-        viewModelScope.launch {
-            socialRepo.rejectFriendRequest(fromUid)
-                .onSuccess { _actionStatusMessage.value = "Request declined" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not decline request" }
-        }
-    }
-
-    fun removeFriend(targetUid: String) {
-        viewModelScope.launch {
-            socialRepo.removeFriend(targetUid)
-                .onSuccess { _actionStatusMessage.value = "Removed from friends" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not remove friend" }
-        }
-    }
-
-    // --- Profile Likes, Who Likes Me, Views & Favorites ---
+    // --- Favorites & Profile Views ---
 
     fun toggleProfileLike(targetUid: String) {
         viewModelScope.launch {
@@ -1896,36 +1854,6 @@ class KindredViewModel(
                     _actionStatusMessage.value = if (liked) "Profile liked" else "Removed profile like"
                 }
                 .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not update like" }
-        }
-    }
-
-    fun likeBackUser(
-        candidate: DiscoveryCandidate,
-        onOpenedChat: (String) -> Unit = {}
-    ) {
-        val targetId = candidate.profile.userId
-        viewModelScope.launch {
-            _isBusy.value = true
-            val swipeRes = repository.recordSwipe(targetId, "LIKE")
-            val matchId = swipeRes.getOrNull() ?: repository.createOrOpenDirectMatch(targetId).getOrNull()
-            _isBusy.value = false
-            if (!matchId.isNullOrBlank()) {
-                val thread = MatchThreadItem(
-                    match = MatchRecord(
-                        id = matchId,
-                        participantUids = listOf(currentUserId, targetId).sorted(),
-                        createdBy = currentUserId
-                    ),
-                    partnerId = targetId,
-                    partnerProfile = candidate.profile,
-                    distanceKm = candidate.distanceKm
-                )
-                _newMatchPopup.value = thread
-                _actionStatusMessage.value = "Matched with ${candidate.profile.displayName}!"
-                onOpenedChat(matchId)
-            } else {
-                _actionStatusMessage.value = swipeRes.exceptionOrNull()?.localizedMessage ?: "Unable to match"
-            }
         }
     }
 

@@ -31,6 +31,7 @@ object KindredNotificationHelper {
     const val TYPE_APP_UPDATE = "APP_UPDATE"
     const val TYPE_FRIEND_REQUEST = "FRIEND_REQUEST"
     const val TYPE_PROFILE_LIKE = "PROFILE_LIKE"
+    const val TYPE_NEW_FOLLOWER = "NEW_FOLLOWER"
     const val TYPE_POST_LIKE = "POST_LIKE"
     const val TYPE_POST_COMMENT = "POST_COMMENT"
 
@@ -115,7 +116,7 @@ object KindredNotificationHelper {
             context.getString(R.string.fcm_social_channel_name),
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Real-time alerts for post likes, comments, friend requests, and profile likes"
+            description = "Real-time alerts for post likes, comments, and new followers"
             enableVibration(true)
         }
 

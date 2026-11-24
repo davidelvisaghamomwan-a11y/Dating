@@ -97,7 +97,7 @@ internal fun IcebreakerCoachSheetContent(
     onSendIcebreaker: (String) -> Unit,
     onInsertIntoDraft: (String) -> Unit
 ) {
-    val tones = listOf("Balanced", "Playful", "Curious", "Date Idea")
+    val tones = listOf("Balanced", "Playful", "Curious", "Friendly")
     var selectedTone by remember { mutableStateOf("Balanced") }
     val localSuggestions = remember(myProfile, partnerProfile) {
         AiIcebreakerService.buildProfileBasedOpeners(myProfile, partnerProfile)
@@ -123,7 +123,7 @@ internal fun IcebreakerCoachSheetContent(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Icebreakers for ${partnerProfile?.displayName ?: "Match"}",
+                    text = "Icebreakers for ${partnerProfile?.displayName ?: "Member"}",
                     style = MaterialTheme.typography.titleLarge
                 )
                 Text(
@@ -432,7 +432,7 @@ internal fun UnmatchOrBlockDialog(
         title = { Text("End conversation with $partnerName?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Choose whether to simply unmatch or permanently block $partnerName from future discovery and messaging.")
+                Text("Choose whether to remove this conversation or permanently block $partnerName from messaging and seeing your activity.")
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedButton(
                     onClick = onUnmatchOnly,
@@ -443,7 +443,7 @@ internal fun UnmatchOrBlockDialog(
                 ) {
                     Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Unmatch")
+                    Text("Remove chat")
                 }
                 Button(
                     onClick = onUnmatchAndBlock,
@@ -455,7 +455,7 @@ internal fun UnmatchOrBlockDialog(
                 ) {
                     Icon(Icons.Filled.Block, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Unmatch & Block $partnerName")
+                    Text("Remove & Block $partnerName")
                 }
             }
         },

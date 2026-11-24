@@ -47,7 +47,7 @@ service cloud.firestore {
     }
 
     function isValidVisibility(val) {
-      return val in ['EVERYONE', 'MATCHES_AND_FRIENDS', 'FRIENDS_ONLY'];
+      return val in ['EVERYONE', 'MATCHES_AND_FRIENDS', 'FRIENDS_ONLY', 'FOLLOWERS_ONLY'];
     }
 
     // --- Entity Validation Helpers ---
@@ -226,7 +226,7 @@ service cloud.firestore {
              data.reporterUid != data.reportedUid &&
              data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 100 &&
              (!('details' in data) || (data.details is string && data.details.size() <= 500)) &&
-             data.sourceSurface in ['DISCOVER', 'SEARCH', 'CHAT', 'PROFILE', 'VIDEO_FEED', 'STORY', 'FEED_POST'] &&
+             data.sourceSurface in ['DISCOVER', 'HOME_FEED', 'SEARCH', 'CHAT', 'PROFILE', 'VIDEO_FEED', 'STORY', 'FEED_POST'] &&
              (!('matchId' in data) || isValidId(data.matchId)) &&
              (!('status' in data) || data.status in ['OPEN', 'RESOLVED', 'DISMISSED']) &&
              (!('resolvedBy' in data) || isValidId(data.resolvedBy)) &&
@@ -874,6 +874,30 @@ service cloud.firestore {
 
       allow update: if false;
       allow delete: if isSignedIn() && isValidId(friendshipId) && request.auth.uid in existing().participantUids;
+    }
+
+    // 12b. Social Graph Follows (/follows/{followId}) keyed by {followerUid}_{followingUid}
+    match /follows/{followId} {
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(followId) &&
+                       incoming().followerUid == request.auth.uid &&
+                       incoming().followerUid != incoming().followingUid &&
+                       isValidId(incoming().followingUid) &&
+                       followId == (incoming().followerUid + '_' + incoming().followingUid) &&
+                       incoming().keys().hasAll(['followerUid', 'followingUid', 'createdAt']) &&
+                       incoming().keys().hasOnly(['followerUid', 'followingUid', 'followerName', 'followerPhoto', 'createdAt']) &&
+                       (!('followerName' in incoming()) || (incoming().followerName is string && incoming().followerName.size() <= 40)) &&
+                       (!('followerPhoto' in incoming()) || (incoming().followerPhoto is string && incoming().followerPhoto.size() <= 180000)) &&
+                       isValidTimestamp(incoming().createdAt) &&
+                       isNotBlockedBetween(incoming().followerUid, incoming().followingUid);
+
+      allow update: if false;
+
+      allow delete: if isSignedIn() &&
+                       isValidId(followId) &&
+                       (existing().followerUid == request.auth.uid || existing().followingUid == request.auth.uid);
     }
 
     // 13. Profile Views (/profileViews/{viewId}) keyed by {viewerUid}_{targetUid}

@@ -398,7 +398,7 @@ fun ProfileSetupScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Tell the Kindred community who you are before exploring Discover.",
+                            text = "Tell the Kindred community who you are before joining the feed.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.9f)
                         )
@@ -701,7 +701,7 @@ fun ProfileSetupScreen(
                     value = bio,
                     onValueChange = { bio = it.take(400) },
                     label = { Text("Bio / About Me *") },
-                    placeholder = { Text("Share your passions, vibe, or what kind of people you'd love to meet...") },
+                    placeholder = { Text("Share your interests, creative focus, or what you'd like to post...") },
                     minLines = 3,
                     maxLines = 5,
                     supportingText = { Text("${bio.length}/400 (min 10 chars)") },

@@ -98,7 +98,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.example.model.FeedPost
-import com.example.model.FriendStatus
 import com.example.model.ProfileVideoItem
 import com.example.model.PublicProfile
 import com.example.model.StoryHighlight
@@ -161,20 +160,22 @@ fun UserProfileDetailScreen(
     profile: PublicProfile,
     currentUserId: String,
     videos: List<ProfileVideoItem> = emptyList(),
-    friends: List<PublicProfile> = emptyList(),
-    friendStatus: FriendStatus = FriendStatus.NONE,
+    followerIds: Set<String> = emptySet(),
+    followingIds: Set<String> = emptySet(),
+    mutualFollowerProfiles: List<PublicProfile> = emptyList(),
+    isFollowing: Boolean = false,
     presence: UserPresence? = null,
     distanceKm: Double? = null,
     isLiked: Boolean = false,
     isFavorited: Boolean = false,
     isBlocked: Boolean = false,
-    isMatched: Boolean = false,
     resolveVideoFile: (suspend (ProfileVideoItem) -> Result<File>)? = null,
     onBack: () -> Unit,
     onRecordProfileView: () -> Unit = {},
-    onOpenFriendProfile: (PublicProfile) -> Unit = {},
+    onOpenMutualProfile: (PublicProfile) -> Unit = {},
+    onOpenFollowersFollowing: (Int) -> Unit = {},
     onMessageClick: (PublicProfile) -> Unit,
-    onFriendAction: () -> Unit,
+    onToggleFollow: () -> Unit = {},
     onToggleLike: () -> Unit = {},
     onToggleFavorite: () -> Unit = {},
     onReportUser: (reason: String, details: String, alsoBlock: Boolean) -> Unit,
@@ -187,10 +188,9 @@ fun UserProfileDetailScreen(
 ) {
     val context = LocalContext.current
     val isOwner = profile.userId == currentUserId
-    val isFriend = friendStatus == FriendStatus.FRIENDS
-    val canSeePhotos = ProfileCompletionUtils.canViewerSeeSection(profile.photosVisibility, isOwner, isFriend, isMatched)
-    val canSeeVideos = ProfileCompletionUtils.canViewerSeeSection(profile.videosVisibility, isOwner, isFriend, isMatched)
-    val canSeeInfo = ProfileCompletionUtils.canViewerSeeSection(profile.infoVisibility, isOwner, isFriend, isMatched)
+    val canSeePhotos = ProfileCompletionUtils.canViewerSeeSection(profile.photosVisibility, isOwner, isFollowing)
+    val canSeeVideos = ProfileCompletionUtils.canViewerSeeSection(profile.videosVisibility, isOwner, isFollowing)
+    val canSeeInfo = ProfileCompletionUtils.canViewerSeeSection(profile.infoVisibility, isOwner, isFollowing)
 
     val cleanHandle = remember(profile.displayName) {
         val sanitized = profile.displayName.lowercase()
@@ -240,18 +240,7 @@ fun UserProfileDetailScreen(
         if (!isOwner) onRecordProfileView()
     }
 
-    // Curated highlights matching Instagram highlights row (Screenshot 1)
-    val displayHighlights = remember(highlights, profile.userId) {
-        if (highlights.isNotEmpty()) {
-            highlights
-        } else {
-            listOf(
-                StoryHighlight(id = "hl_1", title = "Highlights ✨", coverPhotoUrl = profile.allProfilePhotos().firstOrNull()),
-                StoryHighlight(id = "hl_2", title = "Moments 📸", coverPhotoUrl = profile.allProfilePhotos().getOrNull(1)),
-                StoryHighlight(id = "hl_3", title = "Vibes 🌴", coverPhotoUrl = profile.allProfilePhotos().getOrNull(2))
-            ).filter { !it.coverPhotoUrl.isNullOrBlank() }
-        }
-    }
+    val displayHighlights = remember(highlights) { highlights }
 
     // Grid items for Tab 0 (All Posts / Photos)
     val gridItems = remember(photos, userPosts, visibleVideos) {
@@ -278,8 +267,8 @@ fun UserProfileDetailScreen(
         (gridItems.size + reelItems.size).coerceAtLeast(photos.size + visibleVideos.size)
     }
 
-    val followersDisplay = remember(friends) {
-        val count = friends.size
+    val followersDisplay = remember(followerIds) {
+        val count = followerIds.size
         when {
             count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
             count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
@@ -287,8 +276,8 @@ fun UserProfileDetailScreen(
         }
     }
 
-    val followingDisplay = remember(friends) {
-        val count = (friends.size * 2 + 12).coerceAtLeast(friends.size)
+    val followingDisplay = remember(followingIds) {
+        val count = followingIds.size
         when {
             count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
             count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
@@ -400,8 +389,16 @@ fun UserProfileDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             ProfileStatColumn(count = totalPostsCount.toString(), label = "Posts")
-                            ProfileStatColumn(count = followersDisplay, label = "Followers")
-                            ProfileStatColumn(count = followingDisplay, label = "Following")
+                            ProfileStatColumn(
+                                count = followersDisplay,
+                                label = "Followers",
+                                onClick = { onOpenFollowersFollowing(0) }
+                            )
+                            ProfileStatColumn(
+                                count = followingDisplay,
+                                label = "Following",
+                                onClick = { onOpenFollowersFollowing(1) }
+                            )
                         }
                     }
 
@@ -414,12 +411,17 @@ fun UserProfileDetailScreen(
                             color = MaterialTheme.colorScheme.onBackground
                         )
 
-                        // Category / Profession
-                        Text(
-                            text = if (profile.occupation.isNotBlank()) profile.occupation else "Creator",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        // Category / Subtitle from profile metadata
+                        val profileSubtitle = remember(profile.interests, profile.cityLabel, profile.country) {
+                            profile.interests.take(2).joinToString(" • ").ifBlank { profile.formattedLocation() }
+                        }
+                        if (canSeeInfo && profileSubtitle.isNotBlank()) {
+                            Text(
+                                text = profileSubtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
 
                         // Bio
                         if (canSeeInfo && profile.bio.isNotBlank()) {
@@ -459,16 +461,19 @@ fun UserProfileDetailScreen(
                         }
 
                         // Mutual Followers Row
-                        if (friends.isNotEmpty()) {
+                        if (mutualFollowerProfiles.isNotEmpty()) {
+                            val firstFollower = mutualFollowerProfiles.first()
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.padding(top = 4.dp)
+                                modifier = Modifier
+                                    .clickable { onOpenMutualProfile(firstFollower) }
+                                    .padding(top = 4.dp)
                             ) {
                                 ProfileAvatarImage(
-                                    photoDataUrl = friends.first().photoDataUrl,
-                                    displayName = friends.first().displayName,
-                                    seed = friends.first().avatarSeed,
+                                    photoDataUrl = firstFollower.photoDataUrl,
+                                    displayName = firstFollower.displayName,
+                                    seed = firstFollower.avatarSeed,
                                     modifier = Modifier.size(16.dp),
                                     shape = CircleShape,
                                     initialsFontSizeSp = 8
@@ -476,9 +481,9 @@ fun UserProfileDetailScreen(
                                 Text(
                                     text = buildString {
                                         append("Followed by ")
-                                        append(friends.first().displayName)
-                                        if (friends.size > 1) {
-                                            append(" +${friends.size - 1} others")
+                                        append(firstFollower.displayName)
+                                        if (mutualFollowerProfiles.size > 1) {
+                                            append(" +${mutualFollowerProfiles.size - 1} others")
                                         }
                                     },
                                     style = MaterialTheme.typography.labelSmall,
@@ -498,27 +503,20 @@ fun UserProfileDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // Primary Follow Button
-                            val isFollowing = friendStatus == FriendStatus.FRIENDS
-                            val isRequested = friendStatus == FriendStatus.OUTGOING_PENDING
-                            val isAccept = friendStatus == FriendStatus.INCOMING_PENDING
-
-                            val followBtnColor = when {
-                                isFollowing || isRequested -> MaterialTheme.colorScheme.surfaceContainerHigh
-                                else -> InstagramVerifiedBlue
+                            val followBtnColor = if (isFollowing) {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            } else {
+                                InstagramVerifiedBlue
                             }
-                            val followTextColor = when {
-                                isFollowing || isRequested -> MaterialTheme.colorScheme.onSurface
-                                else -> Color.White
+                            val followTextColor = if (isFollowing) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                Color.White
                             }
-                            val followBtnLabel = when {
-                                isFollowing -> "Following"
-                                isRequested -> "Requested"
-                                isAccept -> "Accept"
-                                else -> "Follow"
-                            }
+                            val followBtnLabel = if (isFollowing) "Following" else "Follow"
 
                             Button(
-                                onClick = onFriendAction,
+                                onClick = onToggleFollow,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = followBtnColor,
                                     contentColor = followTextColor
@@ -565,9 +563,7 @@ fun UserProfileDetailScreen(
                                 modifier = Modifier
                                     .size(34.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        onStatusMessage("Suggestions updated")
-                                    }
+                                    .clickable { onOpenFollowersFollowing(2) }
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -612,9 +608,9 @@ fun UserProfileDetailScreen(
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                 ) {
-                                    if (!hl.coverPhotoUrl.isNullOrBlank()) {
-                                        val bmp = remember(hl.coverPhotoUrl) {
-                                            VerificationAnalyzer.decodeBase64DataUrl(hl.coverPhotoUrl)
+                                    if (hl.coverUrl.isNotBlank()) {
+                                        val bmp = remember(hl.coverUrl) {
+                                            VerificationAnalyzer.decodeBase64DataUrl(hl.coverUrl)
                                         }
                                         if (bmp != null) {
                                             Image(
@@ -625,7 +621,7 @@ fun UserProfileDetailScreen(
                                             )
                                         } else {
                                             AsyncImage(
-                                                model = hl.coverPhotoUrl,
+                                                model = hl.coverUrl,
                                                 contentDescription = hl.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier.fillMaxSize()
@@ -991,9 +987,14 @@ fun UserProfileDetailScreen(
 
                 HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
 
+                val joinedLabel = remember(profile.createdAt) {
+                    profile.createdAt?.toDate()?.let { date ->
+                        java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault()).format(date)
+                    } ?: "Kindred Member"
+                }
                 AboutAccountDetailRow(
                     label = "Date joined",
-                    value = "November 2026",
+                    value = joinedLabel,
                     icon = Icons.Filled.Info
                 )
                 AboutAccountDetailRow(
@@ -1171,10 +1172,22 @@ fun UserProfileDetailScreen(
 }
 
 @Composable
-private fun ProfileStatColumn(count: String, label: String) {
+private fun ProfileStatColumn(
+    count: String,
+    label: String,
+    onClick: (() -> Unit)? = null
+) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Center,
+        modifier = if (onClick != null) {
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+        } else {
+            Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+        }
     ) {
         Text(
             text = count,

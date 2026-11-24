@@ -88,7 +88,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.model.FeedPost
-import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -107,8 +106,8 @@ fun InstagramFeedPostCard(
     post: FeedPost,
     authorProfile: PublicProfile? = null,
     currentUserId: String,
-    friendStatus: FriendStatus,
-    onFriendAction: () -> Unit,
+    isFollowing: Boolean = false,
+    onToggleFollow: () -> Unit = {},
     resolveVideoFile: suspend (FeedPost) -> Result<File>,
     onToggleLike: () -> Unit,
     onToggleSave: () -> Unit,
@@ -280,27 +279,22 @@ fun InstagramFeedPostCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                if (!isOwner && friendStatus != FriendStatus.FRIENDS) {
-                    val friendBtnLabel = when (friendStatus) {
-                        FriendStatus.NONE -> "Follow"
-                        FriendStatus.OUTGOING_PENDING -> "Requested"
-                        FriendStatus.INCOMING_PENDING -> "Accept"
-                        FriendStatus.FRIENDS -> "Following"
-                    }
+                if (!isOwner) {
+                    val followLabel = if (isFollowing) "Following" else "Follow"
                     TextButton(
-                        onClick = onFriendAction,
+                        onClick = onToggleFollow,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         modifier = Modifier
                             .height(34.dp)
                             .testTag("post_follow_btn_${post.id}")
                     ) {
                         Text(
-                            text = friendBtnLabel,
+                            text = followLabel,
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
                             ),
-                            color = InstagramBlue
+                            color = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else InstagramBlue
                         )
                     }
                 }

@@ -1183,7 +1183,7 @@ fun ChatScreen(
                             ) {
                                 ProfileAvatarImage(
                                     photoDataUrl = partner?.photoDataUrl,
-                                    displayName = partner?.displayName ?: "Match",
+                                    displayName = partner?.displayName ?: "Member",
                                     seed = partner?.avatarSeed ?: thread.partnerId,
                                     modifier = Modifier.size(72.dp),
                                     initialsFontSizeSp = 26
@@ -1195,7 +1195,7 @@ fun ChatScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "You matched with ${partner?.displayName ?: "this member"}. Send a tailored opener, GIF, photo, or voice note.",
+                                    text = "Start a conversation with ${partner?.displayName ?: "this member"}. Send a tailored opener, GIF, photo, or voice note.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
@@ -1959,7 +1959,7 @@ fun ChatScreen(
             onDismissRequest = { showBlockConfirm = false },
             title = { Text("Block $partnerName?") },
             text = {
-                Text("This permanently closes the match, blocks future messages, and excludes $partnerName from discovery. You can manage blocked users in Profile.")
+                Text("This permanently closes this conversation, blocks future messages, and hides $partnerName across Kindred. You can manage blocked users in Settings.")
             },
             confirmButton = {
                 TextButton(

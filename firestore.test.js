@@ -964,3 +964,89 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
     })
   );
 });
+
+test("Social graph /follows enforces follower identity, self-follow denial, blocks, unfollow, remove-follower, and FOLLOWERS_ONLY visibility", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    const created = pastDate(20000);
+    await adminDb.collection("publicProfiles").doc(ALICE_UID).set(makePublicProfile(ALICE_UID, created));
+    await adminDb.collection("publicProfiles").doc(BOB_UID).set(makePublicProfile(BOB_UID, created));
+    await adminDb.collection("publicProfiles").doc(CHARLIE_UID).set(makePublicProfile(CHARLIE_UID, created));
+  });
+
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+
+  // FOLLOWERS_ONLY visibility setting succeeds on publicProfile
+  await assertSucceeds(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).update({
+      photosVisibility: "FOLLOWERS_ONLY",
+      videosVisibility: "FOLLOWERS_ONLY",
+      infoVisibility: "FOLLOWERS_ONLY",
+      updatedAt: pastDate(1000),
+    })
+  );
+
+  // Alice follows Bob
+  const followId = `${ALICE_UID}_${BOB_UID}`;
+  await assertSucceeds(
+    aliceDb.collection("follows").doc(followId).set({
+      followerUid: ALICE_UID,
+      followingUid: BOB_UID,
+      followerName: "Alice",
+      createdAt: pastDate(900),
+    })
+  );
+
+  // Self-follow fails
+  await assertFails(
+    aliceDb.collection("follows").doc(`${ALICE_UID}_${ALICE_UID}`).set({
+      followerUid: ALICE_UID,
+      followingUid: ALICE_UID,
+      followerName: "Alice",
+      createdAt: pastDate(850),
+    })
+  );
+
+  // Charlie cannot spoof Alice following Charlie or delete Alice->Bob follow
+  await assertFails(
+    charlieDb.collection("follows").doc(`${ALICE_UID}_${CHARLIE_UID}`).set({
+      followerUid: ALICE_UID,
+      followingUid: CHARLIE_UID,
+      createdAt: pastDate(800),
+    })
+  );
+  await assertFails(charlieDb.collection("follows").doc(followId).delete());
+
+  // Bob (recipient) can remove Alice as a follower
+  await assertSucceeds(bobDb.collection("follows").doc(followId).delete());
+
+  // Re-create and let Alice unfollow Bob
+  await assertSucceeds(
+    aliceDb.collection("follows").doc(followId).set({
+      followerUid: ALICE_UID,
+      followingUid: BOB_UID,
+      followerName: "Alice",
+      createdAt: pastDate(700),
+    })
+  );
+  await assertSucceeds(aliceDb.collection("follows").doc(followId).delete());
+
+  // Blocking prevents following
+  await assertSucceeds(
+    bobDb.collection("blocks").doc(`${BOB_UID}_${ALICE_UID}`).set({
+      blockerUid: BOB_UID,
+      blockedUid: ALICE_UID,
+      createdAt: pastDate(600),
+    })
+  );
+  await assertFails(
+    aliceDb.collection("follows").doc(followId).set({
+      followerUid: ALICE_UID,
+      followingUid: BOB_UID,
+      createdAt: pastDate(500),
+    })
+  );
+});
+

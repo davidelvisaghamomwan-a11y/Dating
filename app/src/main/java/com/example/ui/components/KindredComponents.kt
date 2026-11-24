@@ -20,15 +20,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -39,19 +34,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.example.R
-import com.example.model.MatchThreadItem
 import com.example.ui.theme.ChampagneGold
-import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.ui.theme.PlayfairDisplayFamily
 import com.example.util.LocationAndGeoHelper
@@ -212,114 +201,6 @@ fun LocationDistancePill(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-        }
-    }
-}
-
-@Composable
-fun NewMatchCelebrationDialog(
-    matchItem: MatchThreadItem,
-    onSendMessage: () -> Unit,
-    onKeepBrowsing: () -> Unit
-) {
-    val partner = matchItem.partnerProfile
-    Dialog(onDismissRequest = onKeepBrowsing) {
-        Card(
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(132.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.img_match_celebration),
-                        contentDescription = stringResource(R.string.cd_match_art),
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "It's a Mutual Match",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = CoralRose,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "You and ${partner?.displayName ?: "your match"} both liked each other.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (partner != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        ProfileAvatarImage(
-                            photoDataUrl = partner.photoDataUrl,
-                            displayName = partner.displayName,
-                            seed = partner.avatarSeed,
-                            modifier = Modifier.size(56.dp),
-                            initialsFontSizeSp = 20
-                        )
-                        Column {
-                            Text(
-                                text = "${partner.displayName}, ${partner.age}",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            VerifiedShieldBadge(
-                                isVerified = partner.isProfileVerified,
-                                compact = true
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = onSendMessage,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
-                ) {
-                    Text(
-                        text = "Start Real-Time Chat",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                TextButton(
-                    onClick = onKeepBrowsing,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Keep Discovering")
-                }
-            }
         }
     }
 }

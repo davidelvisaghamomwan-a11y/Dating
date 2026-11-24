@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.model.FavoriteRecord
 import com.example.model.FeedComment
 import com.example.model.FeedPost
+import com.example.model.FollowRecord
 import com.example.model.FriendRequestRecord
 import com.example.model.FriendshipRecord
 import com.example.model.KindredConstants
@@ -155,6 +156,93 @@ class SocialAndMediaRepository(
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "presence", viewerUid) }
             )
+        }
+    }
+
+    // --- Social Graph: Follows / Followers ---
+
+    fun observeAllFollows(viewerUid: String): Flow<List<FollowRecord>> {
+        if (viewerUid.isBlank()) return flowOf(emptyList())
+        return flow {
+            emitAll(
+                db.collection("follows")
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(FollowRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, "follows", viewerUid) }
+            )
+        }
+    }
+
+    suspend fun followUser(
+        targetUid: String,
+        myProfile: PublicProfile?,
+        fallbackName: String?
+    ): Result<Unit> {
+        var docPath = "follows"
+        return try {
+            val uid = requireUserId()
+            require(targetUid.isNotBlank() && targetUid != uid) { "Invalid profile to follow." }
+            val followRef = db.collection("follows").document("${uid}_$targetUid")
+            docPath = followRef.path
+            if (followRef.get().await().exists()) {
+                return Result.success(Unit)
+            }
+            val payload = mutableMapOf<String, Any>(
+                "followerUid" to uid,
+                "followingUid" to targetUid,
+                "followerName" to (myProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+            val photo = myProfile?.allProfilePhotos()?.firstOrNull()
+            if (!photo.isNullOrBlank() && photo.length <= 180_000) {
+                payload["followerPhoto"] = photo
+            }
+            followRef.set(payload).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun unfollowUser(targetUid: String): Result<Unit> {
+        var docPath = "follows"
+        return try {
+            val uid = requireUserId()
+            val followRef = db.collection("follows").document("${uid}_$targetUid")
+            docPath = followRef.path
+            if (followRef.get().await().exists()) {
+                followRef.delete().await()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun removeFollower(followerUid: String): Result<Unit> {
+        var docPath = "follows"
+        return try {
+            val uid = requireUserId()
+            val followRef = db.collection("follows").document("${followerUid}_$uid")
+            docPath = followRef.path
+            if (followRef.get().await().exists()) {
+                followRef.delete().await()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
         }
     }
 
@@ -1423,12 +1511,14 @@ class SocialAndMediaRepository(
                 val stories = db.collection("stories").whereEqualTo("userId", uid).get().await()
                 val videoPosts = db.collection("videoPosts").whereEqualTo("userId", uid).get().await()
                 val feedPosts = db.collection("feedPosts").whereEqualTo("userId", uid).get().await()
-                val swipes = db.collection("swipes").whereEqualTo("fromUserId", uid).get().await()
+                val followingDocs = db.collection("follows").whereEqualTo("followerUid", uid).get().await()
+                val followerDocs = db.collection("follows").whereEqualTo("followingUid", uid).get().await()
                 val batch = db.batch()
                 stories.documents.forEach { batch.delete(it.reference) }
                 videoPosts.documents.forEach { batch.delete(it.reference) }
                 feedPosts.documents.forEach { batch.delete(it.reference) }
-                swipes.documents.forEach { batch.delete(it.reference) }
+                followingDocs.documents.forEach { batch.delete(it.reference) }
+                followerDocs.documents.forEach { batch.delete(it.reference) }
                 batch.commit().await()
             }
 

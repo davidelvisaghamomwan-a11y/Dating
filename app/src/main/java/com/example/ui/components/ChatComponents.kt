@@ -110,7 +110,6 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import com.example.communication.GifCatalog
 import com.example.model.ChatMessage
-import com.example.model.FriendStatus
 import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -207,7 +206,7 @@ internal fun PartnerTypingBubble(
                 }
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "${partner?.displayName ?: "Match"} is typing…",
+                    text = "${partner?.displayName ?: "Member"} is typing…",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -280,7 +279,7 @@ internal fun ChatBubble(
     }
     val remainingSec = message.remainingSecondsAt(nowMillis)
     val isReadByPartner = isMine && partnerId.isNotBlank() && message.isReadBy(partnerId)
-    val senderLabel = if (isMine) "You" else (partner?.displayName?.ifBlank { "Match" } ?: "Match")
+    val senderLabel = if (isMine) "You" else (partner?.displayName?.ifBlank { "Member" } ?: "Member")
 
     Row(
         modifier = Modifier
@@ -413,8 +412,8 @@ internal fun ChatBubble(
                     if (!message.replyToMessageId.isNullOrBlank()) {
                         val replyAuthor = when {
                             message.replyToSenderId == currentUserId && currentUserId.isNotBlank() -> "You"
-                            message.replyToSenderId == partnerId -> partner?.displayName ?: "Match"
-                            else -> if (isMine) "Match" else "You"
+                            message.replyToSenderId == partnerId -> partner?.displayName ?: "Member"
+                            else -> if (isMine) "Member" else "You"
                         }
                         val replySnippet = message.replyToText?.takeIf { it.isNotBlank() }
                             ?: when (message.replyToType) {
@@ -974,8 +973,8 @@ internal fun PartnerProfileQuickSheet(
     isBlocked: Boolean = false,
     onUnblockClick: (() -> Unit)? = null,
     onOpenFullProfile: (() -> Unit)? = null,
-    friendStatus: FriendStatus = FriendStatus.NONE,
-    onFriendAction: (() -> Unit)? = null,
+    isFollowing: Boolean = false,
+    onToggleFollow: (() -> Unit)? = null,
     isLiked: Boolean = false,
     onToggleLike: (() -> Unit)? = null,
     isFavorited: Boolean = false,
@@ -1165,36 +1164,31 @@ internal fun PartnerProfileQuickSheet(
             ) {
                 Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Open Full Profile, Videos & Friends")
+                Text("Open Full Profile & Posts")
             }
         }
 
-        if (onFriendAction != null || onToggleLike != null || onToggleFavorite != null) {
+        if (onToggleFollow != null || onToggleLike != null || onToggleFavorite != null) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (onFriendAction != null) {
-                    val friendLabel = when (friendStatus) {
-                        FriendStatus.NONE -> "Follow"
-                        FriendStatus.OUTGOING_PENDING -> "Requested"
-                        FriendStatus.INCOMING_PENDING -> "Accept"
-                        FriendStatus.FRIENDS -> "Following"
-                    }
+                if (onToggleFollow != null) {
+                    val followLabel = if (isFollowing) "Following" else "Follow"
                     OutlinedButton(
-                        onClick = onFriendAction,
+                        onClick = onToggleFollow,
                         modifier = Modifier
                             .height(48.dp)
                             .testTag("sheet_friend_button")
                     ) {
                         Icon(
-                            imageVector = if (friendStatus == FriendStatus.FRIENDS) Icons.Filled.Check else Icons.Filled.PersonAdd,
+                            imageVector = if (isFollowing) Icons.Filled.Check else Icons.Filled.PersonAdd,
                             contentDescription = null,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(friendLabel, maxLines = 1)
+                        Text(followLabel, maxLines = 1)
                     }
                 }
                 if (onToggleLike != null) {
@@ -1281,7 +1275,7 @@ internal fun PartnerProfileQuickSheet(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Unmatch", maxLines = 1)
+                        Text("Remove chat", maxLines = 1)
                     }
                 }
                 if (onReportClick != null) {

@@ -48,7 +48,6 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhoneInTalk
 import androidx.compose.material.icons.outlined.SystemUpdate
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -56,7 +55,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,10 +62,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -78,7 +73,6 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -99,19 +93,16 @@ import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.auth.GoogleAuthHelper
 import com.example.model.BlockedUserItem
-import com.example.model.KindredConstants
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.model.VisibilityLevel
 import com.example.notifications.KindredBackgroundService
 import com.example.notifications.KindredNotificationHelper
 import com.example.ui.theme.ChampagneGold
-import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.update.AppUpdateChecker
 import com.example.update.UpdateCheckResult
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 private val InstagramBlueLink = Color(0xFF0095F6)
 
@@ -126,21 +117,13 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenEditProfile: () -> Unit = {},
     onOpenVerification: () -> Unit = {},
-    onOpenFriendsHub: () -> Unit = {},
-    onOpenWhoLikesMe: () -> Unit = {},
+    onOpenFollowersFollowing: () -> Unit = {},
+    onOpenActivity: () -> Unit = {},
     onOpenAdminDashboard: () -> Unit = {},
     onUnblockUser: (String) -> Unit = {},
     onNotificationsGranted: () -> Unit = {},
     onBeforeSignOut: suspend () -> Unit = {},
-    onSavePreferences: (
-        interestedIn: String,
-        minAgePref: Int,
-        maxAgePref: Int,
-        maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean,
-        myGender: String?,
-        discoverable: Boolean?
-    ) -> Unit,
+    onToggleDiscoverable: (Boolean) -> Unit = {},
     onUpdatePrivacy: (
         (
             hideOnlineStatus: Boolean,
@@ -158,23 +141,6 @@ fun SettingsScreen(
 
     var searchQuery by remember { mutableStateOf("") }
 
-    var interestedIn by remember(privateUser) {
-        mutableStateOf(privateUser?.interestedIn ?: "Everyone")
-    }
-    var ageRange by remember(privateUser) {
-        val min = (privateUser?.minAgePref ?: 20L).toFloat().coerceIn(18f, 99f)
-        val max = (privateUser?.maxAgePref ?: 45L).toFloat().coerceIn(min, 99f)
-        mutableStateOf(min..max)
-    }
-    var maxDistanceKm by remember(privateUser) {
-        mutableFloatStateOf((privateUser?.maxDistanceKm ?: 100L).toFloat().coerceIn(5f, 500f))
-    }
-    var verifiedOnly by remember(privateUser) {
-        mutableStateOf(privateUser?.verifiedOnlyFilter ?: false)
-    }
-    var myGender by remember(myProfile) {
-        mutableStateOf(myProfile?.gender ?: "Woman")
-    }
     var discoverable by remember(myProfile) {
         mutableStateOf(myProfile?.discoverable ?: true)
     }
@@ -207,7 +173,6 @@ fun SettingsScreen(
     }
     var bgServiceEnabled by remember { mutableStateOf(KindredBackgroundService.isEnabled(context)) }
 
-    var showPreferencesSheet by remember { mutableStateOf(false) }
     var showPrivacySheet by remember { mutableStateOf(false) }
     var showBlockedSheet by remember { mutableStateOf(false) }
     var showUpdatesSheet by remember { mutableStateOf(false) }
@@ -220,7 +185,6 @@ fun SettingsScreen(
     }
 
     val isVerified = myProfile?.isProfileVerified == true
-    val roundedDistance = maxDistanceKm.roundToInt()
 
     Scaffold(
         topBar = {
@@ -351,7 +315,7 @@ fun SettingsScreen(
                 }
 
                 // Section 2: How you use Kindred
-                val showUsageSection = matches("notifications", "alerts", "push", "friends", "connections", "likes", "views", "activity")
+                val showUsageSection = matches("notifications", "alerts", "push", "followers", "following", "connections", "likes", "comments", "activity")
                 if (showUsageSection) {
                     SettingsSectionHeader("How you use Kindred")
                     if (matches("notifications", "alerts", "push")) {
@@ -376,19 +340,19 @@ fun SettingsScreen(
                             testTag = "settings_row_notifications"
                         )
                     }
-                    if (matches("friends", "connections")) {
+                    if (matches("followers", "following", "connections")) {
                         InstagramSettingsRow(
                             icon = Icons.Outlined.Group,
-                            title = "Friends & connections",
-                            onClick = onOpenFriendsHub,
+                            title = "Followers & following",
+                            onClick = onOpenFollowersFollowing,
                             testTag = "settings_row_friends"
                         )
                     }
-                    if (matches("likes", "views", "activity")) {
+                    if (matches("likes", "comments", "activity")) {
                         InstagramSettingsRow(
                             icon = Icons.Outlined.FavoriteBorder,
-                            title = "Likes & profile activity",
-                            onClick = onOpenWhoLikesMe,
+                            title = "Activity & notifications",
+                            onClick = onOpenActivity,
                             testTag = "settings_row_activity"
                         )
                     }
@@ -420,18 +384,6 @@ fun SettingsScreen(
                     SettingsSectionDivider()
                 }
 
-                // Section 4: What you see (Discovery & Feed Filters)
-                if (matches("preferences", "filter", "distance", "age", "gender", "interested", "feed", "discovery")) {
-                    SettingsSectionHeader("What you see")
-                    InstagramSettingsRow(
-                        icon = Icons.Outlined.Tune,
-                        title = "Discovery & feed preferences",
-                        subtitle = "$interestedIn • ${ageRange.start.roundToInt()}–${ageRange.endInclusive.roundToInt()} yrs • ${roundedDistance}km",
-                        onClick = { showPreferencesSheet = true },
-                        testTag = "settings_row_preferences"
-                    )
-                    SettingsSectionDivider()
-                }
 
                 // Section 5: More info and support
                 val showSupportSection = matches("background", "calls", "sync", "battery", "update", "updates", "github", "signing", "admin", "moderation")
@@ -638,15 +590,7 @@ fun SettingsScreen(
                             videosVisibility,
                             infoVisibility
                         )
-                        onSavePreferences(
-                            interestedIn,
-                            ageRange.start.roundToInt(),
-                            ageRange.endInclusive.roundToInt(),
-                            roundedDistance,
-                            verifiedOnly,
-                            myGender,
-                            discoverable
-                        )
+                        onToggleDiscoverable(discoverable)
                         showPrivacySheet = false
                     },
                     enabled = !isBusy,
@@ -657,148 +601,6 @@ fun SettingsScreen(
                         .testTag("settings_save_privacy_button")
                 ) {
                     Text("Save privacy settings", fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-    }
-
-    // Modal Bottom Sheet 2: Discovery & Feed Preferences
-    if (showPreferencesSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showPreferencesSheet = false },
-            sheetState = sheetState
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 8.dp)
-                    .padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = "Discovery & feed preferences",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Text("Interested in", style = MaterialTheme.typography.titleSmall)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    KindredConstants.INTERESTED_IN_OPTIONS.forEach { option ->
-                        FilterChip(
-                            selected = interestedIn == option,
-                            onClick = { interestedIn = option },
-                            label = { Text(option) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = CoralRose.copy(alpha = 0.2f),
-                                selectedLabelColor = CoralRose
-                            ),
-                            modifier = Modifier.testTag("settings_interested_in_$option")
-                        )
-                    }
-                }
-
-                Text("My gender", style = MaterialTheme.typography.titleSmall)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    KindredConstants.GENDER_OPTIONS.forEach { option ->
-                        FilterChip(
-                            selected = myGender == option,
-                            onClick = { myGender = option },
-                            label = { Text(option) }
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Age range", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "${ageRange.start.roundToInt()} – ${ageRange.endInclusive.roundToInt()}",
-                        color = InstagramBlueLink,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                RangeSlider(
-                    value = ageRange,
-                    onValueChange = { ageRange = it },
-                    valueRange = 18f..99f
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Maximum distance", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "$roundedDistance km",
-                        color = InstagramBlueLink,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Slider(
-                    value = maxDistanceKm,
-                    onValueChange = { maxDistanceKm = it },
-                    valueRange = 5f..500f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = InstagramBlueLink,
-                        activeTrackColor = InstagramBlueLink
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Verified profiles only", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            text = "Only surface verified accounts in discovery",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = verifiedOnly,
-                        onCheckedChange = { verifiedOnly = it }
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        showPreferencesSheet = false
-                        onSavePreferences(
-                            interestedIn,
-                            ageRange.start.roundToInt(),
-                            ageRange.endInclusive.roundToInt(),
-                            roundedDistance,
-                            verifiedOnly,
-                            myGender,
-                            discoverable
-                        )
-                    },
-                    enabled = !isBusy,
-                    colors = ButtonDefaults.buttonColors(containerColor = InstagramBlueLink, contentColor = Color.White),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("save_settings_button")
-                ) {
-                    if (isBusy) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
-                    } else {
-                        Text(stringResource(R.string.btn_save_preferences), fontWeight = FontWeight.SemiBold)
-                    }
                 }
             }
         }
@@ -882,7 +684,7 @@ fun SettingsScreen(
             onDismissRequest = { showDeleteAccountDialog = false },
             title = { Text("Delete Kindred Account?") },
             text = {
-                Text("This permanently removes your profile, posts, matches, and account. This action cannot be undone.")
+                Text("This permanently removes your profile, posts, connections, and account. This action cannot be undone.")
             },
             confirmButton = {
                 Button(
@@ -998,8 +800,7 @@ private fun SettingsVisibilityPicker(
 ) {
     val options = listOf(
         VisibilityLevel.EVERYONE to "Everyone",
-        VisibilityLevel.MATCHES_AND_FRIENDS to "Matches & Friends",
-        VisibilityLevel.FRIENDS_ONLY to "Friends Only"
+        VisibilityLevel.FOLLOWERS_ONLY to "Followers Only"
     )
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(text = title, style = MaterialTheme.typography.labelLarge)

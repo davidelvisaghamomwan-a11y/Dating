@@ -80,13 +80,14 @@ object ProfileCompletionUtils {
     fun canViewerSeeSection(
         visibility: String,
         isOwner: Boolean,
-        isFriend: Boolean,
-        isMatch: Boolean
+        isFollowing: Boolean = false,
+        isFriend: Boolean = false,
+        isMatch: Boolean = false
     ): Boolean {
         if (isOwner) return true
         return when (visibility.uppercase()) {
-            "FRIENDS_ONLY" -> isFriend
-            "MATCHES_AND_FRIENDS" -> isFriend || isMatch
+            "FOLLOWERS_ONLY", "FRIENDS_ONLY" -> isFollowing || isFriend
+            "MATCHES_AND_FRIENDS" -> isFollowing || isFriend || isMatch
             else -> true
         }
     }

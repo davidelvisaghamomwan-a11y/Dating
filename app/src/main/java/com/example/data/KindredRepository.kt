@@ -322,15 +322,15 @@ class KindredRepository(
         videosVisibility: String,
         infoVisibility: String
     ): Result<Unit> {
-        val safePhotosVis = if (photosVisibility in setOf(VisibilityLevel.EVERYONE, VisibilityLevel.MATCHES_AND_FRIENDS, VisibilityLevel.FRIENDS_ONLY)) {
-            photosVisibility
-        } else VisibilityLevel.EVERYONE
-        val safeVideosVis = if (videosVisibility in setOf(VisibilityLevel.EVERYONE, VisibilityLevel.MATCHES_AND_FRIENDS, VisibilityLevel.FRIENDS_ONLY)) {
-            videosVisibility
-        } else VisibilityLevel.EVERYONE
-        val safeInfoVis = if (infoVisibility in setOf(VisibilityLevel.EVERYONE, VisibilityLevel.MATCHES_AND_FRIENDS, VisibilityLevel.FRIENDS_ONLY)) {
-            infoVisibility
-        } else VisibilityLevel.EVERYONE
+        val allowedVisibility = setOf(
+            VisibilityLevel.EVERYONE,
+            VisibilityLevel.FOLLOWERS_ONLY,
+            VisibilityLevel.MATCHES_AND_FRIENDS,
+            VisibilityLevel.FRIENDS_ONLY
+        )
+        val safePhotosVis = if (photosVisibility in allowedVisibility) photosVisibility else VisibilityLevel.EVERYONE
+        val safeVideosVis = if (videosVisibility in allowedVisibility) videosVisibility else VisibilityLevel.EVERYONE
+        val safeInfoVis = if (infoVisibility in allowedVisibility) infoVisibility else VisibilityLevel.EVERYONE
 
         var docPath = "publicProfiles"
         return try {
@@ -984,6 +984,68 @@ class KindredRepository(
         }
     }
 
+    suspend fun updateDiscoverable(discoverable: Boolean): Result<Unit> {
+        var docPath = "publicProfiles"
+        return try {
+            val uid = requireUserId()
+            val publicRef = db.collection("publicProfiles").document(uid)
+            docPath = publicRef.path
+            val publicSnap = publicRef.get().await()
+            val existingPublic = if (publicSnap.exists()) {
+                publicSnap.toObject(PublicProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            } else {
+                null
+            } ?: return Result.success(Unit)
+
+            if (existingPublic.discoverable == discoverable) return Result.success(Unit)
+            val batch = db.batch()
+            batch.update(
+                publicRef,
+                mapOf(
+                    "discoverable" to discoverable,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            )
+            val geohash = existingPublic.geohash.ifBlank {
+                GeoHashUtils.encode(existingPublic.coarseLatitude, existingPublic.coarseLongitude, precision = 7)
+            }
+            val geoProfilePayload = buildGeoCellPayload(
+                uid = uid,
+                displayName = existingPublic.displayName,
+                age = existingPublic.age,
+                gender = existingPublic.gender,
+                bio = existingPublic.bio,
+                cityLabel = existingPublic.cityLabel,
+                country = existingPublic.country,
+                coarseLat = existingPublic.coarseLatitude,
+                coarseLng = existingPublic.coarseLongitude,
+                interests = existingPublic.interests,
+                photoDataUrl = existingPublic.photoDataUrl,
+                profilePhotos = existingPublic.profilePhotos,
+                discoverable = discoverable,
+                existingPublic = existingPublic,
+                forceUnverified = false
+            )
+            geoService.stageGeoCellIndexMutations(
+                batch = batch,
+                userId = uid,
+                geohash = geohash,
+                discoverable = discoverable,
+                previousGeoHash3 = existingPublic.geohash3,
+                previousGeoHash4 = existingPublic.geohash4,
+                baseProfileFields = geoProfilePayload,
+                createMissingCells = true
+            )
+            batch.commit().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
     suspend fun updateLocationCoordinates(
         latitude: Double,
         longitude: Double,
@@ -1384,7 +1446,7 @@ class KindredRepository(
             val uid = requireUserId()
             val sortedParticipants = participantUids.distinct().sorted()
             require(sortedParticipants.size == 2 && uid in sortedParticipants) {
-                "You are not a participant in this match."
+                "You are not a participant in this conversation."
             }
             val matchRef = db.collection("matches").document(matchId)
             val msgRef = matchRef.collection("messages").document()
@@ -1977,7 +2039,7 @@ class KindredRepository(
             val cleanReason = reason.trim().take(100)
             require(cleanReason.length >= 2) { "Please choose a reason for reporting." }
             val safeSurface = when (sourceSurface.uppercase()) {
-                "DISCOVER", "SEARCH", "CHAT", "PROFILE", "VIDEO_FEED", "STORY" -> sourceSurface.uppercase()
+                "DISCOVER", "HOME_FEED", "SEARCH", "CHAT", "PROFILE", "VIDEO_FEED", "STORY", "FEED_POST" -> sourceSurface.uppercase()
                 else -> "PROFILE"
             }
             val reportRef = db.collection("reports").document()
