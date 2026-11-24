@@ -1220,25 +1220,48 @@ class SocialAndMediaRepository(
         if (cleanCaption.isBlank() && validPhotos.isEmpty() && preparedVideo == null) {
             return Result.failure(IllegalArgumentException("Add text, photos, or a video to share a post."))
         }
-        var docPath = "feedPosts"
+        var docPath = "posts"
         return try {
             val uid = requireUserId()
-            val postRef = db.collection("feedPosts").document()
+            val postId = db.collection("posts").document().id
+            val postRef = db.collection("feedPosts").document(postId)
+            val mirrorPostRef = db.collection("posts").document(postId)
             docPath = postRef.path
+
             val mediaType = when {
                 preparedVideo != null -> "VIDEO"
                 validPhotos.isNotEmpty() -> "PHOTO"
                 else -> "TEXT"
             }
+            val locationStr = buildString {
+                if (!authorProfile?.cityLabel.isNullOrBlank()) append(authorProfile!!.cityLabel)
+                if (!authorProfile?.country.isNullOrBlank()) {
+                    if (isNotEmpty()) append(", ")
+                    append(authorProfile!!.country)
+                }
+            }.ifBlank { "Global" }
+
+            val primaryMediaUrl = when {
+                validPhotos.isNotEmpty() -> validPhotos.first()
+                preparedVideo?.inlineDataUrl != null -> preparedVideo.inlineDataUrl!!
+                else -> ""
+            }
+
             val payload = mutableMapOf<String, Any>(
+                "postId" to postId,
                 "userId" to uid,
+                "authorId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
                 "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "mediaType" to mediaType,
                 "caption" to cleanCaption,
+                "location" to locationStr,
+                "mediaUrl" to primaryMediaUrl,
                 "likedByUids" to emptyList<String>(),
+                "likesCount" to 0L,
                 "savedByUids" to emptyList<String>(),
                 "commentCount" to 0L,
+                "commentsCount" to 0L,
                 "createdAt" to FieldValue.serverTimestamp()
             )
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
@@ -1268,6 +1291,11 @@ class SocialAndMediaRepository(
                         ownerUid = uid,
                         chunks = preparedVideo.chunkBase64List
                     )
+                    uploadChunksToSubcollection(
+                        parentCollection = mirrorPostRef.collection("mediaChunks"),
+                        ownerUid = uid,
+                        chunks = preparedVideo.chunkBase64List
+                    )
                 }
             } else if (validPhotos.isNotEmpty()) {
                 payload["mediaDataUrl"] = validPhotos.first()
@@ -1279,7 +1307,8 @@ class SocialAndMediaRepository(
                 payload["chunkCount"] = 0L
             }
             postRef.set(payload).await()
-            Result.success(postRef.id)
+            mirrorPostRef.set(payload).await()
+            Result.success(postId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

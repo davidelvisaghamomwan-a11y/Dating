@@ -477,7 +477,9 @@ data class VideoPost(
 @IgnoreExtraProperties
 data class FeedPost(
     @DocumentId val id: String = "",
+    val postId: String = "",
     val userId: String = "",
+    val authorId: String = "",
     val authorName: String = "",
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
@@ -486,6 +488,7 @@ data class FeedPost(
     val caption: String = "",
     val mediaType: String = "NONE",
     val mediaDataUrl: String? = null,
+    val mediaUrl: String? = null,
     val mediaUrls: List<String> = emptyList(),
     val thumbnailDataUrl: String? = null,
     val mediaMimeType: String? = null,
@@ -493,8 +496,11 @@ data class FeedPost(
     val mediaByteSize: Long = 0L,
     val chunkCount: Long = 0L,
     val likedByUids: List<String> = emptyList(),
+    val likesCount: Long = 0L,
     val savedByUids: List<String> = emptyList(),
     val commentCount: Long = 0L,
+    val commentsCount: Long = 0L,
+    val location: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null
 ) {
     fun allPhotoUrls(): List<String> {
