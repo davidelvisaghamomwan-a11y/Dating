@@ -189,6 +189,7 @@ fun HomeFeedScreen(
     onMarkStoryViewed: (String) -> Unit = {},
     onDeleteStory: (String) -> Unit = {},
     resolveStoryVideoFile: suspend (StoryItem) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    onReplyToStory: (authorUid: String, replyText: String) -> Unit = { _, _ -> },
     onOpenVideoFeed: () -> Unit = {},
     suggestedProfiles: List<DiscoveryCandidate> = emptyList(),
     feedPosts: List<FeedPost> = emptyList(),
@@ -730,6 +731,7 @@ fun HomeFeedScreen(
             onMarkViewed = onMarkStoryViewed,
             onDeleteStory = onDeleteStory,
             onOpenAuthorProfile = onOpenUserProfileById,
+            onReplyToStory = onReplyToStory,
             onDismiss = { activeStoryIndex = null }
         )
     }

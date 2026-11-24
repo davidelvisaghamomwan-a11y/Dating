@@ -1,6 +1,6 @@
 {
   "name": "Kindred",
-  "description": "A dating app with real-time chat, location-based matching, and secure user profile verification.",
+  "description": "An Instagram-style social app with photo & video feed, 24-hour stories, full-screen reels, explore discovery, and direct messaging.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

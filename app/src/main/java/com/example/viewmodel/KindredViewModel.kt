@@ -1978,6 +1978,26 @@ class KindredViewModel(
         }
     }
 
+    fun replyToStory(authorUid: String, replyText: String, onDone: (Boolean) -> Unit = {}) {
+        if (authorUid.isBlank() || replyText.isBlank() || authorUid == currentUserId) return
+        viewModelScope.launch {
+            val matchRes = repository.createOrOpenDirectMatch(authorUid)
+            matchRes.onSuccess { matchId ->
+                repository.sendMessage(
+                    matchId = matchId,
+                    participantUids = listOf(currentUserId, authorUid).distinct(),
+                    text = "Replied to story: $replyText",
+                    messageType = "TEXT"
+                )
+                _actionStatusMessage.value = "Reply sent to DM"
+                onDone(true)
+            }.onFailure {
+                _actionStatusMessage.value = it.localizedMessage ?: "Failed to send reply"
+                onDone(false)
+            }
+        }
+    }
+
     suspend fun resolveStoryVideoFile(context: Context, story: StoryItem): Result<File> {
         return socialRepo.resolveVideoToFile(
             context = context,

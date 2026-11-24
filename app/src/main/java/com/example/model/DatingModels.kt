@@ -435,11 +435,21 @@ data class StoryItem(
     val mediaDurationSec: Long = 0L,
     val chunkCount: Long = 0L,
     val viewerUids: List<String> = emptyList(),
+    val expiresAt: Timestamp? = null,
     val expiresAtMs: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null
 ) {
-    fun isExpiredAt(nowMs: Long = System.currentTimeMillis()): Boolean =
-        expiresAtMs in 1 until nowMs
+    fun isExpiredAt(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val expiry = expiresAt?.toDate()?.time ?: expiresAtMs
+        if (expiry > 0L) {
+            return nowMs >= expiry
+        }
+        val created = createdAt?.toDate()?.time ?: 0L
+        if (created > 0L) {
+            return (nowMs - created) >= 86_400_000L
+        }
+        return false
+    }
 }
 
 @Keep

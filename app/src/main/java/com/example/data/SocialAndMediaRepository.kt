@@ -744,7 +744,8 @@ class SocialAndMediaRepository(
         return try {
             val uid = requireUserId()
             val storyRef = db.collection("stories").document()
-            docPath = storyRef.path
+            val expiresMs = System.currentTimeMillis() + 86_400_000L
+            val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
@@ -755,7 +756,8 @@ class SocialAndMediaRepository(
                 "mediaDurationSec" to 0L,
                 "chunkCount" to 0L,
                 "viewerUids" to listOf(uid),
-                "expiresAtMs" to (System.currentTimeMillis() + 86_400_000L),
+                "expiresAt" to expiresTimestamp,
+                "expiresAtMs" to expiresMs,
                 "createdAt" to FieldValue.serverTimestamp()
             )
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
@@ -786,6 +788,8 @@ class SocialAndMediaRepository(
             val uid = requireUserId()
             val storyRef = db.collection("stories").document()
             docPath = storyRef.path
+            val expiresMs = System.currentTimeMillis() + 86_400_000L
+            val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
@@ -795,7 +799,8 @@ class SocialAndMediaRepository(
                 "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
                 "chunkCount" to prepared.chunkCount.toLong(),
                 "viewerUids" to listOf(uid),
-                "expiresAtMs" to (System.currentTimeMillis() + 86_400_000L),
+                "expiresAt" to expiresTimestamp,
+                "expiresAtMs" to expiresMs,
                 "createdAt" to FieldValue.serverTimestamp()
             )
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()

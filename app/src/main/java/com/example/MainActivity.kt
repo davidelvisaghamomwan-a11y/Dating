@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Badge
@@ -200,11 +201,11 @@ private val NAV_TABS = listOf(
         testTag = "nav_create_tab"
     ),
     NavTabItem(
-        route = ROUTE_ACTIVITY,
-        labelRes = R.string.nav_activity,
-        selectedIcon = Icons.Filled.Favorite,
-        unselectedIcon = Icons.Outlined.FavoriteBorder,
-        testTag = "nav_activity_tab"
+        route = ROUTE_VIDEO_FEED,
+        labelRes = R.string.nav_reels,
+        selectedIcon = Icons.Filled.Movie,
+        unselectedIcon = Icons.Outlined.Movie,
+        testTag = "nav_reels_tab"
     ),
     NavTabItem(
         route = ROUTE_PROFILE,
@@ -963,6 +964,9 @@ private fun MainKindredApp(
                                         unreadMessageCount = unreadInboxCount,
                                         incomingNotificationCount = activityBadgeCount,
                                         profilesByUid = profilesByUid,
+                                        onReplyToStory = { authorUid, replyText ->
+                                            viewModel.replyToStory(authorUid, replyText)
+                                        },
                                         onOpenActivity = {
                                             navigateToTab(ROUTE_ACTIVITY)
                                         },
@@ -1055,6 +1059,11 @@ private fun MainKindredApp(
                                         },
                                         onOpenExplore = {
                                             navigateToTab(ROUTE_SEARCH)
+                                        },
+                                        onBack = {
+                                            if (!navController.popBackStack()) {
+                                                navigateToTab(ROUTE_HOME)
+                                            }
                                         }
                                     )
                                 }
