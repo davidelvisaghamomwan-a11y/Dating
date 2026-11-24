@@ -723,7 +723,7 @@ fun CreateStoryStudioDialog(
                                 modifier = Modifier.size(56.dp)
                             )
                             Text(
-                                text = "Uploading story...",
+                                text = "Uploading...",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleLarge
