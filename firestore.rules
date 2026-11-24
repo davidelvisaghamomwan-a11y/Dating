@@ -1047,6 +1047,30 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if isSignedIn() && (existing().ownerUid == request.auth.uid || isAdmin());
       }
+
+      match /comments/{commentId} {
+        allow get, list: if isSignedIn() && isValidId(postId);
+
+        allow create: if isSignedIn() &&
+                         isValidId(postId) &&
+                         isValidId(commentId) &&
+                         incoming().postId == postId &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
+                         (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
+                         (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
+                         incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
+                         incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'authorVerified', 'text', 'createdAt']) &&
+                         isValidTimestamp(incoming().createdAt);
+
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(postId) && isValidId(commentId) && (
+          isOwner(existing().userId) ||
+          isAdmin() ||
+          get(/databases/$(database)/documents/videoPosts/$(postId)).data.userId == request.auth.uid
+        );
+      }
     }
 
     // 17. Discover Social Timeline Feed Posts (/feedPosts/{postId} + mediaChunks + comments/{commentId})

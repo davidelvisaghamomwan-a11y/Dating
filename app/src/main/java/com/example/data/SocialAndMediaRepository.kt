@@ -58,6 +58,7 @@ class SocialAndMediaRepository(
 ) {
     private val refreshedFeedPostsFlow = MutableSharedFlow<List<FeedPost>>(extraBufferCapacity = 4)
     private val refreshedStoriesFlow = MutableSharedFlow<List<StoryItem>>(extraBufferCapacity = 4)
+    private val refreshedVideoFeedFlow = MutableSharedFlow<List<VideoPost>>(extraBufferCapacity = 4)
 
     private fun requireUserId(): String {
         return auth.currentUser?.uid
@@ -863,7 +864,7 @@ class SocialAndMediaRepository(
 
     fun observeVideoFeed(viewerUid: String): Flow<List<VideoPost>> {
         if (viewerUid.isBlank()) return flowOf(emptyList())
-        return flow {
+        val liveFlow = flow {
             emitAll(
                 db.collection("videoPosts")
                     .snapshots()
@@ -873,6 +874,27 @@ class SocialAndMediaRepository(
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "videoPosts", viewerUid) }
             )
+        }
+        return merge(liveFlow, refreshedVideoFeedFlow)
+    }
+
+    suspend fun fetchLatestVideoFeed(viewerUid: String): Result<List<VideoPost>> {
+        if (viewerUid.isBlank()) return Result.success(emptyList())
+        return try {
+            val snap = try {
+                db.collection("videoPosts").get(Source.SERVER).await()
+            } catch (_: Exception) {
+                db.collection("videoPosts").get(Source.DEFAULT).await()
+            }
+            val list = snap.toObjects(VideoPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            refreshedVideoFeedFlow.tryEmit(list)
+            Result.success(list)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, "videoPosts")
+            Result.failure(e)
         }
     }
 

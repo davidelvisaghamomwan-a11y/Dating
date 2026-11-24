@@ -852,8 +852,10 @@ class KindredViewModel(
                 val uid = currentUserId
                 val postsJob = async { socialRepo.fetchLatestFeedPosts(uid) }
                 val storiesJob = async { socialRepo.fetchLatestActiveStories(uid) }
+                val videosJob = async { socialRepo.fetchLatestVideoFeed(uid) }
                 val postsRes = postsJob.await()
                 storiesJob.await()
+                videosJob.await()
                 postsRes.onFailure { err ->
                     _actionStatusMessage.value = err.localizedMessage ?: "Unable to refresh feed from server"
                 }

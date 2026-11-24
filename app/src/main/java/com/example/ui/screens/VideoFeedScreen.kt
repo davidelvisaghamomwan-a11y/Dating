@@ -119,7 +119,8 @@ fun VideoFeedScreen(
     myProfile: PublicProfile? = null,
     observeComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
     onAddComment: (String, String) -> Unit = { _, _ -> },
-    onDeleteComment: (String, String) -> Unit = { _, _ -> }
+    onDeleteComment: (String, String) -> Unit = { _, _ -> },
+    initialPostId: String? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -210,7 +211,22 @@ fun VideoFeedScreen(
             }
 
             else -> {
-                val pagerState = rememberPagerState(pageCount = { videoPosts.size })
+                val targetIndex = remember(initialPostId, videoPosts) {
+                    if (initialPostId.isNullOrBlank()) 0
+                    else videoPosts.indexOfFirst { it.id == initialPostId }.coerceAtLeast(0)
+                }
+                val pagerState = rememberPagerState(
+                    initialPage = targetIndex,
+                    pageCount = { videoPosts.size }
+                )
+                LaunchedEffect(initialPostId, videoPosts.size) {
+                    if (!initialPostId.isNullOrBlank()) {
+                        val idx = videoPosts.indexOfFirst { it.id == initialPostId }
+                        if (idx >= 0 && idx != pagerState.currentPage) {
+                            pagerState.scrollToPage(idx)
+                        }
+                    }
+                }
                 VerticalPager(
                     state = pagerState,
                     modifier = Modifier

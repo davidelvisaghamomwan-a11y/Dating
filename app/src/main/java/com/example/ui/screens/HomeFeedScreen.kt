@@ -1,9 +1,25 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.view.ViewGroup
+import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,8 +27,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,20 +45,31 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,7 +78,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -64,14 +95,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
 import com.example.model.DiscoveryCandidate
 import com.example.model.FeedComment
 import com.example.model.FeedPost
@@ -80,6 +122,7 @@ import com.example.model.FriendStatus
 import com.example.model.ProfileLikeRecord
 import com.example.model.PublicProfile
 import com.example.model.StoryItem
+import com.example.model.VideoPost
 import com.example.ui.components.CreatePostComposerSheet
 import com.example.ui.components.InstagramFeedPostCard
 import com.example.ui.components.PostCommentsSheet
@@ -89,18 +132,47 @@ import com.example.ui.components.StoryViewerDialog
 import com.example.ui.components.TimelineNotificationsSheet
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
+import com.example.util.CountryFlagHelper
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PreparedVideoUpload
 import com.example.util.ResolvedDeviceLocation
 import com.example.util.VerificationAnalyzer
+import com.example.util.VideoClipHelper
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 private enum class FeedFilterMode(val label: String) {
     FOR_YOU("For you"),
     FOLLOWING("Following")
+}
+
+private sealed interface HomeTimelineItem {
+    val key: String
+    val userId: String
+    val createdAtSeconds: Long
+    val createdAtNanos: Int
+    val isPlayableVideo: Boolean
+
+    data class PostItem(val post: FeedPost) : HomeTimelineItem {
+        override val key: String = "post_${post.id}"
+        override val userId: String = post.userId
+        override val createdAtSeconds: Long = post.createdAt?.seconds ?: 0L
+        override val createdAtNanos: Int = post.createdAt?.nanoseconds ?: 0
+        override val isPlayableVideo: Boolean = post.mediaType == "VIDEO"
+    }
+
+    data class ReelItem(val reel: VideoPost) : HomeTimelineItem {
+        override val key: String = "reel_${reel.id}"
+        override val userId: String = reel.userId
+        override val createdAtSeconds: Long = reel.createdAt?.seconds ?: 0L
+        override val createdAtNanos: Int = reel.createdAt?.nanoseconds ?: 0
+        override val isPlayableVideo: Boolean = true
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,6 +196,7 @@ fun HomeFeedScreen(
     onOpenVideoFeed: () -> Unit = {},
     suggestedProfiles: List<DiscoveryCandidate> = emptyList(),
     feedPosts: List<FeedPost> = emptyList(),
+    videoPosts: List<VideoPost> = emptyList(),
     currentUserId: String = myProfile?.userId ?: "",
     friendStatusForUid: (String) -> FriendStatus = { FriendStatus.NONE },
     onFriendAction: (PublicProfile) -> Unit = {},
@@ -137,6 +210,13 @@ fun HomeFeedScreen(
     onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    onToggleVideoPostLike: (postId: String, currentlyLiked: Boolean) -> Unit = { _, _ -> },
+    onDeleteVideoPost: (postId: String) -> Unit = {},
+    resolveVideoPostFile: suspend (VideoPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
+    observeVideoComments: (postId: String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
+    onAddVideoComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, cb -> cb() },
+    onDeleteVideoComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
+    onOpenReelInVideoFeed: (reelId: String) -> Unit = { onOpenVideoFeed() },
     isFeedRefreshing: Boolean = false,
     onRefreshFeed: () -> Unit = {},
     unreadMessageCount: Int = 0,
@@ -156,6 +236,7 @@ fun HomeFeedScreen(
     var activeStoryIndex by remember { mutableStateOf<Int?>(null) }
     var showPostComposerSheet by remember { mutableStateOf(false) }
     var activeCommentsPost by remember { mutableStateOf<FeedPost?>(null) }
+    var activeCommentsReel by remember { mutableStateOf<VideoPost?>(null) }
     var showNotificationsSheet by remember { mutableStateOf(false) }
 
     fun fetchAndApplyGps() {
@@ -182,27 +263,59 @@ fun HomeFeedScreen(
         }
     }
 
-    val displayedPosts = remember(feedPosts, filterMode, currentUserId) {
-        if (filterMode == FeedFilterMode.FOLLOWING) {
-            feedPosts.filter { post ->
-                post.userId == currentUserId || friendStatusForUid(post.userId) == FriendStatus.FRIENDS
+    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId) {
+        val rawCombined = buildList<HomeTimelineItem> {
+            feedPosts.forEach { add(HomeTimelineItem.PostItem(it)) }
+            videoPosts.forEach { add(HomeTimelineItem.ReelItem(it)) }
+        }
+        val filtered = if (filterMode == FeedFilterMode.FOLLOWING) {
+            rawCombined.filter { item ->
+                item.userId == currentUserId || friendStatusForUid(item.userId) == FriendStatus.FRIENDS
             }
         } else {
-            feedPosts
+            rawCombined
         }
+        filtered.sortedWith(
+            compareByDescending<HomeTimelineItem> { it.createdAtSeconds }
+                .thenByDescending { it.createdAtNanos }
+        )
+    }
+
+    // Prioritize other people's Reels for the "Suggested reels" horizontal shelf on Home
+    val shelfReels = remember(videoPosts, filterMode, currentUserId) {
+        val base = if (filterMode == FeedFilterMode.FOLLOWING) {
+            videoPosts.filter {
+                it.userId != currentUserId && friendStatusForUid(it.userId) == FriendStatus.FRIENDS
+            }
+        } else {
+            val others = videoPosts.filter { it.userId != currentUserId }
+            others.ifEmpty { videoPosts }
+        }
+        base.take(15)
     }
 
     val peopleToKnow = remember(suggestedProfiles, candidates) {
         (if (suggestedProfiles.isNotEmpty()) suggestedProfiles else candidates).take(20)
     }
 
-    LaunchedEffect(displayedPosts, stories, profilesByUid) {
+    LaunchedEffect(displayedTimelineItems, stories, profilesByUid) {
         val urlsToWarm = buildList {
-            displayedPosts.take(10).forEach { post ->
-                addAll(post.allPhotoUrls())
-                post.authorPhoto?.let { add(it) }
-                post.thumbnailDataUrl?.let { add(it) }
-                profilesByUid[post.userId]?.photoDataUrl?.let { add(it) }
+            displayedTimelineItems.take(12).forEach { item ->
+                when (item) {
+                    is HomeTimelineItem.PostItem -> {
+                        val post = item.post
+                        addAll(post.allPhotoUrls())
+                        post.authorPhoto?.let { add(it) }
+                        post.thumbnailDataUrl?.let { add(it) }
+                        profilesByUid[post.userId]?.photoDataUrl?.let { add(it) }
+                    }
+                    is HomeTimelineItem.ReelItem -> {
+                        val reel = item.reel
+                        reel.authorPhoto?.let { add(it) }
+                        reel.thumbnailDataUrl?.let { add(it) }
+                        profilesByUid[reel.userId]?.photoDataUrl?.let { add(it) }
+                    }
+                }
             }
             stories.take(12).forEach { story ->
                 story.authorPhoto?.let { add(it) }
@@ -214,16 +327,19 @@ fun HomeFeedScreen(
 
     val pullRefreshState = rememberPullToRefreshState()
     val feedListState = rememberLazyListState()
-    val autoPlayVideoPostId by remember(displayedPosts) {
+    val autoPlayVideoKey by remember(displayedTimelineItems) {
         derivedStateOf {
-            val videoIds = displayedPosts.asSequence().filter { it.mediaType == "VIDEO" }.map { it.id }.toSet()
-            if (videoIds.isEmpty()) return@derivedStateOf null
+            val videoKeys = displayedTimelineItems.asSequence()
+                .filter { it.isPlayableVideo }
+                .map { it.key }
+                .toSet()
+            if (videoKeys.isEmpty()) return@derivedStateOf null
             val layoutInfo = feedListState.layoutInfo
             val viewStart = layoutInfo.viewportStartOffset
             val viewEnd = layoutInfo.viewportEndOffset
             layoutInfo.visibleItemsInfo
                 .asSequence()
-                .filter { (it.key as? String) in videoIds }
+                .filter { (it.key as? String) in videoKeys }
                 .maxByOrNull { info ->
                     val visibleTop = maxOf(info.offset, viewStart)
                     val visibleBottom = minOf(info.offset + info.size, viewEnd)
@@ -235,7 +351,7 @@ fun HomeFeedScreen(
                     (visibleBottom - visibleTop) > (info.size / 3)
                 }
                 ?.key as? String
-                ?: layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String) in videoIds }?.key as? String
+                ?: layoutInfo.visibleItemsInfo.firstOrNull { (it.key as? String) in videoKeys }?.key as? String
         }
     }
 
@@ -457,8 +573,8 @@ fun HomeFeedScreen(
                         )
                     }
 
-                    // Timeline Posts Stream
-                    if (displayedPosts.isEmpty()) {
+                    // Timeline Posts & Reels Stream
+                    if (displayedTimelineItems.isEmpty()) {
                         item(key = "empty_feed_posts") {
                             Column(
                                 modifier = Modifier
@@ -484,9 +600,9 @@ fun HomeFeedScreen(
                                 )
                                 Text(
                                     text = if (filterMode == FeedFilterMode.FOLLOWING) {
-                                        "Switch to \"For you\" to explore posts from members across Kindred, or follow people below."
+                                        "Switch to \"For you\" to explore posts and reels from members across Kindred, or follow people below."
                                     } else {
-                                        "Share photos, videos, and updates with the Kindred community."
+                                        "Share photos, reels, and updates with the Kindred community."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -514,44 +630,92 @@ fun HomeFeedScreen(
                             }
                         }
                     } else {
-                        itemsIndexed(displayedPosts, key = { _, post -> post.id }) { index, post ->
-                            InstagramFeedPostCard(
-                                post = post,
-                                authorProfile = profilesByUid[post.userId],
-                                currentUserId = currentUserId,
-                                friendStatus = friendStatusForUid(post.userId),
-                                onFriendAction = {
-                                    val profile = profilesByUid[post.userId]
-                                    if (profile != null) onFriendAction(profile)
-                                },
-                                resolveVideoFile = resolveFeedPostVideoFile,
-                                onToggleLike = {
-                                    onToggleFeedPostLike(post.id, currentUserId in post.likedByUids)
-                                },
-                                onToggleSave = {
-                                    onToggleFeedPostSave(post.id, currentUserId in post.savedByUids)
-                                },
-                                onOpenComments = { activeCommentsPost = post },
-                                onDeletePost = { onDeleteFeedPost(post.id) },
-                                onOpenAuthor = { onOpenUserProfileById(post.userId) },
-                                onReportPost = {
-                                    val candidate = candidates.firstOrNull { it.profile.userId == post.userId }
-                                    if (candidate != null) {
-                                        onReportUser(candidate, "Inappropriate Content", "Post ${post.id}", false)
-                                    }
-                                },
-                                isVisibleForAutoPlay = (post.id == autoPlayVideoPostId)
-                            )
+                        itemsIndexed(displayedTimelineItems, key = { _, item -> item.key }) { index, item ->
+                            when (item) {
+                                is HomeTimelineItem.PostItem -> {
+                                    val post = item.post
+                                    InstagramFeedPostCard(
+                                        post = post,
+                                        authorProfile = profilesByUid[post.userId],
+                                        currentUserId = currentUserId,
+                                        friendStatus = friendStatusForUid(post.userId),
+                                        onFriendAction = {
+                                            val profile = profilesByUid[post.userId]
+                                            if (profile != null) onFriendAction(profile)
+                                        },
+                                        resolveVideoFile = resolveFeedPostVideoFile,
+                                        onToggleLike = {
+                                            onToggleFeedPostLike(post.id, currentUserId in post.likedByUids)
+                                        },
+                                        onToggleSave = {
+                                            onToggleFeedPostSave(post.id, currentUserId in post.savedByUids)
+                                        },
+                                        onOpenComments = { activeCommentsPost = post },
+                                        onDeletePost = { onDeleteFeedPost(post.id) },
+                                        onOpenAuthor = { onOpenUserProfileById(post.userId) },
+                                        onReportPost = {
+                                            val candidate = candidates.firstOrNull { it.profile.userId == post.userId }
+                                            if (candidate != null) {
+                                                onReportUser(candidate, "Inappropriate Content", "Post ${post.id}", false)
+                                            }
+                                        },
+                                        isVisibleForAutoPlay = (item.key == autoPlayVideoKey)
+                                    )
+                                }
 
-                            if (index == 0 && peopleToKnow.isNotEmpty()) {
-                                SuggestedPeopleStrip(
-                                    peopleToKnow = peopleToKnow,
-                                    activeOnlineCount = activeOnlineCount,
-                                    friendStatusForUid = friendStatusForUid,
-                                    onOpenActiveUsers = onOpenActiveUsers,
-                                    onOpenUserProfile = onOpenUserProfile,
-                                    onFriendAction = onFriendAction
-                                )
+                                is HomeTimelineItem.ReelItem -> {
+                                    val reel = item.reel
+                                    HomeReelPostCard(
+                                        reel = reel,
+                                        authorProfile = profilesByUid[reel.userId],
+                                        currentUserId = currentUserId,
+                                        friendStatus = friendStatusForUid(reel.userId),
+                                        onFriendAction = {
+                                            val profile = profilesByUid[reel.userId] ?: PublicProfile(
+                                                userId = reel.userId,
+                                                displayName = reel.authorName
+                                            )
+                                            onFriendAction(profile)
+                                        },
+                                        resolveVideoFile = resolveVideoPostFile,
+                                        onToggleLike = {
+                                            onToggleVideoPostLike(reel.id, currentUserId in reel.likedByUids)
+                                        },
+                                        onOpenComments = { activeCommentsReel = reel },
+                                        onDeleteReel = { onDeleteVideoPost(reel.id) },
+                                        onOpenAuthor = { onOpenUserProfileById(reel.userId) },
+                                        onOpenFullScreenReel = { onOpenReelInVideoFeed(reel.id) },
+                                        onReportReel = {
+                                            val candidate = candidates.firstOrNull { it.profile.userId == reel.userId }
+                                            if (candidate != null) {
+                                                onReportUser(candidate, "Inappropriate Content", "Reel ${reel.id}", false)
+                                            }
+                                        },
+                                        isVisibleForAutoPlay = (item.key == autoPlayVideoKey)
+                                    )
+                                }
+                            }
+
+                            if (index == 0) {
+                                if (shelfReels.isNotEmpty()) {
+                                    SuggestedReelsShelf(
+                                        reels = shelfReels,
+                                        profilesByUid = profilesByUid,
+                                        onOpenReel = { reel -> onOpenReelInVideoFeed(reel.id) },
+                                        onSeeAllReels = onOpenVideoFeed,
+                                        onOpenAuthor = onOpenUserProfileById
+                                    )
+                                }
+                                if (peopleToKnow.isNotEmpty()) {
+                                    SuggestedPeopleStrip(
+                                        peopleToKnow = peopleToKnow,
+                                        activeOnlineCount = activeOnlineCount,
+                                        friendStatusForUid = friendStatusForUid,
+                                        onOpenActiveUsers = onOpenActiveUsers,
+                                        onOpenUserProfile = onOpenUserProfile,
+                                        onFriendAction = onFriendAction
+                                    )
+                                }
                             }
                         }
                     }
@@ -595,6 +759,36 @@ fun HomeFeedScreen(
             onDeleteComment = onDeleteFeedPostComment,
             onOpenProfile = onOpenUserProfileById,
             onDismiss = { activeCommentsPost = null }
+        )
+    }
+
+    activeCommentsReel?.let { vidPost ->
+        PostCommentsSheet(
+            post = FeedPost(
+                id = vidPost.id,
+                userId = vidPost.userId,
+                authorName = vidPost.authorName,
+                authorPhoto = vidPost.authorPhoto,
+                authorCountry = vidPost.authorCountry,
+                authorVerified = vidPost.authorVerified,
+                caption = vidPost.caption,
+                mediaType = "VIDEO",
+                mediaDataUrl = vidPost.mediaDataUrl,
+                thumbnailDataUrl = vidPost.thumbnailDataUrl,
+                likedByUids = vidPost.likedByUids,
+                createdAt = vidPost.createdAt
+            ),
+            currentUserId = currentUserId,
+            myProfile = myProfile,
+            profilesByUid = profilesByUid,
+            observeComments = observeVideoComments,
+            onAddComment = onAddVideoComment,
+            onDeleteComment = onDeleteVideoComment,
+            onOpenProfile = { uid ->
+                activeCommentsReel = null
+                onOpenUserProfileById(uid)
+            },
+            onDismiss = { activeCommentsReel = null }
         )
     }
 
