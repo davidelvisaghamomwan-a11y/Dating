@@ -466,7 +466,7 @@ data class StoryHighlight(
 @Keep
 @IgnoreExtraProperties
 data class VideoPost(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val authorName: String = "",
     val authorPhoto: String? = null,
@@ -486,7 +486,7 @@ data class VideoPost(
 @Keep
 @IgnoreExtraProperties
 data class FeedPost(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val postId: String = "",
     val userId: String = "",
     val authorId: String = "",
@@ -519,11 +519,15 @@ data class FeedPost(
                 val clean = url.trim()
                 if (clean.isNotBlank()) add(clean)
             }
-            val single = mediaDataUrl?.trim().orEmpty()
-            if (single.isNotBlank() && single.startsWith("data:image")) {
-                add(single)
-            } else if (single.isNotBlank() && mediaType == "PHOTO" && isEmpty()) {
-                add(single)
+            val single = (mediaDataUrl ?: mediaUrl)?.trim().orEmpty()
+            if (single.isNotBlank()) {
+                if (single.startsWith("data:image") || single.startsWith("http://", ignoreCase = true) || single.startsWith("https://", ignoreCase = true)) {
+                    if (mediaType != "VIDEO" || single != thumbnailDataUrl) {
+                        add(single)
+                    }
+                } else if (mediaType.equals("PHOTO", ignoreCase = true) && isEmpty()) {
+                    add(single)
+                }
             }
         }
         return list.distinct().take(6)

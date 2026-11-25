@@ -161,9 +161,9 @@ private sealed interface HomeTimelineItem {
     val isPlayableVideo: Boolean
 
     data class PostItem(val post: FeedPost) : HomeTimelineItem {
-        override val key: String = "post_${post.id}"
-        override val userId: String = post.userId
-        override val createdAtSeconds: Long = post.createdAt?.seconds ?: 0L
+        override val key: String = "post_${post.id.ifBlank { post.postId }}"
+        override val userId: String = post.userId.ifBlank { post.authorId }
+        override val createdAtSeconds: Long = post.createdAt?.seconds ?: (System.currentTimeMillis() / 1000L)
         override val createdAtNanos: Int = post.createdAt?.nanoseconds ?: 0
         override val isPlayableVideo: Boolean = post.mediaType == "VIDEO"
     }
@@ -171,7 +171,7 @@ private sealed interface HomeTimelineItem {
     data class ReelItem(val reel: VideoPost) : HomeTimelineItem {
         override val key: String = "reel_${reel.id}"
         override val userId: String = reel.userId
-        override val createdAtSeconds: Long = reel.createdAt?.seconds ?: 0L
+        override val createdAtSeconds: Long = reel.createdAt?.seconds ?: (System.currentTimeMillis() / 1000L)
         override val createdAtNanos: Int = reel.createdAt?.nanoseconds ?: 0
         override val isPlayableVideo: Boolean = true
     }

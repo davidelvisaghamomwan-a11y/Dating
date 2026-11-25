@@ -4,6 +4,8 @@ import android.net.Uri
 import android.view.ViewGroup
 import android.widget.VideoView
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -13,7 +15,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -65,6 +70,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +83,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -87,7 +94,10 @@ import com.example.ui.theme.CoralRose
 import com.example.util.PreparedVideoUpload
 import com.example.util.VerificationAnalyzer
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.sin
+import kotlin.random.Random
 
 private val InstagramStoryGradient = Brush.sweepGradient(
     listOf(
@@ -297,6 +307,16 @@ fun StoriesTrayRow(
     }
 }
 
+private data class FloatingStoryReaction(
+    val id: Long,
+    val emoji: String,
+    val startXFraction: Float,
+    val swayAmount: Float,
+    val targetHeight: Float,
+    val baseScale: Float,
+    val animatable: Animatable<Float, AnimationVector1D> = Animatable(0f)
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StoryViewerDialog(
@@ -333,6 +353,39 @@ fun StoryViewerDialog(
     var showViewerListSheet by remember { mutableStateOf(false) }
     var replyDraft by remember { mutableStateOf("") }
     var isSendingReply by remember { mutableStateOf(false) }
+
+    val scope = rememberCoroutineScope()
+    var floatingReactions by remember { mutableStateOf<List<FloatingStoryReaction>>(emptyList()) }
+    val quickReactionEmojis = remember { listOf("❤️", "🔥", "😂", "😮", "😢", "👏") }
+
+    fun triggerQuickReaction(emoji: String) {
+        onReplyToStory?.invoke(story.userId, emoji)
+        val newParticles = (0 until 8).map { index ->
+            FloatingStoryReaction(
+                id = System.nanoTime() + index + Random.nextInt(1000),
+                emoji = emoji,
+                startXFraction = 0.15f + (Random.nextFloat() * 0.7f),
+                swayAmount = (Random.nextFloat() - 0.5f) * 110f,
+                targetHeight = 440f + (Random.nextFloat() * 300f),
+                baseScale = 0.95f + (Random.nextFloat() * 0.65f),
+                animatable = Animatable(0f)
+            )
+        }
+        floatingReactions = floatingReactions + newParticles
+        newParticles.forEachIndexed { i, particle ->
+            scope.launch {
+                delay(i * 35L)
+                particle.animatable.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        durationMillis = 1350 + Random.nextInt(300),
+                        easing = FastOutSlowInEasing
+                    )
+                )
+                floatingReactions = floatingReactions.filter { it.id != particle.id }
+            }
+        }
+    }
 
     val storyDurationMs = 5000L
     val timerStepMs = 50L
@@ -464,6 +517,44 @@ fun StoryViewerDialog(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                     )
+                }
+            }
+
+            // Floating Quick Reaction Animations
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("story_floating_reactions_overlay")
+            ) {
+                val screenWidth = maxWidth
+                floatingReactions.forEach { particle ->
+                    val progress = particle.animatable.value
+                    if (progress > 0f) {
+                        val yOffset = -1f * (progress * particle.targetHeight)
+                        val sway = sin(progress * Math.PI.toFloat() * 2f) * particle.swayAmount
+                        val alpha = if (progress < 0.65f) 1f else (1f - ((progress - 0.65f) / 0.35f)).coerceIn(0f, 1f)
+                        val scale = if (progress < 0.2f) {
+                            (progress / 0.2f) * particle.baseScale
+                        } else {
+                            particle.baseScale * (1f + 0.12f * (1f - progress))
+                        }
+
+                        Text(
+                            text = particle.emoji,
+                            fontSize = 34.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .offset(
+                                    x = (screenWidth * particle.startXFraction) + sway.dp,
+                                    y = (-110).dp + yOffset.dp
+                                )
+                                .graphicsLayer {
+                                    this.scaleX = scale
+                                    this.scaleY = scale
+                                    this.alpha = alpha
+                                }
+                        )
+                    }
                 }
             }
 
@@ -631,53 +722,85 @@ fun StoryViewerDialog(
                         }
                     }
                 } else {
-                    // Send message reply bar directly to DM
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(bottom = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedTextField(
-                            value = replyDraft,
-                            onValueChange = { replyDraft = it },
-                            placeholder = { Text("Send message...", color = Color.White.copy(alpha = 0.7f)) },
-                            singleLine = true,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color.White,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.5f),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                cursorColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(24.dp),
+                        // Quick Reaction Emojis Row
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .testTag("story_reply_input")
-                        )
-                        IconButton(
-                            onClick = {
-                                val text = replyDraft.trim()
-                                if (text.isNotBlank()) {
-                                    isSendingReply = true
-                                    onReplyToStory?.invoke(story.userId, text)
-                                    replyDraft = ""
-                                    isSendingReply = false
-                                }
-                            },
-                            enabled = replyDraft.isNotBlank() && !isSendingReply,
-                            modifier = Modifier.testTag("story_reply_send_button")
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (isSendingReply) {
-                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Send Reply",
-                                    tint = if (replyDraft.isNotBlank()) Color(0xFF0095F6) else Color.White.copy(alpha = 0.4f),
-                                    modifier = Modifier.size(22.dp)
-                                )
+                            quickReactionEmojis.forEach { emoji ->
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.Black.copy(alpha = 0.52f),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clickable { triggerQuickReaction(emoji) }
+                                        .testTag("story_quick_reaction_$emoji")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(text = emoji, fontSize = 21.sp)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Send message reply bar directly to DM
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = replyDraft,
+                                onValueChange = { replyDraft = it },
+                                placeholder = { Text("Send message...", color = Color.White.copy(alpha = 0.7f)) },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color.White,
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.5f),
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    cursorColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("story_reply_input")
+                            )
+                            IconButton(
+                                onClick = {
+                                    val text = replyDraft.trim()
+                                    if (text.isNotBlank()) {
+                                        isSendingReply = true
+                                        onReplyToStory?.invoke(story.userId, text)
+                                        replyDraft = ""
+                                        isSendingReply = false
+                                    }
+                                },
+                                enabled = replyDraft.isNotBlank() && !isSendingReply,
+                                modifier = Modifier.testTag("story_reply_send_button")
+                            ) {
+                                if (isSendingReply) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = "Send Reply",
+                                        tint = if (replyDraft.isNotBlank()) Color(0xFF0095F6) else Color.White.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
                         }
                     }

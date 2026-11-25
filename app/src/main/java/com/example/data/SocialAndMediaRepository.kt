@@ -169,6 +169,119 @@ class SocialAndMediaRepository(
         }.getOrNull()
     }
 
+    private fun DocumentSnapshot.toFeedPostSafe(): FeedPost? {
+        return runCatching {
+            val direct = toObject(FeedPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            if (direct != null) {
+                val resolvedId = if (direct.id.isNotBlank()) direct.id else id
+                val resolvedUserId = if (direct.userId.isNotBlank()) direct.userId else (data?.get("authorId") as? String).orEmpty()
+                direct.copy(id = resolvedId, userId = resolvedUserId)
+            } else null
+        }.recoverCatching {
+            val d = data ?: return null
+            val resolvedId = id
+            val userId = (d["userId"] as? String) ?: (d["authorId"] as? String) ?: ""
+            val authorName = (d["authorName"] as? String) ?: "Kindred Member"
+            val authorPhoto = d["authorPhoto"] as? String
+            val authorCountry = d["authorCountry"] as? String
+            val authorCity = d["authorCity"] as? String
+            val authorVerified = d["authorVerified"] as? Boolean ?: false
+            val caption = (d["caption"] as? String) ?: ""
+            val mediaType = (d["mediaType"] as? String) ?: "NONE"
+            val mediaDataUrl = d["mediaDataUrl"] as? String
+            val mediaUrl = d["mediaUrl"] as? String
+            val rawMediaUrls = d["mediaUrls"] as? List<*>
+            val mediaUrls = rawMediaUrls?.mapNotNull { it as? String } ?: emptyList()
+            val thumbnailDataUrl = d["thumbnailDataUrl"] as? String
+            val mediaMimeType = d["mediaMimeType"] as? String
+            val mediaDurationSec = (d["mediaDurationSec"] as? Number)?.toLong() ?: 0L
+            val mediaByteSize = (d["mediaByteSize"] as? Number)?.toLong() ?: 0L
+            val chunkCount = (d["chunkCount"] as? Number)?.toLong() ?: 0L
+            val rawLiked = d["likedByUids"] as? List<*>
+            val likedByUids = rawLiked?.mapNotNull { it as? String } ?: emptyList()
+            val rawSaved = d["savedByUids"] as? List<*>
+            val savedByUids = rawSaved?.mapNotNull { it as? String } ?: emptyList()
+            val commentCount = (d["commentCount"] as? Number)?.toLong()
+                ?: (d["commentsCount"] as? Number)?.toLong() ?: 0L
+            val createdAt = d["createdAt"] as? Timestamp
+            FeedPost(
+                id = resolvedId,
+                postId = resolvedId,
+                userId = userId,
+                authorId = userId,
+                authorName = authorName,
+                authorPhoto = authorPhoto,
+                authorCountry = authorCountry,
+                authorCity = authorCity,
+                authorVerified = authorVerified,
+                caption = caption,
+                mediaType = mediaType,
+                mediaDataUrl = mediaDataUrl,
+                mediaUrl = mediaUrl,
+                mediaUrls = mediaUrls,
+                thumbnailDataUrl = thumbnailDataUrl,
+                mediaMimeType = mediaMimeType,
+                mediaDurationSec = mediaDurationSec,
+                mediaByteSize = mediaByteSize,
+                chunkCount = chunkCount,
+                likedByUids = likedByUids,
+                savedByUids = savedByUids,
+                commentCount = commentCount,
+                createdAt = createdAt
+            )
+        }.onFailure { err ->
+            Log.e("KindredFeedPosts", "Skipping malformed feed post document $id", err)
+        }.getOrNull()
+    }
+
+    private fun DocumentSnapshot.toVideoPostSafe(): VideoPost? {
+        return runCatching {
+            val direct = toObject(VideoPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            if (direct != null) {
+                val resolvedId = if (direct.id.isNotBlank()) direct.id else id
+                val resolvedUserId = if (direct.userId.isNotBlank()) direct.userId else (data?.get("authorId") as? String).orEmpty()
+                direct.copy(id = resolvedId, userId = resolvedUserId)
+            } else null
+        }.recoverCatching {
+            val d = data ?: return null
+            val resolvedId = id
+            val userId = (d["userId"] as? String) ?: (d["authorId"] as? String) ?: ""
+            val authorName = (d["authorName"] as? String) ?: "Kindred Member"
+            val authorPhoto = d["authorPhoto"] as? String
+            val authorCountry = d["authorCountry"] as? String
+            val authorVerified = d["authorVerified"] as? Boolean ?: false
+            val caption = (d["caption"] as? String) ?: ""
+            val mediaDataUrl = d["mediaDataUrl"] as? String
+            val thumbnailDataUrl = d["thumbnailDataUrl"] as? String
+            val mediaMimeType = d["mediaMimeType"] as? String
+            val mediaDurationSec = (d["mediaDurationSec"] as? Number)?.toLong() ?: 0L
+            val mediaByteSize = (d["mediaByteSize"] as? Number)?.toLong() ?: 0L
+            val chunkCount = (d["chunkCount"] as? Number)?.toLong() ?: 0L
+            val rawLiked = d["likedByUids"] as? List<*>
+            val likedByUids = rawLiked?.mapNotNull { it as? String } ?: emptyList()
+            val createdAt = d["createdAt"] as? Timestamp
+            VideoPost(
+                id = resolvedId,
+                userId = userId,
+                authorName = authorName,
+                authorPhoto = authorPhoto,
+                authorCountry = authorCountry,
+                authorVerified = authorVerified,
+                caption = caption,
+                mediaDataUrl = mediaDataUrl,
+                thumbnailDataUrl = thumbnailDataUrl,
+                mediaMimeType = mediaMimeType,
+                mediaDurationSec = mediaDurationSec,
+                mediaByteSize = mediaByteSize,
+                chunkCount = chunkCount,
+                likedByUids = likedByUids,
+                createdAt = createdAt
+            )
+        }.onFailure { err ->
+            Log.e("KindredVideoPosts", "Skipping malformed video post document $id", err)
+        }.getOrNull()
+    }
+
     private suspend fun resolveThumbnailForFirestoreOrCloud(
         rawThumbnail: String?,
         remotePath: String
@@ -1117,7 +1230,7 @@ class SocialAndMediaRepository(
                 db.collection("videoPosts")
                     .snapshots()
                     .map { snap ->
-                        snap.toObjects(VideoPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        snap.documents.mapNotNull { it.toVideoPostSafe() }
                             .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "videoPosts", viewerUid) }
@@ -1134,7 +1247,7 @@ class SocialAndMediaRepository(
             } catch (_: Exception) {
                 db.collection("videoPosts").get(Source.DEFAULT).await()
             }
-            val list = snap.toObjects(VideoPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            val list = snap.documents.mapNotNull { it.toVideoPostSafe() }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedVideoFeedFlow.tryEmit(list)
             Result.success(list)
@@ -1251,7 +1364,7 @@ class SocialAndMediaRepository(
                 db.collection("feedPosts")
                     .snapshots()
                     .map { snap ->
-                        snap.toObjects(FeedPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        snap.documents.mapNotNull { it.toFeedPostSafe() }
                             .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "feedPosts", viewerUid) }
@@ -1268,7 +1381,7 @@ class SocialAndMediaRepository(
             } catch (_: Exception) {
                 db.collection("feedPosts").get(Source.DEFAULT).await()
             }
-            val list = snap.toObjects(FeedPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            val list = snap.documents.mapNotNull { it.toFeedPostSafe() }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedFeedPostsFlow.tryEmit(list)
             Result.success(list)

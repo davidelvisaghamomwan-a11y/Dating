@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -164,7 +165,11 @@ class KindredViewModel(
     private val matchesFlow = repository.observeMyMatches(currentUserId)
     private val verificationsFlow = repository.observeVerifications(currentUserId)
     private val usersIBlockedFlow = repository.observeUsersIBlocked(currentUserId)
+        .catch { emit(emptyList()) }
+        .onStart { emit(emptyList()) }
     private val usersWhoBlockedMeFlow = repository.observeUsersWhoBlockedMe(currentUserId)
+        .catch { emit(emptyList()) }
+        .onStart { emit(emptyList()) }
 
     private val _latestLocation = MutableStateFlow<ResolvedDeviceLocation?>(null)
     val latestLocation: StateFlow<ResolvedDeviceLocation?> = _latestLocation.asStateFlow()
