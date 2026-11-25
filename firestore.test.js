@@ -926,17 +926,19 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
     bobDb.collection("users").doc(ALICE_UID).collection("favorites").doc(BOB_UID).get()
   );
 
-  // Stories & Video Feed Posts
+  // Stories & Video Feed Posts (mirror Kotlin SocialAndMediaRepository.postPhotoStory with expiresAt)
   await assertSucceeds(
     aliceDb.collection("stories").doc("story_1").set({
       userId: ALICE_UID,
       authorName: "Alice",
+      authorVerified: true,
       mediaType: "PHOTO",
       mediaDataUrl: "data:image/jpeg;base64,STORY",
       caption: "Coffee stop",
       mediaDurationSec: 0,
       chunkCount: 0,
       viewerUids: [ALICE_UID],
+      expiresAt: new Date(Date.now() + 86400000),
       expiresAtMs: Date.now() + 86400000,
       createdAt: pastDate(300),
     })
@@ -945,6 +947,33 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
     bobDb.collection("stories").doc("story_1").update({
       viewerUids: [ALICE_UID, BOB_UID],
     })
+  );
+  await assertSucceeds(
+    aliceDb.collection("highlights").doc("hl_1").set({
+      userId: ALICE_UID,
+      title: "Travel",
+      coverUrl: "data:image/jpeg;base64,COVER",
+      storyItems: [
+        {
+          id: "story_1",
+          userId: ALICE_UID,
+          authorName: "Alice",
+          mediaType: "PHOTO",
+          mediaDataUrl: "data:image/jpeg;base64,STORY",
+          thumbnailDataUrl: "",
+          caption: "Coffee stop",
+          mediaDurationSec: 0,
+          expiresAtMs: Date.now() + 86400000,
+        },
+      ],
+      createdAt: pastDate(250),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("highlights").where("userId", "==", ALICE_UID).get()
+  );
+  await assertFails(
+    bobDb.collection("highlights").doc("hl_1").delete()
   );
   await assertSucceeds(
     aliceDb.collection("videoPosts").doc("post_1").set({
@@ -962,6 +991,48 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
     bobDb.collection("videoPosts").doc("post_1").update({
       likedByUids: [BOB_UID],
     })
+  );
+
+  // FeedPosts & comments (mirror SocialAndMediaRepository.publishFeedPost & addFeedPostComment)
+  await assertSucceeds(
+    aliceDb.collection("feedPosts").doc("feed_1").set({
+      userId: ALICE_UID,
+      authorName: "Alice",
+      authorVerified: true,
+      mediaType: "PHOTO",
+      caption: "Golden hour walk",
+      mediaDataUrl: "data:image/jpeg;base64,PHOTO",
+      mediaUrls: [],
+      chunkCount: 0,
+      likedByUids: [],
+      savedByUids: [],
+      commentCount: 0,
+      createdAt: pastDate(150),
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("feedPosts").doc("feed_1").collection("comments").doc("c_1").set({
+      postId: "feed_1",
+      userId: BOB_UID,
+      authorName: "Bob",
+      authorVerified: false,
+      text: "Great shot!",
+      likedByUids: [],
+      createdAt: pastDate(100),
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("feedPosts").doc("feed_1").collection("comments").doc("c_1").update({
+      likedByUids: [ALICE_UID],
+    })
+  );
+  await assertSucceeds(
+    bobDb.collection("feedPosts").doc("feed_1").update({
+      commentCount: 1,
+    })
+  );
+  await assertFails(
+    bobDb.collection("feedPosts").doc("feed_1").delete()
   );
 });
 

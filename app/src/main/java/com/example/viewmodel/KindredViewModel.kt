@@ -56,6 +56,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,6 +77,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed interface KindredPushAlert {
     data class NewMessage(val matchId: String, val senderName: String, val messageText: String) : KindredPushAlert
@@ -782,6 +785,7 @@ class KindredViewModel(
 
     private val _isFeedRefreshing = MutableStateFlow(false)
     val isFeedRefreshing: StateFlow<Boolean> = _isFeedRefreshing.asStateFlow()
+    private val isAutoFeedRefreshing = AtomicBoolean(false)
 
     fun refreshFeed() {
         if (_isFeedRefreshing.value) return
@@ -801,6 +805,30 @@ class KindredViewModel(
             } finally {
                 delay(250L)
                 _isFeedRefreshing.value = false
+            }
+        }
+    }
+
+    fun autoRefreshFeed() {
+        if (currentUserId.isBlank()) return
+        if (!isAutoFeedRefreshing.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                withTimeoutOrNull(8_000L) {
+                    val uid = currentUserId
+                    val postsJob = async { socialRepo.fetchLatestFeedPosts(uid) }
+                    val storiesJob = async { socialRepo.fetchLatestActiveStories(uid) }
+                    val videosJob = async { socialRepo.fetchLatestVideoFeed(uid) }
+                    postsJob.await()
+                    storiesJob.await()
+                    videosJob.await()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Silent background auto-refresh: never disturb the user on transient offline checks
+            } finally {
+                isAutoFeedRefreshing.set(false)
             }
         }
     }
@@ -1186,10 +1214,12 @@ class KindredViewModel(
 
     suspend fun unregisterFcmTokenOnSignOut() {
         try {
-            @Suppress("DEPRECATION")
-            val token = FirebaseMessaging.getInstance().token.await()
-            if (!token.isNullOrBlank()) {
-                repository.deleteFcmToken(token)
+            withTimeoutOrNull(800L) {
+                @Suppress("DEPRECATION")
+                val token = FirebaseMessaging.getInstance().token.await()
+                if (!token.isNullOrBlank()) {
+                    repository.deleteFcmToken(token)
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -1209,7 +1239,9 @@ class KindredViewModel(
 
     suspend fun updatePresenceNow(online: Boolean) {
         val hidden = isHideOnlinePreferred()
-        repository.updatePresence(online = online && !hidden, hideOnlineStatus = hidden)
+        withTimeoutOrNull(900L) {
+            repository.updatePresence(online = online && !hidden, hideOnlineStatus = hidden)
+        }
     }
 
     fun setPresenceOnline(online: Boolean) {
@@ -1934,14 +1966,26 @@ class KindredViewModel(
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
-            val res = socialRepo.postPhotoStory(snap?.myProfile, defaultDisplayName, photoDataUrl, caption)
-            _isBusy.value = false
-            res.onSuccess {
-                _actionStatusMessage.value = "Story shared for 24 hours!"
-                onComplete(true)
-            }.onFailure {
-                _actionStatusMessage.value = it.localizedMessage ?: "Could not share story"
+            try {
+                withTimeout(45_000L) {
+                    val res = socialRepo.postPhotoStory(snap?.myProfile, defaultDisplayName, photoDataUrl, caption)
+                    res.onSuccess {
+                        _actionStatusMessage.value = "Story shared for 24 hours!"
+                        autoRefreshFeed()
+                        onComplete(true)
+                    }.onFailure { err ->
+                        Log.e("KindredUpload", "postPhotoStory failed", err)
+                        _actionStatusMessage.value = err.localizedMessage ?: "Could not share story"
+                        onComplete(false)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("KindredUpload", "postPhotoStory error/timeout", e)
+                _actionStatusMessage.value = e.localizedMessage ?: "Story upload failed or timed out"
                 onComplete(false)
+            } finally {
+                _isBusy.value = false
             }
         }
     }
@@ -1954,14 +1998,26 @@ class KindredViewModel(
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
-            val res = socialRepo.postVideoStory(snap?.myProfile, defaultDisplayName, prepared, caption)
-            _isBusy.value = false
-            res.onSuccess {
-                _actionStatusMessage.value = "Video story shared for 24 hours!"
-                onComplete(true)
-            }.onFailure {
-                _actionStatusMessage.value = it.localizedMessage ?: "Could not share story"
+            try {
+                withTimeout(45_000L) {
+                    val res = socialRepo.postVideoStory(snap?.myProfile, defaultDisplayName, prepared, caption)
+                    res.onSuccess {
+                        _actionStatusMessage.value = "Video story shared for 24 hours!"
+                        autoRefreshFeed()
+                        onComplete(true)
+                    }.onFailure { err ->
+                        Log.e("KindredUpload", "postVideoStory failed", err)
+                        _actionStatusMessage.value = err.localizedMessage ?: "Could not share story"
+                        onComplete(false)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("KindredUpload", "postVideoStory error/timeout", e)
+                _actionStatusMessage.value = e.localizedMessage ?: "Video story upload failed or timed out"
                 onComplete(false)
+            } finally {
+                _isBusy.value = false
             }
         }
     }
@@ -2023,13 +2079,26 @@ class KindredViewModel(
         onDone: (Boolean) -> Unit = {}
     ) {
         viewModelScope.launch {
-            val res = socialRepo.createHighlight(title, coverUrl, items)
-            res.onSuccess {
-                _actionStatusMessage.value = "Highlight created"
-                onDone(true)
-            }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Could not create highlight"
+            _isBusy.value = true
+            try {
+                withTimeout(30_000L) {
+                    val res = socialRepo.createHighlight(title, coverUrl, items)
+                    res.onSuccess {
+                        _actionStatusMessage.value = "Highlight created"
+                        onDone(true)
+                    }.onFailure { err ->
+                        Log.e(TAG, "createStoryHighlight failed", err)
+                        _actionStatusMessage.value = err.localizedMessage ?: "Could not create highlight"
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e(TAG, "createStoryHighlight error/timeout", e)
+                _actionStatusMessage.value = e.localizedMessage ?: "Highlight upload failed or timed out"
                 onDone(false)
+            } finally {
+                _isBusy.value = false
             }
         }
     }
@@ -2053,14 +2122,25 @@ class KindredViewModel(
         viewModelScope.launch {
             _isBusy.value = true
             _isVideoUploading.value = true
-            val res = socialRepo.publishVideoPost(snap?.myProfile, defaultDisplayName, caption, prepared)
-            _isVideoUploading.value = false
-            _isBusy.value = false
-            res.onSuccess {
-                _actionStatusMessage.value = "Video posted to Kindred Reels!"
-                onComplete()
-            }.onFailure {
-                _actionStatusMessage.value = it.localizedMessage ?: "Could not publish video"
+            try {
+                withTimeout(45_000L) {
+                    val res = socialRepo.publishVideoPost(snap?.myProfile, defaultDisplayName, caption, prepared)
+                    res.onSuccess {
+                        _actionStatusMessage.value = "Video posted to Kindred Reels!"
+                        autoRefreshFeed()
+                        onComplete()
+                    }.onFailure { err ->
+                        Log.e("KindredUpload", "publishVideoPost failed", err)
+                        _actionStatusMessage.value = err.localizedMessage ?: "Could not publish video"
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("KindredUpload", "publishVideoPost error/timeout", e)
+                _actionStatusMessage.value = e.localizedMessage ?: "Video upload failed or timed out"
+            } finally {
+                _isVideoUploading.value = false
+                _isBusy.value = false
             }
         }
     }
@@ -2128,21 +2208,32 @@ class KindredViewModel(
         viewModelScope.launch {
             _isBusy.value = true
             if (preparedVideo != null) _isVideoUploading.value = true
-            val res = socialRepo.publishFeedPost(
-                authorProfile = snap?.myProfile,
-                fallbackName = defaultDisplayName,
-                caption = caption,
-                photoDataUrl = photoDataUrl,
-                photoUrls = photoUrls,
-                preparedVideo = preparedVideo
-            )
-            _isVideoUploading.value = false
-            _isBusy.value = false
-            res.onSuccess {
-                _actionStatusMessage.value = "Shared to your timeline!"
-                onComplete()
-            }.onFailure {
-                _actionStatusMessage.value = it.localizedMessage ?: "Could not publish post"
+            try {
+                withTimeout(45_000L) {
+                    val res = socialRepo.publishFeedPost(
+                        authorProfile = snap?.myProfile,
+                        fallbackName = defaultDisplayName,
+                        caption = caption,
+                        photoDataUrl = photoDataUrl,
+                        photoUrls = photoUrls,
+                        preparedVideo = preparedVideo
+                    )
+                    res.onSuccess {
+                        _actionStatusMessage.value = "Shared to your timeline!"
+                        autoRefreshFeed()
+                        onComplete()
+                    }.onFailure { err ->
+                        Log.e("KindredUpload", "publishFeedPost failed", err)
+                        _actionStatusMessage.value = err.localizedMessage ?: "Could not publish post"
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("KindredUpload", "publishFeedPost error/timeout", e)
+                _actionStatusMessage.value = e.localizedMessage ?: "Post upload failed or timed out"
+            } finally {
+                _isVideoUploading.value = false
+                _isBusy.value = false
             }
         }
     }

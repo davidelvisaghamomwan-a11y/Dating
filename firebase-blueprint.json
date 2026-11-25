@@ -422,9 +422,66 @@
         "chunkCount": { "type": "integer" },
         "viewerUids": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
         "expiresAtMs": { "type": "integer" }
       },
       "required": ["userId", "authorName", "mediaType", "expiresAtMs", "createdAt"]
+    },
+    "StoryHighlight": {
+      "title": "StoryHighlight",
+      "description": "Curated permanent profile highlight containing archived story snapshots.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "storyItems": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "createdAt"]
+    },
+    "FeedPost": {
+      "title": "FeedPost",
+      "description": "Social timeline post with optional photos or video.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhoto": { "type": "string" },
+        "authorCountry": { "type": "string" },
+        "authorCity": { "type": "string" },
+        "authorVerified": { "type": "boolean" },
+        "caption": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["NONE", "TEXT", "PHOTO", "VIDEO"] },
+        "mediaDataUrl": { "type": "string" },
+        "mediaUrls": { "type": "array" },
+        "thumbnailDataUrl": { "type": "string" },
+        "mediaMimeType": { "type": "string" },
+        "mediaDurationSec": { "type": "integer" },
+        "mediaByteSize": { "type": "integer" },
+        "chunkCount": { "type": "integer" },
+        "likedByUids": { "type": "array" },
+        "savedByUids": { "type": "array" },
+        "commentCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "authorName", "caption", "mediaType", "createdAt"]
+    },
+    "FeedComment": {
+      "title": "FeedComment",
+      "description": "Comment on a timeline post or video post.",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "userId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhoto": { "type": "string" },
+        "authorVerified": { "type": "boolean" },
+        "text": { "type": "string" },
+        "likedByUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "userId", "authorName", "text", "createdAt"]
     },
     "VideoPost": {
       "title": "VideoPost",
@@ -474,7 +531,11 @@
     "/profileLikes/{likeId}": { "schema": { "$ref": "#/entities/ProfileLikeRecord" } },
     "/stories/{storyId}": { "schema": { "$ref": "#/entities/StoryItem" } },
     "/stories/{storyId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
+    "/highlights/{highlightId}": { "schema": { "$ref": "#/entities/StoryHighlight" } },
     "/videoPosts/{postId}": { "schema": { "$ref": "#/entities/VideoPost" } },
-    "/videoPosts/{postId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } }
+    "/videoPosts/{postId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
+    "/feedPosts/{postId}": { "schema": { "$ref": "#/entities/FeedPost" } },
+    "/feedPosts/{postId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
+    "/feedPosts/{postId}/comments/{commentId}": { "schema": { "$ref": "#/entities/FeedComment" } }
   }
 }

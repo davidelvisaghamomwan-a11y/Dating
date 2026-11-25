@@ -310,8 +310,12 @@ fun StoryViewerDialog(
     onReplyToStory: ((authorUid: String, replyText: String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
+    LaunchedEffect(stories.isEmpty()) {
+        if (stories.isEmpty()) {
+            onDismiss()
+        }
+    }
     if (stories.isEmpty()) {
-        onDismiss()
         return
     }
     var activeIndex by remember(stories.size, initialIndex) {

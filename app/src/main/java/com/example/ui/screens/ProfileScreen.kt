@@ -177,7 +177,7 @@ fun ProfileScreen(
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
     resolveProfileVideoFile: suspend (ProfileVideoItem) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
     onDeleteVideo: (String) -> Unit = {},
-    onCreateHighlight: (title: String, coverUrl: String, items: List<StoryItem>) -> Unit = { _, _, _ -> },
+    onCreateHighlight: (title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean) -> Unit) -> Unit = { _, _, _, cb -> cb(true) },
     onDeleteHighlight: (String) -> Unit = {},
     onBeforeSignOut: suspend () -> Unit = {},
     onStatusMessage: (String) -> Unit = {}
@@ -933,9 +933,9 @@ fun ProfileScreen(
         )
     }
 
-    if (activeHighlightViewer != null) {
+    activeHighlightViewer?.let { highlight ->
         HighlightViewerDialog(
-            highlight = activeHighlightViewer!!,
+            highlight = highlight,
             isOwner = true,
             onDismiss = { activeHighlightViewer = null },
             onDeleteHighlight = onDeleteHighlight

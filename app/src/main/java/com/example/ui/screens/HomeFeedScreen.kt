@@ -44,6 +44,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
@@ -86,6 +87,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -113,6 +115,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import coil.compose.AsyncImage
 import com.example.model.DiscoveryCandidate
 import com.example.model.FeedComment
@@ -217,6 +223,7 @@ fun HomeFeedScreen(
     onOpenReelInVideoFeed: (reelId: String) -> Unit = { onOpenVideoFeed() },
     isFeedRefreshing: Boolean = false,
     onRefreshFeed: () -> Unit = {},
+    onAutoRefreshFeed: () -> Unit = onRefreshFeed,
     unreadMessageCount: Int = 0,
     incomingNotificationCount: Int = 0,
     profilesByUid: Map<String, PublicProfile> = emptyMap(),
@@ -224,6 +231,7 @@ fun HomeFeedScreen(
     onNavigateToInbox: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
     var filterMode by remember { mutableStateOf(FeedFilterMode.FOR_YOU) }
@@ -321,6 +329,44 @@ fun HomeFeedScreen(
 
     val pullRefreshState = rememberPullToRefreshState()
     val feedListState = rememberLazyListState()
+
+    var lastSeenTopKey by remember { mutableStateOf<String?>(null) }
+    var hasNewPostsBanner by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        onAutoRefreshFeed()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                onAutoRefreshFeed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(20_000L)
+                onAutoRefreshFeed()
+            }
+        }
+    }
+
+    val currentTopKey = displayedTimelineItems.firstOrNull()?.key
+    LaunchedEffect(currentTopKey, feedListState.firstVisibleItemIndex) {
+        if (currentTopKey == null) return@LaunchedEffect
+        if (lastSeenTopKey == null || feedListState.firstVisibleItemIndex <= 1) {
+            lastSeenTopKey = currentTopKey
+            hasNewPostsBanner = false
+        } else if (currentTopKey != lastSeenTopKey) {
+            hasNewPostsBanner = true
+        }
+    }
+
     val autoPlayVideoKey by remember(displayedTimelineItems) {
         derivedStateOf {
             val videoKeys = displayedTimelineItems.asSequence()
@@ -714,6 +760,48 @@ fun HomeFeedScreen(
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hasNewPostsBanner,
+                    enter = fadeIn() + scaleIn(initialScale = 0.9f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.9f),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            hasNewPostsBanner = false
+                            lastSeenTopKey = currentTopKey
+                            scope.launch {
+                                feedListState.animateScrollToItem(0)
+                            }
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(0xFF0095F6),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.testTag("feed_new_posts_pill")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.ArrowUpward,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "New posts",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }

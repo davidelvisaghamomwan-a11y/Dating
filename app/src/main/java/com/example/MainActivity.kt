@@ -961,6 +961,9 @@ private fun MainKindredApp(
                                         onRefreshFeed = {
                                             viewModel.refreshFeed()
                                         },
+                                        onAutoRefreshFeed = {
+                                            viewModel.autoRefreshFeed()
+                                        },
                                         unreadMessageCount = unreadInboxCount,
                                         incomingNotificationCount = activityBadgeCount,
                                         profilesByUid = profilesByUid,
@@ -1326,8 +1329,8 @@ private fun MainKindredApp(
                                         onDeleteVideo = { videoId ->
                                             viewModel.deleteProfileVideo(viewModel.currentUserId, videoId)
                                         },
-                                        onCreateHighlight = { title, coverUrl, items ->
-                                            viewModel.createStoryHighlight(title, coverUrl, items)
+                                        onCreateHighlight = { title, coverUrl, items, onDone ->
+                                            viewModel.createStoryHighlight(title, coverUrl, items, onDone)
                                         },
                                         onDeleteHighlight = { highlightId ->
                                             viewModel.deleteStoryHighlight(highlightId)

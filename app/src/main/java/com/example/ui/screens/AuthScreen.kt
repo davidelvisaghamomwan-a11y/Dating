@@ -110,13 +110,15 @@ fun AuthScreen(
 
     if (enableAutoSignIn) {
         LaunchedEffect(Unit) {
-            GoogleAuthHelper.attemptAutoSignIn(
-                context = context,
-                credentialManager = credentialManager,
-                onAuthSuccess = onAuthSuccess,
-                onUnauthenticated = {},
-                scope = scope
-            )
+            if (!GoogleAuthHelper.isAutoSignInSuppressed()) {
+                GoogleAuthHelper.attemptAutoSignIn(
+                    context = context,
+                    credentialManager = credentialManager,
+                    onAuthSuccess = onAuthSuccess,
+                    onUnauthenticated = {},
+                    scope = scope
+                )
+            }
         }
     }
 

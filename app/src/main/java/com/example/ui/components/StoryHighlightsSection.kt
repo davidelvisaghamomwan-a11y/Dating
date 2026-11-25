@@ -24,8 +24,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -56,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -78,7 +80,9 @@ import com.example.model.StoryItem
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.util.VerificationAnalyzer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @Composable
 fun StoryHighlightsSection(
@@ -143,7 +147,7 @@ fun StoryHighlightsSection(
                     .testTag("highlights_tray_row")
             ) {
                 if (!compactInstagramStyle && isOwner) {
-                    item(key = "new_highlight_button") {
+                    item(key = "new_highlight_button_leading") {
                         HighlightNewBubble(
                             compactInstagramStyle = false,
                             onClick = onOpenCreateHighlight
@@ -151,7 +155,10 @@ fun StoryHighlightsSection(
                     }
                 }
 
-                items(highlights, key = { it.id }) { highlight ->
+                itemsIndexed(
+                    items = highlights,
+                    key = { index, item -> "hl_${index}_${item.id}" }
+                ) { _, highlight ->
                     val ringBrush = Brush.linearGradient(
                         colors = if (compactInstagramStyle) {
                             listOf(
@@ -187,19 +194,29 @@ fun StoryHighlightsSection(
                                 .background(MaterialTheme.colorScheme.surfaceContainer),
                             contentAlignment = Alignment.Center
                         ) {
-                            val coverBitmap = remember(highlight.coverUrl) {
-                                if (highlight.coverUrl.startsWith("data:image")) {
-                                    VerificationAnalyzer.decodeBase64DataUrl(highlight.coverUrl)
-                                } else null
+                            val coverBitmap by produceState<ImageBitmap?>(
+                                initialValue = null,
+                                key1 = highlight.coverUrl
+                            ) {
+                                value = if (highlight.coverUrl.startsWith("data:image", ignoreCase = true)) {
+                                    withContext(Dispatchers.Default) {
+                                        VerificationAnalyzer.decodeBase64DataUrl(highlight.coverUrl)
+                                    }
+                                } else {
+                                    null
+                                }
                             }
+                            val isRemoteHttpCover = highlight.coverUrl.startsWith("http://", ignoreCase = true) ||
+                                highlight.coverUrl.startsWith("https://", ignoreCase = true)
+
                             if (coverBitmap != null) {
                                 Image(
-                                    bitmap = coverBitmap,
+                                    bitmap = coverBitmap!!,
                                     contentDescription = highlight.title,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
-                            } else if (highlight.coverUrl.isNotBlank()) {
+                            } else if (isRemoteHttpCover) {
                                 AsyncImage(
                                     model = highlight.coverUrl,
                                     contentDescription = highlight.title,
@@ -230,7 +247,7 @@ fun StoryHighlightsSection(
                 }
 
                 if (compactInstagramStyle && isOwner) {
-                    item(key = "new_highlight_button") {
+                    item(key = "new_highlight_button_trailing") {
                         HighlightNewBubble(
                             compactInstagramStyle = true,
                             onClick = onOpenCreateHighlight
@@ -319,15 +336,16 @@ private fun HighlightNewBubble(
 fun CreateHighlightDialog(
     archivedStories: List<StoryItem>,
     onDismiss: () -> Unit,
-    onSaveHighlight: (title: String, coverUrl: String, items: List<StoryItem>) -> Unit
+    onSaveHighlight: (title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean) -> Unit) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
-    val selectedStoryIds = remember { mutableStateListOf<String>() }
+    val selectedKeys = remember { mutableStateListOf<String>() }
     var selectedCoverUrl by remember { mutableStateOf("") }
+    var isSaving by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isSaving) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -349,7 +367,10 @@ fun CreateHighlightDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onDismiss) {
+                    IconButton(
+                        onClick = { if (!isSaving) onDismiss() },
+                        enabled = !isSaving
+                    ) {
                         Icon(Icons.Filled.Close, contentDescription = "Close")
                     }
                     Text(
@@ -359,27 +380,45 @@ fun CreateHighlightDialog(
                     )
                     Button(
                         onClick = {
-                            val pickedStories = archivedStories.filter { it.id in selectedStoryIds }
+                            if (isSaving) return@Button
+                            val pickedStories = archivedStories.filterIndexed { idx, s ->
+                                val itemKey = s.id.ifBlank { "arch_idx_$idx" }
+                                itemKey in selectedKeys
+                            }
                             if (pickedStories.isEmpty()) {
                                 errorMsg = "Select at least 1 story for this highlight"
                                 return@Button
                             }
                             val finalTitle = title.trim().ifBlank { "Highlights" }
-                            val finalCover = if (selectedCoverUrl.isNotBlank()) {
-                                selectedCoverUrl
-                            } else {
+                            val rawCover = selectedCoverUrl.ifBlank {
                                 pickedStories.firstOrNull()?.let {
                                     it.thumbnailDataUrl ?: it.mediaDataUrl
                                 }.orEmpty()
                             }
-                            onSaveHighlight(finalTitle, finalCover, pickedStories)
-                            onDismiss()
+                            errorMsg = null
+                            isSaving = true
+                            onSaveHighlight(finalTitle, rawCover, pickedStories) { success ->
+                                isSaving = false
+                                if (success) {
+                                    onDismiss()
+                                } else {
+                                    errorMsg = "Could not save highlight. Try selecting fewer stories."
+                                }
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
-                        enabled = selectedStoryIds.isNotEmpty(),
+                        enabled = !isSaving && selectedKeys.isNotEmpty(),
                         modifier = Modifier.testTag("save_highlight_btn")
                     ) {
-                        Text("Save")
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Save")
+                        }
                     }
                 }
 
@@ -390,6 +429,7 @@ fun CreateHighlightDialog(
                     label = { Text("Highlight Name") },
                     placeholder = { Text("e.g. Trips, Summer, Memories") },
                     singleLine = true,
+                    enabled = !isSaving,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("highlight_title_input")
@@ -404,7 +444,7 @@ fun CreateHighlightDialog(
                 }
 
                 Text(
-                    text = "Select Stories from Archive (${selectedStoryIds.size} selected)",
+                    text = "Select Stories from Archive (${selectedKeys.size} selected)",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -439,14 +479,30 @@ fun CreateHighlightDialog(
                             .weight(1f)
                             .testTag("archive_stories_grid")
                     ) {
-                        items(archivedStories, key = { it.id }) { story ->
-                            val isSelected = story.id in selectedStoryIds
-                            val mediaPreview = remember(story.thumbnailDataUrl, story.mediaDataUrl) {
-                                val url = story.thumbnailDataUrl ?: story.mediaDataUrl
-                                if (url != null && url.startsWith("data:image")) {
-                                    VerificationAnalyzer.decodeBase64DataUrl(url)
-                                } else null
+                        itemsIndexed(
+                            items = archivedStories,
+                            key = { idx, item -> "arch_${idx}_${item.id}" }
+                        ) { idx, story ->
+                            val selectionKey = story.id.ifBlank { "arch_idx_$idx" }
+                            val isSelected = selectionKey in selectedKeys
+                            val previewSource = story.thumbnailDataUrl?.takeIf { it.isNotBlank() }
+                                ?: story.mediaDataUrl?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+
+                            val mediaPreview by produceState<ImageBitmap?>(
+                                initialValue = null,
+                                key1 = previewSource
+                            ) {
+                                value = if (previewSource != null && previewSource.startsWith("data:image", ignoreCase = true)) {
+                                    withContext(Dispatchers.Default) {
+                                        VerificationAnalyzer.decodeBase64DataUrl(previewSource)
+                                    }
+                                } else {
+                                    null
+                                }
                             }
+
+                            val isRemotePreview = previewSource != null &&
+                                (previewSource.startsWith("http://", ignoreCase = true) || previewSource.startsWith("https://", ignoreCase = true))
 
                             Box(
                                 modifier = Modifier
@@ -458,20 +514,28 @@ fun CreateHighlightDialog(
                                         color = if (isSelected) CoralRose else Color.Transparent,
                                         shape = RoundedCornerShape(12.dp)
                                     )
-                                    .clickable {
+                                    .clickable(enabled = !isSaving) {
+                                        errorMsg = null
                                         if (isSelected) {
-                                            selectedStoryIds.remove(story.id)
+                                            selectedKeys.remove(selectionKey)
                                         } else {
-                                            selectedStoryIds.add(story.id)
-                                            if (selectedCoverUrl.isBlank()) {
-                                                selectedCoverUrl = (story.thumbnailDataUrl ?: story.mediaDataUrl).orEmpty()
+                                            selectedKeys.add(selectionKey)
+                                            if (selectedCoverUrl.isBlank() && previewSource != null) {
+                                                selectedCoverUrl = previewSource
                                             }
                                         }
                                     }
                             ) {
                                 if (mediaPreview != null) {
                                     Image(
-                                        bitmap = mediaPreview,
+                                        bitmap = mediaPreview!!,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else if (isRemotePreview) {
+                                    AsyncImage(
+                                        model = previewSource,
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
@@ -519,20 +583,25 @@ fun HighlightViewerDialog(
     onDeleteHighlight: (String) -> Unit = {}
 ) {
     val stories = highlight.storyItems
+    LaunchedEffect(stories.isEmpty()) {
+        if (stories.isEmpty()) {
+            onDismiss()
+        }
+    }
     if (stories.isEmpty()) {
-        onDismiss()
         return
     }
 
-    var activeIndex by remember(stories.size) { mutableIntStateOf(0) }
-    val currentStory = stories.getOrNull(activeIndex) ?: stories.first()
+    var activeIndex by remember(highlight.id, stories.size) { mutableIntStateOf(0) }
+    val safeIndex = activeIndex.coerceIn(0, stories.lastIndex)
+    val currentStory = stories[safeIndex]
     var isPaused by remember { mutableStateOf(false) }
 
-    LaunchedEffect(activeIndex, isPaused) {
+    LaunchedEffect(highlight.id, safeIndex, isPaused) {
         if (!isPaused) {
             delay(5_000L)
-            if (activeIndex < stories.lastIndex) {
-                activeIndex += 1
+            if (safeIndex < stories.lastIndex) {
+                activeIndex = safeIndex + 1
             } else {
                 onDismiss()
             }
@@ -552,11 +621,25 @@ fun HighlightViewerDialog(
                 .testTag("highlight_viewer_dialog")
         ) {
             // Media Display
-            val imageBitmap = remember(currentStory.mediaDataUrl) {
-                if (currentStory.mediaDataUrl?.startsWith("data:image") == true) {
-                    VerificationAnalyzer.decodeBase64DataUrl(currentStory.mediaDataUrl)
-                } else null
+            val displayImageSource = currentStory.mediaDataUrl
+                ?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+                ?: currentStory.thumbnailDataUrl
+                    ?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+
+            val imageBitmap by produceState<ImageBitmap?>(
+                initialValue = null,
+                key1 = displayImageSource
+            ) {
+                value = if (displayImageSource != null && displayImageSource.startsWith("data:image", ignoreCase = true)) {
+                    withContext(Dispatchers.Default) {
+                        VerificationAnalyzer.decodeBase64DataUrl(displayImageSource)
+                    }
+                } else {
+                    null
+                }
             }
+            val isRemoteImage = displayImageSource != null &&
+                (displayImageSource.startsWith("http://", ignoreCase = true) || displayImageSource.startsWith("https://", ignoreCase = true))
 
             Box(
                 modifier = Modifier
@@ -567,7 +650,14 @@ fun HighlightViewerDialog(
             ) {
                 if (imageBitmap != null) {
                     Image(
-                        bitmap = imageBitmap,
+                        bitmap = imageBitmap!!,
+                        contentDescription = currentStory.caption ?: "Highlight story",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (isRemoteImage) {
+                    AsyncImage(
+                        model = displayImageSource,
                         contentDescription = currentStory.caption ?: "Highlight story",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
@@ -578,7 +668,7 @@ fun HighlightViewerDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.AutoAwesome,
+                            imageVector = if (currentStory.mediaType == "VIDEO") Icons.Filled.PlayArrow else Icons.Filled.AutoAwesome,
                             contentDescription = null,
                             tint = CoralRose,
                             modifier = Modifier.size(54.dp)
@@ -602,7 +692,7 @@ fun HighlightViewerDialog(
                             .weight(1f)
                             .fillMaxSize()
                             .clickable {
-                                if (activeIndex > 0) activeIndex -= 1
+                                if (safeIndex > 0) activeIndex = safeIndex - 1
                             }
                     )
                     Box(
@@ -610,8 +700,8 @@ fun HighlightViewerDialog(
                             .weight(1f)
                             .fillMaxSize()
                             .clickable {
-                                if (activeIndex < stories.lastIndex) {
-                                    activeIndex += 1
+                                if (safeIndex < stories.lastIndex) {
+                                    activeIndex = safeIndex + 1
                                 } else {
                                     onDismiss()
                                 }
@@ -627,22 +717,17 @@ fun HighlightViewerDialog(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Progress indicators
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     stories.indices.forEach { index ->
                         val progress by animateFloatAsState(
-                            targetValue = when {
-                                index < activeIndex -> 1f
-                                index == activeIndex -> 1f
-                                else -> 0f
-                            },
+                            targetValue = if (index <= safeIndex) 1f else 0f,
                             label = "highlight_progress"
                         )
                         LinearProgressIndicator(
-                            progress = { if (index < activeIndex) 1f else if (index == activeIndex) progress else 0f },
+                            progress = { if (index < safeIndex) 1f else if (index == safeIndex) progress else 0f },
                             modifier = Modifier
                                 .weight(1f)
                                 .height(3.dp)
@@ -679,7 +764,7 @@ fun HighlightViewerDialog(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "${activeIndex + 1} of ${stories.size}",
+                                text = "${safeIndex + 1} of ${stories.size}",
                                 color = Color.White.copy(alpha = 0.75f),
                                 style = MaterialTheme.typography.labelSmall
                             )

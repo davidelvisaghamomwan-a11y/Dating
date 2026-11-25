@@ -20,6 +20,7 @@ import com.example.model.SwipeRecord
 import com.example.model.UserPresence
 import com.example.model.VideoPost
 import com.example.util.PreparedVideoUpload
+import com.example.util.VerificationAnalyzer
 import com.example.util.VideoClipHelper
 import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -903,30 +905,91 @@ class SocialAndMediaRepository(
         storyItems: List<StoryItem>
     ): Result<String> {
         var docPath = "highlights"
+        if (storyItems.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Select at least 1 story for this highlight"))
+        }
         return try {
             val uid = requireUserId()
             val ref = db.collection("highlights").document()
             docPath = ref.path
-            val itemsData = storyItems.take(50).map { s ->
-                mapOf(
-                    "id" to s.id,
-                    "userId" to s.userId,
-                    "authorName" to s.authorName,
-                    "mediaType" to s.mediaType,
-                    "mediaDataUrl" to (s.mediaDataUrl ?: ""),
-                    "thumbnailDataUrl" to (s.thumbnailDataUrl ?: ""),
-                    "caption" to (s.caption ?: ""),
-                    "mediaDurationSec" to s.mediaDurationSec,
-                    "expiresAtMs" to s.expiresAtMs
-                )
+
+            val prepared = withContext(Dispatchers.Default) {
+                val safeTitle = title.trim().ifBlank { "Highlight" }.take(40)
+                val compactedItems = mutableListOf<Map<String, Any>>()
+                var remainingPayloadBudget = 580_000
+                var resolvedCover = VerificationAnalyzer.compactImageDataUrl(
+                    rawUrl = coverUrl,
+                    maxDim = 480,
+                    maxRawBytes = 45_000
+                ).orEmpty()
+
+                storyItems.take(25).forEachIndexed { idx, s ->
+                    val perItemMaxBytes = when {
+                        remainingPayloadBudget > 220_000 -> 65_000
+                        remainingPayloadBudget > 90_000 -> 35_000
+                        else -> 20_000
+                    }
+                    val perItemMaxDim = if (perItemMaxBytes >= 60_000) 720 else 480
+
+                    var safeMediaUrl = ""
+                    var safeThumbUrl = ""
+                    if (s.mediaType == "VIDEO") {
+                        safeThumbUrl = VerificationAnalyzer.compactImageDataUrl(
+                            rawUrl = s.thumbnailDataUrl,
+                            maxDim = 480,
+                            maxRawBytes = 35_000
+                        ).orEmpty()
+                        // Inline video highlight clips only if small enough; otherwise keep thumbnail + story ref id
+                        val rawVideo = s.mediaDataUrl.orEmpty()
+                        if (rawVideo.isNotBlank() && rawVideo.length <= 120_000 && rawVideo.length <= remainingPayloadBudget) {
+                            safeMediaUrl = rawVideo
+                        }
+                    } else {
+                        safeMediaUrl = VerificationAnalyzer.compactImageDataUrl(
+                            rawUrl = s.mediaDataUrl ?: s.thumbnailDataUrl,
+                            maxDim = perItemMaxDim,
+                            maxRawBytes = perItemMaxBytes
+                        ).orEmpty()
+                    }
+
+                    if (resolvedCover.isBlank()) {
+                        resolvedCover = safeThumbUrl.ifBlank {
+                            if (safeMediaUrl.startsWith("data:image") || safeMediaUrl.startsWith("http")) {
+                                VerificationAnalyzer.compactImageDataUrl(safeMediaUrl, maxDim = 420, maxRawBytes = 35_000).orEmpty()
+                            } else ""
+                        }
+                    }
+
+                    val approxSize = safeMediaUrl.length + safeThumbUrl.length + 256
+                    if (remainingPayloadBudget - approxSize >= 0 || compactedItems.isEmpty()) {
+                        remainingPayloadBudget = (remainingPayloadBudget - approxSize).coerceAtLeast(0)
+                        val safeItemId = s.id.trim().ifBlank { "story_${idx}_${System.currentTimeMillis()}" }
+                        compactedItems += mapOf(
+                            "id" to safeItemId,
+                            "userId" to s.userId.ifBlank { uid },
+                            "authorName" to s.authorName.trim().ifBlank { "Kindred Member" }.take(40),
+                            "mediaType" to (if (s.mediaType == "VIDEO") "VIDEO" else "PHOTO"),
+                            "mediaDataUrl" to safeMediaUrl,
+                            "thumbnailDataUrl" to safeThumbUrl,
+                            "caption" to (s.caption ?: "").trim().take(300),
+                            "mediaDurationSec" to s.mediaDurationSec.coerceAtLeast(0L),
+                            "expiresAtMs" to s.expiresAtMs.coerceAtLeast(0L)
+                        )
+                    }
+                }
+
+                Triple(safeTitle, resolvedCover.take(180_000), compactedItems)
             }
+
             val payload = mutableMapOf<String, Any>(
                 "userId" to uid,
-                "title" to title.trim().ifBlank { "Highlight" }.take(40),
-                "coverUrl" to coverUrl.trim().take(180_000),
-                "storyItems" to itemsData,
+                "title" to prepared.first,
+                "storyItems" to prepared.third,
                 "createdAt" to FieldValue.serverTimestamp()
             )
+            if (prepared.second.isNotBlank()) {
+                payload["coverUrl"] = prepared.second
+            }
             ref.set(payload).await()
             Result.success(ref.id)
         } catch (e: CancellationException) {
@@ -1117,10 +1180,10 @@ class SocialAndMediaRepository(
 
     fun observePostComments(postId: String, viewerUid: String): Flow<List<FeedComment>> {
         if (postId.isBlank() || viewerUid.isBlank()) return flowOf(emptyList())
-        val path = "posts/$postId/comments"
+        val path = "feedPosts/$postId/comments"
         return flow {
             emitAll(
-                db.collection("posts")
+                db.collection("feedPosts")
                     .document(postId)
                     .collection("comments")
                     .snapshots()
@@ -1225,12 +1288,11 @@ class SocialAndMediaRepository(
         if (cleanCaption.isBlank() && validPhotos.isEmpty() && preparedVideo == null) {
             return Result.failure(IllegalArgumentException("Add text, photos, or a video to share a post."))
         }
-        var docPath = "posts"
+        var docPath = "feedPosts"
         return try {
             val uid = requireUserId()
-            val postId = db.collection("posts").document().id
-            val postRef = db.collection("feedPosts").document(postId)
-            val mirrorPostRef = db.collection("posts").document(postId)
+            val postRef = db.collection("feedPosts").document()
+            val postId = postRef.id
             docPath = postRef.path
 
             val mediaType = when {
@@ -1238,35 +1300,16 @@ class SocialAndMediaRepository(
                 validPhotos.isNotEmpty() -> "PHOTO"
                 else -> "TEXT"
             }
-            val locationStr = buildString {
-                if (!authorProfile?.cityLabel.isNullOrBlank()) append(authorProfile!!.cityLabel)
-                if (!authorProfile?.country.isNullOrBlank()) {
-                    if (isNotEmpty()) append(", ")
-                    append(authorProfile!!.country)
-                }
-            }.ifBlank { "Global" }
-
-            val primaryMediaUrl = when {
-                validPhotos.isNotEmpty() -> validPhotos.first()
-                preparedVideo?.inlineDataUrl != null -> preparedVideo.inlineDataUrl!!
-                else -> ""
-            }
 
             val payload = mutableMapOf<String, Any>(
-                "postId" to postId,
                 "userId" to uid,
-                "authorId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
                 "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "mediaType" to mediaType,
                 "caption" to cleanCaption,
-                "location" to locationStr,
-                "mediaUrl" to primaryMediaUrl,
                 "likedByUids" to emptyList<String>(),
-                "likesCount" to 0L,
                 "savedByUids" to emptyList<String>(),
                 "commentCount" to 0L,
-                "commentsCount" to 0L,
                 "createdAt" to FieldValue.serverTimestamp()
             )
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
@@ -1296,11 +1339,6 @@ class SocialAndMediaRepository(
                         ownerUid = uid,
                         chunks = preparedVideo.chunkBase64List
                     )
-                    uploadChunksToSubcollection(
-                        parentCollection = mirrorPostRef.collection("mediaChunks"),
-                        ownerUid = uid,
-                        chunks = preparedVideo.chunkBase64List
-                    )
                 }
             } else if (validPhotos.isNotEmpty()) {
                 payload["mediaDataUrl"] = validPhotos.first()
@@ -1312,7 +1350,6 @@ class SocialAndMediaRepository(
                 payload["chunkCount"] = 0L
             }
             postRef.set(payload).await()
-            mirrorPostRef.set(payload).await()
             Result.success(postId)
         } catch (e: CancellationException) {
             throw e
@@ -1366,20 +1403,17 @@ class SocialAndMediaRepository(
         if (cleanText.isBlank()) {
             return Result.failure(IllegalArgumentException("Comment cannot be empty."))
         }
-        var docPath = "posts/$postId/comments"
+        var docPath = "feedPosts/$postId/comments"
         return try {
             val uid = requireUserId()
-            val commentId = db.collection("posts").document(postId).collection("comments").document().id
-            val postRef1 = db.collection("posts").document(postId)
-            val commentRef1 = postRef1.collection("comments").document(commentId)
-            val postRef2 = db.collection("feedPosts").document(postId)
-            val commentRef2 = postRef2.collection("comments").document(commentId)
+            val postRef = db.collection("feedPosts").document(postId)
+            val commentRef = postRef.collection("comments").document()
+            val commentId = commentRef.id
 
-            docPath = commentRef1.path
+            docPath = commentRef.path
             val payload = mutableMapOf<String, Any>(
                 "postId" to postId,
                 "userId" to uid,
-                "authorId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
                 "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "text" to cleanText,
@@ -1391,12 +1425,8 @@ class SocialAndMediaRepository(
                 payload["authorPhoto"] = authorPhoto
             }
             val batch = db.batch()
-            batch.set(commentRef1, payload)
-            batch.set(commentRef2, payload)
-            batch.update(postRef1, "commentCount", FieldValue.increment(1L))
-            batch.update(postRef1, "commentsCount", FieldValue.increment(1L))
-            batch.update(postRef2, "commentCount", FieldValue.increment(1L))
-            batch.update(postRef2, "commentsCount", FieldValue.increment(1L))
+            batch.set(commentRef, payload)
+            batch.update(postRef, "commentCount", FieldValue.increment(1L))
             batch.commit().await()
             Result.success(commentId)
         } catch (e: CancellationException) {
@@ -1408,21 +1438,19 @@ class SocialAndMediaRepository(
     }
 
     suspend fun deleteFeedPostComment(postId: String, commentId: String): Result<Unit> {
-        var docPath = "posts/$postId/comments/$commentId"
+        var docPath = "feedPosts/$postId/comments/$commentId"
         return try {
             requireUserId()
-            val postRef1 = db.collection("posts").document(postId)
-            val commentRef1 = postRef1.collection("comments").document(commentId)
-            val postRef2 = db.collection("feedPosts").document(postId)
-            val commentRef2 = postRef2.collection("comments").document(commentId)
-            docPath = commentRef1.path
+            val postRef = db.collection("feedPosts").document(postId)
+            val commentRef = postRef.collection("comments").document(commentId)
+            docPath = commentRef.path
+            val postSnap = runCatching { postRef.get().await() }.getOrNull()
+            val currentCount = postSnap?.getLong("commentCount") ?: 0L
             val batch = db.batch()
-            batch.delete(commentRef1)
-            batch.delete(commentRef2)
-            batch.update(postRef1, "commentCount", FieldValue.increment(-1L))
-            batch.update(postRef1, "commentsCount", FieldValue.increment(-1L))
-            batch.update(postRef2, "commentCount", FieldValue.increment(-1L))
-            batch.update(postRef2, "commentsCount", FieldValue.increment(-1L))
+            batch.delete(commentRef)
+            if (currentCount > 0L) {
+                batch.update(postRef, "commentCount", FieldValue.increment(-1L))
+            }
             batch.commit().await()
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -1434,17 +1462,13 @@ class SocialAndMediaRepository(
     }
 
     suspend fun toggleCommentLike(postId: String, commentId: String, currentlyLiked: Boolean): Result<Unit> {
-        var docPath = "posts/$postId/comments/$commentId"
+        var docPath = "feedPosts/$postId/comments/$commentId"
         return try {
             val uid = requireUserId()
-            val ref1 = db.collection("posts").document(postId).collection("comments").document(commentId)
-            val ref2 = db.collection("feedPosts").document(postId).collection("comments").document(commentId)
-            docPath = ref1.path
+            val ref = db.collection("feedPosts").document(postId).collection("comments").document(commentId)
+            docPath = ref.path
             val op = if (currentlyLiked) FieldValue.arrayRemove(uid) else FieldValue.arrayUnion(uid)
-            val batch = db.batch()
-            batch.update(ref1, "likedByUids", op)
-            batch.update(ref2, "likedByUids", op)
-            batch.commit().await()
+            ref.update("likedByUids", op).await()
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e

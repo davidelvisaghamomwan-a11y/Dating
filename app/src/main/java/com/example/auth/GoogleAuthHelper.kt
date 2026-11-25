@@ -20,13 +20,28 @@ import com.google.firebase.auth.auth
 import com.google.firebase.auth.userProfileChangeRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 object GoogleAuthHelper {
     private const val TAG = "KindredAuth"
+    private val signOutScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val isSigningOut = AtomicBoolean(false)
+
+    @Volatile
+    private var suppressAutoSignInAfterLogout: Boolean = false
+
+    fun isAutoSignInSuppressed(): Boolean = suppressAutoSignInAfterLogout
+
+    fun resetAutoSignInSuppression() {
+        suppressAutoSignInAfterLogout = false
+    }
 
     private tailrec fun Context.findActivity(): Activity? = when (this) {
         is Activity -> this
@@ -103,6 +118,7 @@ object GoogleAuthHelper {
         onAuthCancelled: () -> Unit,
         scope: CoroutineScope
     ) {
+        resetAutoSignInSuppression()
         val clientId = resolveServerClientId(context) ?: run {
             onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
             return
@@ -152,6 +168,7 @@ object GoogleAuthHelper {
         onAuthError: (String) -> Unit,
         scope: CoroutineScope
     ) {
+        resetAutoSignInSuppression()
         scope.launch {
             try {
                 Firebase.auth.signInWithEmailAndPassword(email.trim(), password).await()
@@ -173,6 +190,7 @@ object GoogleAuthHelper {
         onAuthError: (String) -> Unit,
         scope: CoroutineScope
     ) {
+        resetAutoSignInSuppression()
         scope.launch {
             try {
                 val result = Firebase.auth.createUserWithEmailAndPassword(email.trim(), password).await()
@@ -222,24 +240,36 @@ object GoogleAuthHelper {
 
     fun signOut(
         credentialManager: CredentialManager,
-        scope: CoroutineScope,
+        @Suppress("UNUSED_PARAMETER") scope: CoroutineScope,
         onBeforeSignOut: suspend () -> Unit = {},
         onSignOutComplete: () -> Unit = {}
     ) {
-        scope.launch {
+        if (!isSigningOut.compareAndSet(false, true)) return
+        suppressAutoSignInAfterLogout = true
+        signOutScope.launch {
             withContext(NonCancellable) {
                 try {
-                    onBeforeSignOut()
+                    withTimeoutOrNull(1_200L) {
+                        onBeforeSignOut()
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Pre-sign-out hook failed: ${e.message}")
                 }
                 try {
-                    credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                    withTimeoutOrNull(1_200L) {
+                        credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to clear credential state: ${e.message}")
                 } finally {
-                    Firebase.auth.signOut()
-                    onSignOutComplete()
+                    try {
+                        withContext(Dispatchers.Main.immediate) {
+                            Firebase.auth.signOut()
+                            onSignOutComplete()
+                        }
+                    } finally {
+                        isSigningOut.set(false)
+                    }
                 }
             }
         }

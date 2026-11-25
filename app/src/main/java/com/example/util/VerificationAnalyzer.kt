@@ -546,6 +546,7 @@ object VerificationAnalyzer {
 
             val base64Part = dataUrl.substringAfter("base64,", dataUrl)
             val bytes = Base64.decode(base64Part, Base64.DEFAULT)
+            if (bytes.isEmpty()) return null
             val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
             decodedBitmapCache.put(key, decoded)
             if (cacheFile != null && !cacheFile.exists()) {
@@ -555,9 +556,37 @@ object VerificationAnalyzer {
                 }
             }
             decoded
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             null
         }
+    }
+
+    /**
+     * Safely compacts an inline image data URL (or validates an http/https URL) so highlight
+     * documents never store truncated/corrupted Base64 strings or exceed Firestore's 1 MiB limit.
+     */
+    fun compactImageDataUrl(
+        rawUrl: String?,
+        maxDim: Int = 512,
+        maxRawBytes: Int = 55_000
+    ): String? {
+        val clean = rawUrl?.trim().orEmpty()
+        if (clean.isBlank()) return null
+        if (clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true)) {
+            return clean.take(2048)
+        }
+        if (!clean.startsWith("data:image", ignoreCase = true)) {
+            return null
+        }
+        val maxDataUrlLen = (maxRawBytes * 4 / 3) + 64
+        val bmp = decodeBitmapFromDataUrl(clean) ?: return null
+        if (clean.length <= maxDataUrlLen && bmp.width <= maxDim && bmp.height <= maxDim) {
+            return clean
+        }
+        return runCatching {
+            val compacted = compressBitmapToDataUrl(bmp, maxDim = maxDim, maxRawBytes = maxRawBytes)
+            compacted.takeIf { it.length <= 180_000 }
+        }.getOrNull()
     }
 
     suspend fun prefetchDataUrls(urls: List<String>) = withContext(Dispatchers.Default) {

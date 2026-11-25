@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -589,7 +590,10 @@ fun UserProfileDetailScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        items(displayHighlights, key = { it.id }) { hl ->
+                        itemsIndexed(
+                            items = displayHighlights,
+                            key = { idx, hl -> "ud_hl_${idx}_${hl.id}" }
+                        ) { _, hl ->
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -608,25 +612,27 @@ fun UserProfileDetailScreen(
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                 ) {
-                                    if (hl.coverUrl.isNotBlank()) {
-                                        val bmp = remember(hl.coverUrl) {
+                                    val bmp = remember(hl.coverUrl) {
+                                        if (hl.coverUrl.startsWith("data:image", ignoreCase = true)) {
                                             VerificationAnalyzer.decodeBase64DataUrl(hl.coverUrl)
-                                        }
-                                        if (bmp != null) {
-                                            Image(
-                                                bitmap = bmp,
-                                                contentDescription = hl.title,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                            AsyncImage(
-                                                model = hl.coverUrl,
-                                                contentDescription = hl.title,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        }
+                                        } else null
+                                    }
+                                    val isRemoteHttpCover = hl.coverUrl.startsWith("http://", ignoreCase = true) ||
+                                        hl.coverUrl.startsWith("https://", ignoreCase = true)
+                                    if (bmp != null) {
+                                        Image(
+                                            bitmap = bmp,
+                                            contentDescription = hl.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else if (isRemoteHttpCover) {
+                                        AsyncImage(
+                                            model = hl.coverUrl,
+                                            contentDescription = hl.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
                                     } else {
                                         ProfileAvatarImage(
                                             photoDataUrl = profile.photoDataUrl,
@@ -1162,9 +1168,9 @@ fun UserProfileDetailScreen(
     }
 
     // Highlights Viewer
-    if (activeHighlightViewer != null) {
+    activeHighlightViewer?.let { highlight ->
         HighlightViewerDialog(
-            highlight = activeHighlightViewer!!,
+            highlight = highlight,
             isOwner = isOwner,
             onDismiss = { activeHighlightViewer = null }
         )

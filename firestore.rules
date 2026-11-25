@@ -948,6 +948,51 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(likeId) && existing().fromUid == request.auth.uid;
     }
 
+    function isValidStory(data) {
+      return data.userId is string &&
+             data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 40 &&
+             data.mediaType in ['PHOTO', 'VIDEO'] &&
+             (!('authorPhoto' in data) || (data.authorPhoto is string && data.authorPhoto.size() <= 180000)) &&
+             (!('authorCountry' in data) || (data.authorCountry is string && data.authorCountry.size() <= 80)) &&
+             (!('authorVerified' in data) || data.authorVerified is bool) &&
+             (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
+             (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
+             (!('caption' in data) || (data.caption is string && data.caption.size() <= 300)) &&
+             (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0)) &&
+             (!('chunkCount' in data) || (data.chunkCount is int && data.chunkCount >= 0 && data.chunkCount <= 1000)) &&
+             (!('viewerUids' in data) || (data.viewerUids is list && data.viewerUids.size() <= 500)) &&
+             (!('expiresAt' in data) || data.expiresAt is timestamp) &&
+             data.expiresAtMs is int && data.expiresAtMs > 0;
+    }
+
+    function isValidHighlight(data) {
+      return data.userId is string &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 40 &&
+             (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 180000)) &&
+             (!('storyItems' in data) || (data.storyItems is list && data.storyItems.size() <= 100));
+    }
+
+    function isValidFeedPost(data) {
+      return data.userId is string &&
+             data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 40 &&
+             data.caption is string && data.caption.size() <= 1000 &&
+             data.mediaType in ['NONE', 'TEXT', 'PHOTO', 'VIDEO'] &&
+             (!('authorPhoto' in data) || (data.authorPhoto is string && data.authorPhoto.size() <= 180000)) &&
+             (!('authorCountry' in data) || (data.authorCountry is string && data.authorCountry.size() <= 80)) &&
+             (!('authorCity' in data) || (data.authorCity is string && data.authorCity.size() <= 80)) &&
+             (!('authorVerified' in data) || data.authorVerified is bool) &&
+             (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
+             (!('mediaUrls' in data) || (data.mediaUrls is list && data.mediaUrls.size() <= 6 && (data.mediaUrls.size() == 0 || (data.mediaUrls[0] is string && data.mediaUrls[0].size() <= 180000)))) &&
+             (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
+             (!('mediaMimeType' in data) || (data.mediaMimeType is string && data.mediaMimeType.size() <= 80)) &&
+             (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0)) &&
+             (!('mediaByteSize' in data) || (data.mediaByteSize is int && data.mediaByteSize >= 0)) &&
+             (!('chunkCount' in data) || (data.chunkCount is int && data.chunkCount >= 0 && data.chunkCount <= 1000)) &&
+             (!('likedByUids' in data) || (data.likedByUids is list && data.likedByUids.size() <= 1000)) &&
+             (!('savedByUids' in data) || (data.savedByUids is list && data.savedByUids.size() <= 1000)) &&
+             (!('commentCount' in data) || (data.commentCount is int && data.commentCount >= 0));
+    }
+
     // 15. 24-Hour Ephemeral Stories (/stories/{storyId} + mediaChunks)
     match /stories/{storyId} {
       allow get, list: if isSignedIn();
@@ -955,26 +1000,16 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                        isValidId(storyId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
-                       incoming().mediaType in ['PHOTO', 'VIDEO'] &&
-                       (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
-                       (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
-                       (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
-                       (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
-                       (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
-                       (!('caption' in incoming()) || (incoming().caption is string && incoming().caption.size() <= 300)) &&
-                       (!('mediaDurationSec' in incoming()) || (incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0)) &&
-                       (!('chunkCount' in incoming()) || (incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000)) &&
-                       (!('viewerUids' in incoming()) || (incoming().viewerUids is list && incoming().viewerUids.size() <= 500)) &&
-                       incoming().expiresAtMs is int && incoming().expiresAtMs > 0 &&
+                       isValidStory(incoming()) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'mediaType', 'expiresAtMs', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorVerified', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAtMs', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorVerified', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAt', 'expiresAtMs', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
                        isValidId(storyId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
+                       isValidStory(incoming()) &&
                        (
                          isOwner(existing().userId) ||
                          isAdmin() ||
@@ -1008,9 +1043,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                        isValidId(highlightId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 40 &&
-                       (!('coverUrl' in incoming()) || (incoming().coverUrl is string && incoming().coverUrl.size() <= 180000)) &&
-                       (!('storyItems' in incoming()) || (incoming().storyItems is list && incoming().storyItems.size() <= 100)) &&
+                       isValidHighlight(incoming()) &&
                        incoming().keys().hasAll(['userId', 'title', 'createdAt']) &&
                        incoming().keys().hasOnly(['userId', 'title', 'coverUrl', 'storyItems', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
@@ -1019,6 +1052,7 @@ service cloud.firestore {
                        isValidId(highlightId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
+                       isValidHighlight(incoming()) &&
                        (isOwner(existing().userId) || isAdmin());
 
       allow delete: if isSignedIn() && isValidId(highlightId) && (isOwner(existing().userId) || isAdmin());
@@ -1097,30 +1131,14 @@ service cloud.firestore {
       }
     }
 
-    // 17. Discover Social Timeline Feed Posts (/feedPosts/{postId} + mediaChunks + comments/{commentId})
+    // 18. Discover Social Timeline Feed Posts (/feedPosts/{postId} + mediaChunks + comments/{commentId})
     match /feedPosts/{postId} {
       allow get, list: if isSignedIn();
 
       allow create: if isSignedIn() &&
                        isValidId(postId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
-                       incoming().caption is string && incoming().caption.size() <= 1000 &&
-                       incoming().mediaType in ['NONE', 'TEXT', 'PHOTO', 'VIDEO'] &&
-                       (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
-                       (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
-                       (!('authorCity' in incoming()) || (incoming().authorCity is string && incoming().authorCity.size() <= 80)) &&
-                       (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
-                       (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
-                       (!('mediaUrls' in incoming()) || (incoming().mediaUrls is list && incoming().mediaUrls.size() <= 6 && (incoming().mediaUrls.size() == 0 || (incoming().mediaUrls[0] is string && incoming().mediaUrls[0].size() <= 180000)))) &&
-                       (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
-                       (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
-                       (!('mediaDurationSec' in incoming()) || (incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0)) &&
-                       (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
-                       (!('chunkCount' in incoming()) || (incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000)) &&
-                       (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
-                       (!('savedByUids' in incoming()) || (incoming().savedByUids is list && incoming().savedByUids.size() <= 1000)) &&
-                       (!('commentCount' in incoming()) || (incoming().commentCount is int && incoming().commentCount >= 0)) &&
+                       isValidFeedPost(incoming()) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaType', 'createdAt']) &&
                        incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'authorVerified', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
@@ -1129,6 +1147,7 @@ service cloud.firestore {
                        isValidId(postId) &&
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
+                       isValidFeedPost(incoming()) &&
                        (
                          isOwner(existing().userId) ||
                          isAdmin() ||
@@ -1162,11 +1181,20 @@ service cloud.firestore {
                          (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                          (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                          incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
+                         (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
                          incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'authorVerified', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'authorVerified', 'text', 'likedByUids', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
-        allow update: if false;
+        allow update: if isSignedIn() &&
+                         isValidId(postId) &&
+                         isValidId(commentId) &&
+                         incoming().postId == existing().postId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().likedByUids is list && incoming().likedByUids.size() <= 1000 &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['likedByUids']);
+
         allow delete: if isSignedIn() && isValidId(postId) && isValidId(commentId) && (
           isOwner(existing().userId) ||
           isAdmin() ||
