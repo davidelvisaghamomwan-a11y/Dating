@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.R
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.EmeraldMint
@@ -87,6 +88,11 @@ fun ProfileAvatarImage(
             .ifBlank { "K" }
     }
 
+    val isRemoteHttp = remember(photoDataUrl) {
+        photoDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+            photoDataUrl?.startsWith("https://", ignoreCase = true) == true
+    }
+
     Box(
         modifier = modifier
             .clip(shape)
@@ -100,6 +106,13 @@ fun ProfileAvatarImage(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
                 filterQuality = FilterQuality.High
+            )
+        } else if (isRemoteHttp && !photoDataUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = photoDataUrl,
+                contentDescription = stringResource(R.string.cd_profile_photo),
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
         } else {
             Text(

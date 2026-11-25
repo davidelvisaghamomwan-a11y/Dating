@@ -23,6 +23,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -33,6 +36,8 @@ object GoogleAuthHelper {
     private const val TAG = "KindredAuth"
     private val signOutScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val isSigningOut = AtomicBoolean(false)
+    private val _isSigningOutFlow = MutableStateFlow(false)
+    val isSigningOutFlow: StateFlow<Boolean> = _isSigningOutFlow.asStateFlow()
 
     @Volatile
     private var suppressAutoSignInAfterLogout: Boolean = false
@@ -245,31 +250,32 @@ object GoogleAuthHelper {
         onSignOutComplete: () -> Unit = {}
     ) {
         if (!isSigningOut.compareAndSet(false, true)) return
+        _isSigningOutFlow.value = true
         suppressAutoSignInAfterLogout = true
         signOutScope.launch {
             withContext(NonCancellable) {
                 try {
-                    withTimeoutOrNull(1_200L) {
-                        onBeforeSignOut()
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Pre-sign-out hook failed: ${e.message}")
-                }
-                try {
-                    withTimeoutOrNull(1_200L) {
-                        credentialManager.clearCredentialState(ClearCredentialStateRequest())
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to clear credential state: ${e.message}")
-                } finally {
                     try {
-                        withContext(Dispatchers.Main.immediate) {
-                            Firebase.auth.signOut()
-                            onSignOutComplete()
+                        withTimeoutOrNull(350L) {
+                            onBeforeSignOut()
                         }
-                    } finally {
-                        isSigningOut.set(false)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Pre-sign-out hook failed: ${e.message}")
                     }
+                    withContext(Dispatchers.Main.immediate) {
+                        Firebase.auth.signOut()
+                        onSignOutComplete()
+                    }
+                    try {
+                        withTimeoutOrNull(800L) {
+                            credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to clear credential state: ${e.message}")
+                    }
+                } finally {
+                    _isSigningOutFlow.value = false
+                    isSigningOut.set(false)
                 }
             }
         }

@@ -30,6 +30,7 @@ object VideoClipHelper {
     const val CHUNK_RAW_BYTES = 650_000
     const val INLINE_MAX_RAW_BYTES = 650_000
     const val MAX_CHUNKS = 1000
+    const val MAX_CLOUD_VIDEO_BYTES = 150L * 1024L * 1024L
     private const val MAX_THUMBNAIL_DATA_URL_LEN = 180_000
 
     suspend fun prepareVideoForUpload(
@@ -41,8 +42,8 @@ object VideoClipHelper {
             val resolver = context.contentResolver
             val mimeType = resolver.getType(uri)?.takeIf { it.startsWith("video/") } ?: "video/mp4"
 
-            // Step 1: Stream content:// URI directly to app cache file first so MediaMetadataRetriever
-            // and chunking work reliably across Photo Picker URIs without loading huge videos in RAM.
+            // Step 1: Stream content:// URI directly to app cache file so Firebase Storage can
+            // upload it directly as a binary File without Base64 memory bloat or Firestore limits.
             val dir = File(context.cacheDir, "chat_videos").apply { mkdirs() }
             val safeId = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "clip" }
             val cachedFile = File(dir, "video_$safeId.mp4")
@@ -55,6 +56,9 @@ object VideoClipHelper {
                         val read = input.read(buffer)
                         if (read <= 0) break
                         totalBytes += read
+                        if (totalBytes > MAX_CLOUD_VIDEO_BYTES) {
+                            throw IllegalArgumentException("Video exceeds the 150 MB upload limit.")
+                        }
                         output.write(buffer, 0, read)
                     }
                     output.flush()
@@ -66,19 +70,13 @@ object VideoClipHelper {
                 throw IllegalArgumentException("Selected video is empty.")
             }
 
-            val estimatedChunks = ((totalBytes + CHUNK_RAW_BYTES - 1L) / CHUNK_RAW_BYTES).toInt()
-            if (totalBytes > INLINE_MAX_RAW_BYTES && estimatedChunks > MAX_CHUNKS) {
-                throw IllegalArgumentException("Video exceeds maximum sync limit (500 MB).")
-            }
-
-            // Step 2: Safely extract metadata/thumbnail from local cached file path (fallback gracefully).
+            // Step 2: Safely extract duration and JPEG thumbnail from local cached file.
             var durationMs = 0L
             var thumbnailDataUrl: String? = null
             val retriever = MediaMetadataRetriever()
             try {
                 runCatching { retriever.setDataSource(cachedFile.absolutePath) }
                     .onFailure {
-                        // Secondary fallback on context+uri if file path failed for any codec reason
                         retriever.setDataSource(context, uri)
                     }
                 durationMs = runCatching {
@@ -93,7 +91,7 @@ object VideoClipHelper {
                     thumbnailDataUrl = encodeThumbnailDataUrl(frame)
                     if (!frame.isRecycled) frame.recycle()
                 }
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 // Non-fatal: still allow uploading valid video bytes
             } finally {
                 runCatching { retriever.release() }
@@ -105,31 +103,15 @@ object VideoClipHelper {
                 1L
             }
 
-            // Step 3: Stream cached file into either inline data URL or ordered Base64 chunks
-            if (totalBytes <= INLINE_MAX_RAW_BYTES) {
-                val bytes = cachedFile.readBytes()
-                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                PreparedVideoUpload(
-                    inlineDataUrl = "data:$mimeType;base64,$base64",
-                    chunkBase64List = emptyList(),
-                    thumbnailDataUrl = thumbnailDataUrl,
-                    mimeType = mimeType,
-                    durationSec = durationSec,
-                    sizeBytes = totalBytes,
-                    localCachedFile = cachedFile
-                )
-            } else {
-                val chunks = streamFileIntoBase64Chunks(cachedFile, CHUNK_RAW_BYTES)
-                PreparedVideoUpload(
-                    inlineDataUrl = null,
-                    chunkBase64List = chunks,
-                    thumbnailDataUrl = thumbnailDataUrl,
-                    mimeType = mimeType,
-                    durationSec = durationSec,
-                    sizeBytes = totalBytes,
-                    localCachedFile = cachedFile
-                )
-            }
+            PreparedVideoUpload(
+                inlineDataUrl = null,
+                chunkBase64List = emptyList(),
+                thumbnailDataUrl = thumbnailDataUrl,
+                mimeType = mimeType,
+                durationSec = durationSec,
+                sizeBytes = totalBytes,
+                localCachedFile = cachedFile
+            )
         }
     }
 
@@ -198,10 +180,17 @@ object VideoClipHelper {
 
     fun decodeVideoDataUrl(mediaDataUrl: String?): ByteArray? {
         val raw = mediaDataUrl?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (com.example.data.CloudMediaStorageService.isRemoteHttpUrl(raw)) return null
         return runCatching {
             val payload = raw.substringAfter("base64,", raw)
             Base64.decode(payload, Base64.DEFAULT)
         }.getOrNull()
+    }
+
+    fun cacheTargetFile(context: Context, cacheKey: String): File {
+        val dir = File(context.cacheDir, "chat_videos").apply { mkdirs() }
+        val safeId = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "clip" }
+        return File(dir, "video_$safeId.mp4")
     }
 
     fun materializeVideoFile(
@@ -209,8 +198,29 @@ object VideoClipHelper {
         messageId: String,
         mediaDataUrl: String?
     ): File? {
-        val bytes = decodeVideoDataUrl(mediaDataUrl) ?: return null
+        val raw = mediaDataUrl?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (com.example.data.CloudMediaStorageService.isRemoteHttpUrl(raw)) {
+            val cached = cacheTargetFile(context, messageId)
+            return cached.takeIf { it.exists() && it.length() > 0L }
+        }
+        val bytes = decodeVideoDataUrl(raw) ?: return null
         return runCatching { writeBytesToCacheFile(context, messageId, bytes) }.getOrNull()
+    }
+
+    suspend fun downloadOrMaterializeVideoFile(
+        context: Context,
+        cacheKey: String,
+        mediaDataUrl: String?
+    ): File? = withContext(Dispatchers.IO) {
+        val raw = mediaDataUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@withContext null
+        val target = cacheTargetFile(context, cacheKey)
+        if (target.exists() && target.length() > 0L) return@withContext target
+        if (com.example.data.CloudMediaStorageService.isRemoteHttpUrl(raw)) {
+            return@withContext com.example.data.CloudMediaStorageService
+                .downloadUrlToFile(raw, target)
+                .getOrNull()
+        }
+        materializeVideoFile(context, cacheKey, raw)
     }
 
     suspend fun extractVideoThumbnail(
@@ -218,13 +228,13 @@ object VideoClipHelper {
         messageId: String,
         mediaDataUrl: String?
     ): Bitmap? = withContext(Dispatchers.IO) {
-        val file = materializeVideoFile(context, messageId, mediaDataUrl) ?: return@withContext null
+        val file = downloadOrMaterializeVideoFile(context, messageId, mediaDataUrl) ?: return@withContext null
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(file.absolutePath)
             retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 ?: retriever.frameAtTime
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             null
         } finally {
             runCatching { retriever.release() }

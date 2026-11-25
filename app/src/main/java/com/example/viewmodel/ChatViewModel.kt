@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
+import com.example.data.CloudMediaStorageService
 import com.example.data.KindredRepository
 import com.example.data.SocialAndMediaRepository
 import com.example.model.CallAudioChunk
@@ -22,6 +23,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.firestore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.io.File
 
 /**
@@ -169,6 +172,9 @@ class ChatViewModel(
     private val _statusError = MutableStateFlow<String?>(null)
     val statusError: StateFlow<String?> = _statusError.asStateFlow()
 
+    private val _isUploadingMedia = MutableStateFlow(false)
+    val isUploadingMedia: StateFlow<Boolean> = _isUploadingMedia.asStateFlow()
+
     fun retry() {
         _retryNonce.value += 1
     }
@@ -192,25 +198,45 @@ class ChatViewModel(
         replyToText: String? = null,
         replyToType: String? = null
     ) {
+        val hasMediaAttachment = preparedVideo != null || !mediaDataUrl.isNullOrBlank()
         viewModelScope.launch {
-            val result = repository.sendMessage(
-                matchId = matchId,
-                participantUids = participantUids,
-                text = text,
-                messageType = messageType,
-                mediaDataUrl = mediaDataUrl,
-                mediaGifId = mediaGifId,
-                mediaDurationSec = mediaDurationSec,
-                disappearingSeconds = disappearingSeconds,
-                viewOnce = viewOnce,
-                preparedVideo = preparedVideo,
-                replyToMessageId = replyToMessageId,
-                replyToSenderId = replyToSenderId,
-                replyToText = replyToText,
-                replyToType = replyToType
-            )
-            result.onFailure { err ->
-                _statusError.value = err.localizedMessage ?: "Failed to send message"
+            if (hasMediaAttachment) _isUploadingMedia.value = true
+            try {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                    val result = repository.sendMessage(
+                        matchId = matchId,
+                        participantUids = participantUids,
+                        text = text,
+                        messageType = messageType,
+                        mediaDataUrl = mediaDataUrl,
+                        mediaGifId = mediaGifId,
+                        mediaDurationSec = mediaDurationSec,
+                        disappearingSeconds = disappearingSeconds,
+                        viewOnce = viewOnce,
+                        preparedVideo = preparedVideo,
+                        replyToMessageId = replyToMessageId,
+                        replyToSenderId = replyToSenderId,
+                        replyToText = replyToText,
+                        replyToType = replyToType
+                    )
+                    result.onFailure { err ->
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "ChatViewModel sendMessage failed: $msg", err)
+                        _statusError.value = msg
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "ChatViewModel sendMessage timed out", e)
+                _statusError.value = msg
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "ChatViewModel sendMessage error: $msg", e)
+                _statusError.value = msg
+            } finally {
+                if (hasMediaAttachment) _isUploadingMedia.value = false
             }
         }
     }

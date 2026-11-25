@@ -10,15 +10,22 @@ import android.os.Build
 import android.util.Base64
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.data.CloudMediaStorageService
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 private const val TAG = "VoiceMessageCtrl"
-private const val DATA_URL_PREFIX = "data:audio/mp4;base64,"
-private const val MAX_AUDIO_BYTES = 180_000
 
 data class RecordedVoiceClip(
     val dataUrl: String,
-    val durationSec: Long
+    val durationSec: Long,
+    val localFile: File? = null
 )
 
 object VoicePermissionHelper {
@@ -76,29 +83,23 @@ class VoiceNoteRecorder(private val context: Context) {
                 release()
             }
             recorder = null
-
-            val bytes = file?.takeIf { it.exists() }?.readBytes()
-                ?: return Result.failure(IllegalStateException("No audio was captured."))
-            file.delete()
             outputFile = null
 
-            if (bytes.isEmpty()) {
-                return Result.failure(IllegalStateException("Recorded clip was empty."))
+            if (file == null || !file.exists() || file.length() <= 0L) {
+                runCatching { file?.delete() }
+                return Result.failure(IllegalStateException("Recorded audio clip was empty."))
             }
-            val safeBytes = if (bytes.size > MAX_AUDIO_BYTES) {
-                bytes.copyOf(MAX_AUDIO_BYTES)
-            } else {
-                bytes
-            }
-            val encoded = DATA_URL_PREFIX + Base64.encodeToString(safeBytes, Base64.NO_WRAP)
+
             Result.success(
                 RecordedVoiceClip(
-                    dataUrl = encoded,
-                    durationSec = elapsedSec.coerceIn(1L, 60L)
+                    dataUrl = "file://${file.absolutePath}",
+                    durationSec = elapsedSec.coerceIn(1L, 60L),
+                    localFile = file
                 )
             )
         } catch (e: Exception) {
             Log.e(TAG, "Unable to finalize voice note", e)
+            runCatching { file?.delete() }
             stopSilently()
             Result.failure(e)
         }
@@ -123,6 +124,8 @@ class VoiceNoteRecorder(private val context: Context) {
 }
 
 class VoiceNotePlayer(private val context: Context) {
+    private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var loadJob: Job? = null
     private var mediaPlayer: MediaPlayer? = null
     private var tempFile: File? = null
     var activeMessageId: String? = null
@@ -134,51 +137,89 @@ class VoiceNotePlayer(private val context: Context) {
         onCompleted: () -> Unit,
         onError: (String) -> Unit
     ): Boolean {
-        if (activeMessageId == messageId && mediaPlayer?.isPlaying == true) {
+        if (activeMessageId == messageId && (mediaPlayer?.isPlaying == true || loadJob?.isActive == true)) {
             stop()
             return false
         }
         stop()
 
-        return try {
-            val base64Body = mediaDataUrl.substringAfter("base64,", mediaDataUrl)
-            val audioBytes = Base64.decode(base64Body, Base64.DEFAULT)
-            val file = File.createTempFile("kindred_play_", ".m4a", context.cacheDir)
-            file.writeBytes(audioBytes)
-            tempFile = file
-
-            val player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                setDataSource(file.absolutePath)
-                setOnCompletionListener {
-                    stop()
-                    onCompleted()
-                }
-                setOnErrorListener { _, _, _ ->
-                    stop()
-                    onError("Unable to play voice note on this device.")
-                    true
-                }
-                prepare()
-                start()
-            }
-            mediaPlayer = player
-            activeMessageId = messageId
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Playback error", e)
-            stop()
-            onError("Could not decode voice note audio.")
-            false
+        val clean = mediaDataUrl.trim()
+        if (clean.isBlank()) {
+            onError("Voice note audio is missing.")
+            return false
         }
+
+        activeMessageId = messageId
+        loadJob = playerScope.launch {
+            try {
+                val resolvedFile: File = withContext(Dispatchers.IO) {
+                    when {
+                        CloudMediaStorageService.isRemoteHttpUrl(clean) -> {
+                            val dir = File(context.cacheDir, "voice_cache").apply { mkdirs() }
+                            val safeId = messageId.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "voice" }
+                            val cached = File(dir, "voice_$safeId.m4a")
+                            if (cached.exists() && cached.length() > 0L) {
+                                cached
+                            } else {
+                                CloudMediaStorageService.downloadUrlToFile(clean, cached).getOrThrow()
+                            }
+                        }
+                        clean.startsWith("file://") -> {
+                            File(clean.removePrefix("file://")).also {
+                                if (!it.exists() || it.length() <= 0L) {
+                                    throw IllegalStateException("Local audio file unavailable.")
+                                }
+                            }
+                        }
+                        else -> {
+                            val base64Body = clean.substringAfter("base64,", clean)
+                            val audioBytes = Base64.decode(base64Body, Base64.DEFAULT)
+                            if (audioBytes.isEmpty()) throw IllegalStateException("Empty voice note payload.")
+                            File.createTempFile("kindred_play_", ".m4a", context.cacheDir).apply {
+                                writeBytes(audioBytes)
+                                tempFile = this
+                            }
+                        }
+                    }
+                }
+
+                if (activeMessageId != messageId) return@launch
+
+                val player = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    setDataSource(resolvedFile.absolutePath)
+                    setOnCompletionListener {
+                        stop()
+                        onCompleted()
+                    }
+                    setOnErrorListener { _, _, _ ->
+                        stop()
+                        onError("Unable to play voice note on this device.")
+                        true
+                    }
+                    prepare()
+                    start()
+                }
+                mediaPlayer = player
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Playback error for message=$messageId", e)
+                stop()
+                onError(e.localizedMessage ?: "Could not play voice note audio.")
+            }
+        }
+        return true
     }
 
     fun stop() {
+        loadJob?.cancel()
+        loadJob = null
         try {
             mediaPlayer?.stop()
         } catch (_: Exception) {

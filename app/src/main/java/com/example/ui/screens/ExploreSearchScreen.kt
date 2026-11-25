@@ -1065,12 +1065,21 @@ private fun ExploreReelFeedCard(
                 val thumb = remember(videoPost.thumbnailDataUrl) {
                     videoPost.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
                 }
+                val isRemoteThumb = videoPost.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                    videoPost.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true
                 if (thumb != null) {
                     Image(
                         bitmap = thumb,
                         contentDescription = videoPost.caption,
                         contentScale = ContentScale.Crop,
                         filterQuality = FilterQuality.High,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (isRemoteThumb) {
+                    AsyncImage(
+                        model = videoPost.thumbnailDataUrl,
+                        contentDescription = videoPost.caption,
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

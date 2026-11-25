@@ -109,6 +109,7 @@ fun VideoFeedScreen(
     profilesByUid: Map<String, PublicProfile> = emptyMap(),
     resolveVideoFile: suspend (VideoPost) -> Result<File>,
     onPublishVideoPost: (caption: String, prepared: PreparedVideoUpload) -> Unit,
+    onPublishVideoPostWithResult: ((caption: String, prepared: PreparedVideoUpload, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
     onToggleLike: (postId: String, currentlyLiked: Boolean) -> Unit,
     onDeletePost: (postId: String) -> Unit,
     onOpenAuthorProfile: (String) -> Unit,
@@ -128,6 +129,8 @@ fun VideoFeedScreen(
     var pendingUpload by remember { mutableStateOf<PreparedVideoUpload?>(null) }
     var captionDraft by remember { mutableStateOf("") }
     var isPreparing by remember { mutableStateOf(false) }
+    var isPublishing by remember { mutableStateOf(false) }
+    var uploadError by remember { mutableStateOf<String?>(null) }
     var isMuted by remember { mutableStateOf(false) }
     var activeCommentsVideoPost by remember { mutableStateOf<VideoPost?>(null) }
 
@@ -316,8 +319,11 @@ fun VideoFeedScreen(
     pendingUpload?.let { upload ->
         AlertDialog(
             onDismissRequest = {
-                pendingUpload = null
-                captionDraft = ""
+                if (!isPublishing) {
+                    pendingUpload = null
+                    captionDraft = ""
+                    uploadError = null
+                }
             },
             title = { Text("Publish Reel") },
             text = {
@@ -332,28 +338,86 @@ fun VideoFeedScreen(
                         onValueChange = { if (it.length <= 240) captionDraft = it },
                         label = { Text("Caption & #hashtags") },
                         maxLines = 3,
+                        enabled = !isPublishing,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (uploadError != null) {
+                        Text(
+                            text = uploadError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        onPublishVideoPost(captionDraft.trim(), upload)
-                        pendingUpload = null
-                        captionDraft = ""
+                        if (isPublishing) return@Button
+                        isPublishing = true
+                        uploadError = null
+                        val cap = captionDraft.trim()
+                        scope.launch {
+                            try {
+                                kotlinx.coroutines.withTimeout(45_000L) {
+                                    val pubRes = onPublishVideoPostWithResult
+                                    if (pubRes != null) {
+                                        var done = false
+                                        pubRes(cap, upload) { success, errMsg ->
+                                            done = true
+                                            isPublishing = false
+                                            if (success) {
+                                                pendingUpload = null
+                                                captionDraft = ""
+                                                uploadError = null
+                                            } else {
+                                                uploadError = errMsg ?: "Publish failed"
+                                            }
+                                        }
+                                        while (!done) { kotlinx.coroutines.delay(100L) }
+                                    } else {
+                                        onPublishVideoPost(cap, upload)
+                                        isPublishing = false
+                                        pendingUpload = null
+                                        captionDraft = ""
+                                    }
+                                }
+                            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                                android.util.Log.e("VideoFeed", "Reel publish timed out", e)
+                                uploadError = "Upload timed out. Check network connection."
+                                isPublishing = false
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                isPublishing = false
+                                throw e
+                            } catch (e: Exception) {
+                                android.util.Log.e("VideoFeed", "Reel publish error", e)
+                                uploadError = e.localizedMessage ?: "Publish failed"
+                                isPublishing = false
+                            } finally {
+                                isPublishing = false
+                            }
+                        }
                     },
+                    enabled = !isPublishing,
                     colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
                 ) {
-                    Text("Post Reel")
+                    if (isPublishing) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    } else {
+                        Text("Post Reel")
+                    }
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
-                        pendingUpload = null
-                        captionDraft = ""
-                    }
+                        if (!isPublishing) {
+                            pendingUpload = null
+                            captionDraft = ""
+                            uploadError = null
+                        }
+                    },
+                    enabled = !isPublishing
                 ) { Text("Cancel") }
             }
         )

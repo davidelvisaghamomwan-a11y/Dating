@@ -440,12 +440,21 @@ fun InstagramFeedPostCard(
                         val thumb = remember(post.thumbnailDataUrl) {
                             post.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
                         }
+                        val isRemoteThumb = post.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                            post.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true
                         if (file == null && thumb != null) {
                             Image(
                                 bitmap = thumb,
                                 contentDescription = "Video preview",
                                 contentScale = ContentScale.Crop,
                                 filterQuality = FilterQuality.High,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else if (file == null && isRemoteThumb) {
+                            AsyncImage(
+                                model = post.thumbnailDataUrl,
+                                contentDescription = "Video preview",
+                                contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

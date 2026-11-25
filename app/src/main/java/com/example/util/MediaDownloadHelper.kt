@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
+import com.example.data.CloudMediaStorageService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -20,12 +21,17 @@ object MediaDownloadHelper {
         fileNamePrefix: String = "kindred_photo"
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val base64 = mediaDataUrl.substringAfter("base64,", mediaDataUrl)
-            val bytes = Base64.decode(base64, Base64.DEFAULT)
+            val clean = mediaDataUrl.trim()
+            val bytes = if (CloudMediaStorageService.isRemoteHttpUrl(clean)) {
+                CloudMediaStorageService.downloadBytesFromUrl(clean).getOrThrow()
+            } else {
+                val base64 = clean.substringAfter("base64,", clean)
+                Base64.decode(base64, Base64.DEFAULT)
+            }
             if (bytes.isEmpty()) throw IllegalArgumentException("Image data is empty.")
             val mimeType = when {
-                mediaDataUrl.contains("image/png", ignoreCase = true) -> "image/png"
-                mediaDataUrl.contains("image/webp", ignoreCase = true) -> "image/webp"
+                clean.contains("image/png", ignoreCase = true) || clean.contains(".png", ignoreCase = true) -> "image/png"
+                clean.contains("image/webp", ignoreCase = true) || clean.contains(".webp", ignoreCase = true) -> "image/webp"
                 else -> "image/jpeg"
             }
             val ext = when (mimeType) {

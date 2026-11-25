@@ -8,6 +8,7 @@ import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import coil.compose.AsyncImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -477,8 +478,14 @@ internal fun MediaViewerDialog(
 ) {
     val context = LocalContext.current
     val isVideo = message.messageType == "VIDEO"
-    val bitmap = remember(message.mediaDataUrl, isVideo) {
-        if (isVideo) return@remember null
+    val isRemotePhoto = remember(message.mediaDataUrl, isVideo) {
+        !isVideo && (
+            message.mediaDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                message.mediaDataUrl?.startsWith("https://", ignoreCase = true) == true
+            )
+    }
+    val bitmap = remember(message.mediaDataUrl, isVideo, isRemotePhoto) {
+        if (isVideo || isRemotePhoto) return@remember null
         val raw = message.mediaDataUrl ?: return@remember null
         runCatching {
             val base64 = raw.substringAfter("base64,", raw)
@@ -637,6 +644,16 @@ internal fun MediaViewerDialog(
                 } else if (bitmap != null) {
                     Image(
                         bitmap = bitmap,
+                        contentDescription = "Fullscreen chat photo",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(440.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                    )
+                } else if (isRemotePhoto && !message.mediaDataUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = message.mediaDataUrl,
                         contentDescription = "Fullscreen chat photo",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier

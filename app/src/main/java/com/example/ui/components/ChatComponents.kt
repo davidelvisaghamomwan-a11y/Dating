@@ -608,8 +608,13 @@ private fun PhotoMessageBody(
         return
     }
 
-    val bitmap = remember(message.mediaDataUrl) {
+    val isRemotePhoto = remember(message.mediaDataUrl) {
+        message.mediaDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+            message.mediaDataUrl?.startsWith("https://", ignoreCase = true) == true
+    }
+    val bitmap = remember(message.mediaDataUrl, isRemotePhoto) {
         val raw = message.mediaDataUrl ?: return@remember null
+        if (isRemotePhoto) return@remember null
         runCatching {
             val base64 = raw.substringAfter("base64,", raw)
             val bytes = Base64.decode(base64, Base64.DEFAULT)
@@ -625,6 +630,17 @@ private fun PhotoMessageBody(
         if (bitmap != null) {
             Image(
                 bitmap = bitmap,
+                contentDescription = "Shared chat photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(190.dp)
+                    .clickable { onOpenMedia(message) }
+                    .testTag("photo_bubble_image_${message.id}")
+            )
+        } else if (isRemotePhoto && !message.mediaDataUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = message.mediaDataUrl,
                 contentDescription = "Shared chat photo",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -683,8 +699,13 @@ private fun VideoMessageBody(
     onDownloadMedia: (ChatMessage) -> Unit
 ) {
     val context = LocalContext.current
-    val embeddedThumbnail = remember(message.thumbnailDataUrl) {
+    val isRemoteThumb = remember(message.thumbnailDataUrl) {
+        message.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+            message.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true
+    }
+    val embeddedThumbnail = remember(message.thumbnailDataUrl, isRemoteThumb) {
         val raw = message.thumbnailDataUrl ?: return@remember null
+        if (isRemoteThumb) return@remember null
         runCatching {
             val base64 = raw.substringAfter("base64,", raw)
             val bytes = Base64.decode(base64, Base64.DEFAULT)
@@ -693,8 +714,8 @@ private fun VideoMessageBody(
     }
     var extractedBitmap by remember(message.id, message.mediaDataUrl) { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(message.id, message.mediaDataUrl, embeddedThumbnail) {
-        if (embeddedThumbnail == null && !message.mediaDataUrl.isNullOrBlank()) {
+    LaunchedEffect(message.id, message.mediaDataUrl, embeddedThumbnail, isRemoteThumb) {
+        if (embeddedThumbnail == null && !isRemoteThumb && !message.mediaDataUrl.isNullOrBlank()) {
             extractedBitmap = VideoClipHelper.extractVideoThumbnail(
                 context = context,
                 messageId = message.id.ifBlank { "video_msg" },
@@ -720,6 +741,18 @@ private fun VideoMessageBody(
         if (thumb != null) {
             Image(
                 bitmap = thumb.asImageBitmap(),
+                contentDescription = "Video thumbnail",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f))
+            )
+        } else if (isRemoteThumb && !message.thumbnailDataUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = message.thumbnailDataUrl,
                 contentDescription = "Video thumbnail",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -1528,9 +1561,18 @@ internal fun PartnerPhotoGalleryDialog(
                                 val thumb = remember(videoItem.thumbnailDataUrl) {
                                     com.example.util.VerificationAnalyzer.decodeBase64DataUrl(videoItem.thumbnailDataUrl)
                                 }
+                                val isRemoteVideoThumb = videoItem.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                                    videoItem.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true
                                 if (thumb != null) {
                                     Image(
                                         bitmap = thumb,
+                                        contentDescription = videoItem.caption.ifBlank { "Video preview" },
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else if (isRemoteVideoThumb) {
+                                    AsyncImage(
+                                        model = videoItem.thumbnailDataUrl,
                                         contentDescription = videoItem.caption.ifBlank { "Video preview" },
                                         contentScale = ContentScale.Fit,
                                         modifier = Modifier.fillMaxSize()

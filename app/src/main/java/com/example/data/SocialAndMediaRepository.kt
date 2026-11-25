@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.content.Context
+import android.util.Log
 import com.example.model.FavoriteRecord
 import com.example.model.FeedComment
 import com.example.model.FeedPost
@@ -35,6 +36,7 @@ import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -48,16 +50,19 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.io.IOException
 
 /**
  * Modular repository handling Friendships, Profile Views, Likes, Favorites,
- * Profile Videos, 24h Stories, Video Feed, Chunked High-Res Video Sync,
+ * Profile Videos, 24h Stories, Video Feed, Cloud Storage Media Sync,
  * All Presence Listing, Admin Moderation, and Full Account Deletion.
  */
 class SocialAndMediaRepository(
     private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = Firebase.auth
+    private val auth: FirebaseAuth = Firebase.auth,
+    private val cloudStorage: CloudMediaStorageService = CloudMediaStorageService(authProvider = { auth })
 ) {
     private val refreshedFeedPostsFlow = MutableSharedFlow<List<FeedPost>>(extraBufferCapacity = 4)
     private val refreshedStoriesFlow = MutableSharedFlow<List<StoryItem>>(extraBufferCapacity = 4)
@@ -122,19 +127,20 @@ class SocialAndMediaRepository(
         chunkCount: Long,
         chunksCollection: CollectionReference
     ): Result<File> = runCatching {
-        if (!inlineDataUrl.isNullOrBlank()) {
-            return@runCatching VideoClipHelper.materializeVideoFile(context, cacheKey, inlineDataUrl)
-                ?: throw IllegalStateException("Could not decode inline video data.")
-        }
-        val existingCache = File(
-            File(context.cacheDir, "chat_videos"),
-            "video_${cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "clip" }}.mp4"
-        )
+        val existingCache = VideoClipHelper.cacheTargetFile(context, cacheKey)
         if (existingCache.exists() && existingCache.length() > 0L) {
             return@runCatching existingCache
         }
+        val rawUrl = inlineDataUrl?.trim().orEmpty()
+        if (CloudMediaStorageService.isRemoteHttpUrl(rawUrl)) {
+            return@runCatching CloudMediaStorageService.downloadUrlToFile(rawUrl, existingCache).getOrThrow()
+        }
+        if (rawUrl.isNotBlank()) {
+            return@runCatching VideoClipHelper.materializeVideoFile(context, cacheKey, rawUrl)
+                ?: throw IllegalStateException("Could not decode inline video data.")
+        }
         if (chunkCount <= 0L) {
-            throw IllegalStateException("Video has no media chunks.")
+            throw IllegalStateException("Video source is unavailable.")
         }
         val snap = chunksCollection.get().await()
         val ordered = snap.toObjects(MediaChunkRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -143,6 +149,41 @@ class SocialAndMediaRepository(
             .filter { it.isNotBlank() }
         VideoClipHelper.reassembleChunksToFile(context, cacheKey, ordered)
             ?: throw IllegalStateException("Failed to assemble video chunks from Firestore.")
+    }
+
+    private fun DocumentSnapshot.toStoryItemSafe(): StoryItem? {
+        return runCatching {
+            toObject(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                ?.let { item -> if (item.id.isBlank()) item.copy(id = id) else item }
+        }.onFailure { err ->
+            Log.e("KindredStories", "Skipping malformed story document $id", err)
+        }.getOrNull()
+    }
+
+    private fun DocumentSnapshot.toStoryHighlightSafe(): StoryHighlight? {
+        return runCatching {
+            toObject(StoryHighlight::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                ?.let { hl -> if (hl.id.isBlank()) hl.copy(id = id) else hl }
+        }.onFailure { err ->
+            Log.e("KindredHighlights", "Skipping malformed highlight document $id", err)
+        }.getOrNull()
+    }
+
+    private suspend fun resolveThumbnailForFirestoreOrCloud(
+        rawThumbnail: String?,
+        remotePath: String
+    ): String? {
+        val clean = rawThumbnail?.trim().orEmpty()
+        if (clean.isBlank()) return null
+        if (CloudMediaStorageService.isRemoteHttpUrl(clean)) return clean
+        val uploaded = cloudStorage.ensureRemoteMediaUrl(
+            rawDataUrlOrRemoteUrl = clean,
+            remotePath = remotePath,
+            defaultContentType = "image/jpeg"
+        )
+        return uploaded.getOrElse {
+            VerificationAnalyzer.compactImageDataUrl(clean, maxDim = 480, maxRawBytes = 40_000)
+        }
     }
 
     // --- Live Presence Listing for Active Users Screen ---
@@ -646,35 +687,45 @@ class SocialAndMediaRepository(
             val uid = requireUserId()
             val videoRef = db.collection("publicProfiles").document(uid).collection("videos").document()
             docPath = videoRef.path
-            val payload = mutableMapOf<String, Any>(
-                "userId" to uid,
-                "caption" to caption.trim().take(300),
-                "mediaMimeType" to prepared.mimeType.take(80),
-                "mediaDurationSec" to prepared.durationSec.coerceAtLeast(0L),
-                "mediaByteSize" to prepared.sizeBytes.coerceAtLeast(0L),
-                "chunkCount" to prepared.chunkCount.toLong(),
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            if (!prepared.inlineDataUrl.isNullOrBlank()) {
-                payload["mediaDataUrl"] = prepared.inlineDataUrl
-            }
-            if (!prepared.thumbnailDataUrl.isNullOrBlank() && prepared.thumbnailDataUrl.length <= 180_000) {
-                payload["thumbnailDataUrl"] = prepared.thumbnailDataUrl
-            }
-            if (prepared.chunkBase64List.isNotEmpty()) {
-                uploadChunksToSubcollection(
-                    parentCollection = videoRef.collection("mediaChunks"),
-                    ownerUid = uid,
-                    chunks = prepared.chunkBase64List
+            withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
+                val videoUrl = cloudStorage.uploadFile(
+                    file = prepared.localCachedFile,
+                    remotePath = "videos/$uid/${videoRef.id}.mp4",
+                    contentType = prepared.mimeType
+                ).getOrThrow()
+
+                val thumbUrl = resolveThumbnailForFirestoreOrCloud(
+                    rawThumbnail = prepared.thumbnailDataUrl,
+                    remotePath = "videos/$uid/${videoRef.id}_thumb.jpg"
                 )
+
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "caption" to caption.trim().take(300),
+                    "mediaDataUrl" to videoUrl,
+                    "mediaMimeType" to prepared.mimeType.take(80),
+                    "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
+                    "mediaByteSize" to prepared.sizeBytes.coerceAtLeast(0L),
+                    "chunkCount" to 0L,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                if (!thumbUrl.isNullOrBlank() && thumbUrl.length <= 180_000) {
+                    payload["thumbnailDataUrl"] = thumbUrl
+                }
+                videoRef.set(payload).await()
+                Result.success(videoRef.id)
             }
-            videoRef.set(payload).await()
-            Result.success(videoRef.id)
+        } catch (e: TimeoutCancellationException) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "uploadProfileVideo timed out for $docPath", e)
+            Result.failure(IOException(msg, e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "uploadProfileVideo failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
-            Result.failure(e)
+            Result.failure(IllegalStateException(msg, e))
         }
     }
 
@@ -704,7 +755,7 @@ class SocialAndMediaRepository(
                     .snapshots()
                     .map { snap ->
                         val now = System.currentTimeMillis()
-                        snap.toObjects(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        snap.documents.mapNotNull { it.toStoryItemSafe() }
                             .filter { !it.isExpiredAt(now) }
                             .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
                     }
@@ -723,7 +774,7 @@ class SocialAndMediaRepository(
                 db.collection("stories").get(Source.DEFAULT).await()
             }
             val now = System.currentTimeMillis()
-            val list = snap.toObjects(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            val list = snap.documents.mapNotNull { it.toStoryItemSafe() }
                 .filter { !it.isExpiredAt(now) }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedStoriesFlow.tryEmit(list)
@@ -746,36 +797,51 @@ class SocialAndMediaRepository(
         return try {
             val uid = requireUserId()
             val storyRef = db.collection("stories").document()
-            val expiresMs = System.currentTimeMillis() + 86_400_000L
-            val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
-            val payload = mutableMapOf<String, Any>(
-                "userId" to uid,
-                "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                "authorVerified" to (authorProfile?.isProfileVerified == true),
-                "mediaType" to "PHOTO",
-                "mediaDataUrl" to photoDataUrl,
-                "caption" to caption.trim().take(300),
-                "mediaDurationSec" to 0L,
-                "chunkCount" to 0L,
-                "viewerUids" to listOf(uid),
-                "expiresAt" to expiresTimestamp,
-                "expiresAtMs" to expiresMs,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
-            if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
-                payload["authorPhoto"] = authorPhoto
+            docPath = storyRef.path
+            withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
+                val photoUrl = cloudStorage.ensureRemoteMediaUrl(
+                    rawDataUrlOrRemoteUrl = photoDataUrl,
+                    remotePath = "stories/$uid/${storyRef.id}.jpg",
+                    defaultContentType = "image/jpeg"
+                ).getOrThrow()
+
+                val expiresMs = System.currentTimeMillis() + 86_400_000L
+                val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                    "authorVerified" to (authorProfile?.isProfileVerified == true),
+                    "mediaType" to "PHOTO",
+                    "mediaDataUrl" to photoUrl,
+                    "caption" to caption.trim().take(300),
+                    "mediaDurationSec" to 0L,
+                    "chunkCount" to 0L,
+                    "viewerUids" to listOf(uid),
+                    "expiresAt" to expiresTimestamp,
+                    "expiresAtMs" to expiresMs,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
+                if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
+                    payload["authorPhoto"] = authorPhoto
+                }
+                if (!authorProfile?.country.isNullOrBlank()) {
+                    payload["authorCountry"] = authorProfile!!.country.take(80)
+                }
+                storyRef.set(payload).await()
+                Result.success(storyRef.id)
             }
-            if (!authorProfile?.country.isNullOrBlank()) {
-                payload["authorCountry"] = authorProfile!!.country.take(80)
-            }
-            storyRef.set(payload).await()
-            Result.success(storyRef.id)
+        } catch (e: TimeoutCancellationException) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "postPhotoStory timed out for $docPath", e)
+            Result.failure(IOException(msg, e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "postPhotoStory failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
-            Result.failure(e)
+            Result.failure(IllegalStateException(msg, e))
         }
     }
 
@@ -790,48 +856,58 @@ class SocialAndMediaRepository(
             val uid = requireUserId()
             val storyRef = db.collection("stories").document()
             docPath = storyRef.path
-            val expiresMs = System.currentTimeMillis() + 86_400_000L
-            val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
-            val payload = mutableMapOf<String, Any>(
-                "userId" to uid,
-                "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                "authorVerified" to (authorProfile?.isProfileVerified == true),
-                "mediaType" to "VIDEO",
-                "caption" to caption.trim().take(300),
-                "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
-                "chunkCount" to prepared.chunkCount.toLong(),
-                "viewerUids" to listOf(uid),
-                "expiresAt" to expiresTimestamp,
-                "expiresAtMs" to expiresMs,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
-            if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
-                payload["authorPhoto"] = authorPhoto
-            }
-            if (!authorProfile?.country.isNullOrBlank()) {
-                payload["authorCountry"] = authorProfile!!.country.take(80)
-            }
-            if (!prepared.inlineDataUrl.isNullOrBlank()) {
-                payload["mediaDataUrl"] = prepared.inlineDataUrl
-            }
-            if (!prepared.thumbnailDataUrl.isNullOrBlank() && prepared.thumbnailDataUrl.length <= 180_000) {
-                payload["thumbnailDataUrl"] = prepared.thumbnailDataUrl
-            }
-            if (prepared.chunkBase64List.isNotEmpty()) {
-                uploadChunksToSubcollection(
-                    parentCollection = storyRef.collection("mediaChunks"),
-                    ownerUid = uid,
-                    chunks = prepared.chunkBase64List
+            withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
+                val videoUrl = cloudStorage.uploadFile(
+                    file = prepared.localCachedFile,
+                    remotePath = "stories/$uid/${storyRef.id}.mp4",
+                    contentType = prepared.mimeType
+                ).getOrThrow()
+
+                val thumbUrl = resolveThumbnailForFirestoreOrCloud(
+                    rawThumbnail = prepared.thumbnailDataUrl,
+                    remotePath = "stories/$uid/${storyRef.id}_thumb.jpg"
                 )
+
+                val expiresMs = System.currentTimeMillis() + 86_400_000L
+                val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                    "authorVerified" to (authorProfile?.isProfileVerified == true),
+                    "mediaType" to "VIDEO",
+                    "mediaDataUrl" to videoUrl,
+                    "caption" to caption.trim().take(300),
+                    "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
+                    "chunkCount" to 0L,
+                    "viewerUids" to listOf(uid),
+                    "expiresAt" to expiresTimestamp,
+                    "expiresAtMs" to expiresMs,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
+                if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
+                    payload["authorPhoto"] = authorPhoto
+                }
+                if (!authorProfile?.country.isNullOrBlank()) {
+                    payload["authorCountry"] = authorProfile!!.country.take(80)
+                }
+                if (!thumbUrl.isNullOrBlank() && thumbUrl.length <= 180_000) {
+                    payload["thumbnailDataUrl"] = thumbUrl
+                }
+                storyRef.set(payload).await()
+                Result.success(storyRef.id)
             }
-            storyRef.set(payload).await()
-            Result.success(storyRef.id)
+        } catch (e: TimeoutCancellationException) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "postVideoStory timed out for $docPath", e)
+            Result.failure(IOException(msg, e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "postVideoStory failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
-            Result.failure(e)
+            Result.failure(IllegalStateException(msg, e))
         }
     }
 
@@ -875,7 +951,7 @@ class SocialAndMediaRepository(
                     .whereEqualTo("userId", userId)
                     .snapshots()
                     .map { snap ->
-                        snap.toObjects(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        snap.documents.mapNotNull { it.toStoryItemSafe() }
                             .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "stories", userId) }
@@ -891,7 +967,7 @@ class SocialAndMediaRepository(
                     .whereEqualTo("userId", userId)
                     .snapshots()
                     .map { snap ->
-                        snap.toObjects(StoryHighlight::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        snap.documents.mapNotNull { it.toStoryHighlightSafe() }
                             .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "highlights", userId) }
@@ -913,17 +989,18 @@ class SocialAndMediaRepository(
             val ref = db.collection("highlights").document()
             docPath = ref.path
 
-            val prepared = withContext(Dispatchers.Default) {
+            withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
                 val safeTitle = title.trim().ifBlank { "Highlight" }.take(40)
                 val compactedItems = mutableListOf<Map<String, Any>>()
                 var remainingPayloadBudget = 580_000
-                var resolvedCover = VerificationAnalyzer.compactImageDataUrl(
-                    rawUrl = coverUrl,
-                    maxDim = 480,
-                    maxRawBytes = 45_000
+
+                var resolvedCover = resolveThumbnailForFirestoreOrCloud(
+                    rawThumbnail = coverUrl,
+                    remotePath = "highlights/$uid/${ref.id}/cover.jpg"
                 ).orEmpty()
 
-                storyItems.take(25).forEachIndexed { idx, s ->
+                val limitedItems = storyItems.take(25)
+                for ((idx, s) in limitedItems.withIndex()) {
                     val perItemMaxBytes = when {
                         remainingPayloadBudget > 220_000 -> 65_000
                         remainingPayloadBudget > 90_000 -> 35_000
@@ -934,28 +1011,39 @@ class SocialAndMediaRepository(
                     var safeMediaUrl = ""
                     var safeThumbUrl = ""
                     if (s.mediaType == "VIDEO") {
-                        safeThumbUrl = VerificationAnalyzer.compactImageDataUrl(
-                            rawUrl = s.thumbnailDataUrl,
-                            maxDim = 480,
-                            maxRawBytes = 35_000
+                        safeThumbUrl = resolveThumbnailForFirestoreOrCloud(
+                            rawThumbnail = s.thumbnailDataUrl,
+                            remotePath = "highlights/$uid/${ref.id}/item_${idx}_thumb.jpg"
                         ).orEmpty()
-                        // Inline video highlight clips only if small enough; otherwise keep thumbnail + story ref id
-                        val rawVideo = s.mediaDataUrl.orEmpty()
-                        if (rawVideo.isNotBlank() && rawVideo.length <= 120_000 && rawVideo.length <= remainingPayloadBudget) {
+                        val rawVideo = s.mediaDataUrl?.trim().orEmpty()
+                        if (CloudMediaStorageService.isRemoteHttpUrl(rawVideo)) {
+                            safeMediaUrl = rawVideo.take(2048)
+                        } else if (rawVideo.isNotBlank() && rawVideo.length <= 120_000 && rawVideo.length <= remainingPayloadBudget) {
                             safeMediaUrl = rawVideo
                         }
                     } else {
-                        safeMediaUrl = VerificationAnalyzer.compactImageDataUrl(
-                            rawUrl = s.mediaDataUrl ?: s.thumbnailDataUrl,
-                            maxDim = perItemMaxDim,
-                            maxRawBytes = perItemMaxBytes
-                        ).orEmpty()
+                        val rawPhoto = (s.mediaDataUrl ?: s.thumbnailDataUrl)?.trim().orEmpty()
+                        safeMediaUrl = if (CloudMediaStorageService.isRemoteHttpUrl(rawPhoto)) {
+                            rawPhoto.take(2048)
+                        } else {
+                            withContext(Dispatchers.Default) {
+                                VerificationAnalyzer.compactImageDataUrl(
+                                    rawUrl = rawPhoto,
+                                    maxDim = perItemMaxDim,
+                                    maxRawBytes = perItemMaxBytes
+                                ).orEmpty()
+                            }
+                        }
                     }
 
                     if (resolvedCover.isBlank()) {
                         resolvedCover = safeThumbUrl.ifBlank {
-                            if (safeMediaUrl.startsWith("data:image") || safeMediaUrl.startsWith("http")) {
-                                VerificationAnalyzer.compactImageDataUrl(safeMediaUrl, maxDim = 420, maxRawBytes = 35_000).orEmpty()
+                            if (CloudMediaStorageService.isRemoteHttpUrl(safeMediaUrl)) {
+                                safeMediaUrl.take(2048)
+                            } else if (safeMediaUrl.startsWith("data:image")) {
+                                withContext(Dispatchers.Default) {
+                                    VerificationAnalyzer.compactImageDataUrl(safeMediaUrl, maxDim = 420, maxRawBytes = 35_000).orEmpty()
+                                }
                             } else ""
                         }
                     }
@@ -978,25 +1066,29 @@ class SocialAndMediaRepository(
                     }
                 }
 
-                Triple(safeTitle, resolvedCover.take(180_000), compactedItems)
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "title" to safeTitle,
+                    "storyItems" to compactedItems,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                val safeCover = resolvedCover.take(180_000)
+                if (safeCover.isNotBlank()) {
+                    payload["coverUrl"] = safeCover
+                }
+                ref.set(payload).await()
+                Result.success(ref.id)
             }
-
-            val payload = mutableMapOf<String, Any>(
-                "userId" to uid,
-                "title" to prepared.first,
-                "storyItems" to prepared.third,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            if (prepared.second.isNotBlank()) {
-                payload["coverUrl"] = prepared.second
-            }
-            ref.set(payload).await()
-            Result.success(ref.id)
+        } catch (e: TimeoutCancellationException) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e("KindredHighlights", "createHighlight timed out for $docPath", e)
+            Result.failure(IOException(msg, e))
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.CREATE, docPath)
-            Result.failure(e)
+        } catch (t: Throwable) {
+            Log.e("KindredHighlights", "createHighlight failed for $docPath", t)
+            if (t is Exception) handleFirestoreError(t, OperationType.CREATE, docPath)
+            Result.failure(IllegalStateException(t.localizedMessage ?: "Failed to create highlight.", t))
         }
     }
 
@@ -1065,45 +1157,55 @@ class SocialAndMediaRepository(
             val uid = requireUserId()
             val postRef = db.collection("videoPosts").document()
             docPath = postRef.path
-            val payload = mutableMapOf<String, Any>(
-                "userId" to uid,
-                "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                "authorVerified" to (authorProfile?.isProfileVerified == true),
-                "caption" to caption.trim().take(300),
-                "mediaMimeType" to prepared.mimeType.take(80),
-                "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
-                "mediaByteSize" to prepared.sizeBytes.coerceAtLeast(0L),
-                "chunkCount" to prepared.chunkCount.toLong(),
-                "likedByUids" to emptyList<String>(),
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
-            if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
-                payload["authorPhoto"] = authorPhoto
-            }
-            if (!authorProfile?.country.isNullOrBlank()) {
-                payload["authorCountry"] = authorProfile!!.country.take(80)
-            }
-            if (!prepared.inlineDataUrl.isNullOrBlank()) {
-                payload["mediaDataUrl"] = prepared.inlineDataUrl
-            }
-            if (!prepared.thumbnailDataUrl.isNullOrBlank() && prepared.thumbnailDataUrl.length <= 180_000) {
-                payload["thumbnailDataUrl"] = prepared.thumbnailDataUrl
-            }
-            if (prepared.chunkBase64List.isNotEmpty()) {
-                uploadChunksToSubcollection(
-                    parentCollection = postRef.collection("mediaChunks"),
-                    ownerUid = uid,
-                    chunks = prepared.chunkBase64List
+            withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
+                val videoUrl = cloudStorage.uploadFile(
+                    file = prepared.localCachedFile,
+                    remotePath = "reels/$uid/${postRef.id}.mp4",
+                    contentType = prepared.mimeType
+                ).getOrThrow()
+
+                val thumbUrl = resolveThumbnailForFirestoreOrCloud(
+                    rawThumbnail = prepared.thumbnailDataUrl,
+                    remotePath = "reels/$uid/${postRef.id}_thumb.jpg"
                 )
+
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                    "authorVerified" to (authorProfile?.isProfileVerified == true),
+                    "caption" to caption.trim().take(300),
+                    "mediaDataUrl" to videoUrl,
+                    "mediaMimeType" to prepared.mimeType.take(80),
+                    "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
+                    "mediaByteSize" to prepared.sizeBytes.coerceAtLeast(0L),
+                    "chunkCount" to 0L,
+                    "likedByUids" to emptyList<String>(),
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
+                if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
+                    payload["authorPhoto"] = authorPhoto
+                }
+                if (!authorProfile?.country.isNullOrBlank()) {
+                    payload["authorCountry"] = authorProfile!!.country.take(80)
+                }
+                if (!thumbUrl.isNullOrBlank() && thumbUrl.length <= 180_000) {
+                    payload["thumbnailDataUrl"] = thumbUrl
+                }
+                postRef.set(payload).await()
+                Result.success(postRef.id)
             }
-            postRef.set(payload).await()
-            Result.success(postRef.id)
+        } catch (e: TimeoutCancellationException) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "publishVideoPost timed out for $docPath", e)
+            Result.failure(IOException(msg, e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "publishVideoPost failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
-            Result.failure(e)
+            Result.failure(IllegalStateException(msg, e))
         }
     }
 
@@ -1276,16 +1378,16 @@ class SocialAndMediaRepository(
         preparedVideo: PreparedVideoUpload? = null
     ): Result<String> {
         val cleanCaption = caption.trim().take(1000)
-        val validPhotos = buildList {
+        val rawPhotos = buildList {
             val single = photoDataUrl?.trim().orEmpty()
-            if (single.isNotBlank() && single.length <= 900_000) add(single)
+            if (single.isNotBlank()) add(single)
             photoUrls.forEach { url ->
                 val clean = url.trim()
-                if (clean.isNotBlank() && clean.length <= 180_000) add(clean)
+                if (clean.isNotBlank()) add(clean)
             }
         }.distinct().take(6)
 
-        if (cleanCaption.isBlank() && validPhotos.isEmpty() && preparedVideo == null) {
+        if (cleanCaption.isBlank() && rawPhotos.isEmpty() && preparedVideo == null) {
             return Result.failure(IllegalArgumentException("Add text, photos, or a video to share a post."))
         }
         var docPath = "feedPosts"
@@ -1297,65 +1399,82 @@ class SocialAndMediaRepository(
 
             val mediaType = when {
                 preparedVideo != null -> "VIDEO"
-                validPhotos.isNotEmpty() -> "PHOTO"
+                rawPhotos.isNotEmpty() -> "PHOTO"
                 else -> "TEXT"
             }
 
-            val payload = mutableMapOf<String, Any>(
-                "userId" to uid,
-                "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                "authorVerified" to (authorProfile?.isProfileVerified == true),
-                "mediaType" to mediaType,
-                "caption" to cleanCaption,
-                "likedByUids" to emptyList<String>(),
-                "savedByUids" to emptyList<String>(),
-                "commentCount" to 0L,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
-            if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
-                payload["authorPhoto"] = authorPhoto
-            }
-            if (!authorProfile?.country.isNullOrBlank()) {
-                payload["authorCountry"] = authorProfile!!.country.take(80)
-            }
-            if (!authorProfile?.cityLabel.isNullOrBlank()) {
-                payload["authorCity"] = authorProfile!!.cityLabel.take(80)
-            }
-            if (preparedVideo != null) {
-                payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
-                payload["mediaDurationSec"] = preparedVideo.durationSec.coerceAtLeast(1L)
-                payload["mediaByteSize"] = preparedVideo.sizeBytes.coerceAtLeast(0L)
-                payload["chunkCount"] = preparedVideo.chunkCount.toLong()
-                if (!preparedVideo.inlineDataUrl.isNullOrBlank()) {
-                    payload["mediaDataUrl"] = preparedVideo.inlineDataUrl
+            withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
+                val payload = mutableMapOf<String, Any>(
+                    "userId" to uid,
+                    "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
+                    "authorVerified" to (authorProfile?.isProfileVerified == true),
+                    "mediaType" to mediaType,
+                    "caption" to cleanCaption,
+                    "likedByUids" to emptyList<String>(),
+                    "savedByUids" to emptyList<String>(),
+                    "commentCount" to 0L,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
+                if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
+                    payload["authorPhoto"] = authorPhoto
                 }
-                if (!preparedVideo.thumbnailDataUrl.isNullOrBlank() && preparedVideo.thumbnailDataUrl.length <= 180_000) {
-                    payload["thumbnailDataUrl"] = preparedVideo.thumbnailDataUrl
+                if (!authorProfile?.country.isNullOrBlank()) {
+                    payload["authorCountry"] = authorProfile!!.country.take(80)
                 }
-                if (preparedVideo.chunkBase64List.isNotEmpty()) {
-                    uploadChunksToSubcollection(
-                        parentCollection = postRef.collection("mediaChunks"),
-                        ownerUid = uid,
-                        chunks = preparedVideo.chunkBase64List
+                if (!authorProfile?.cityLabel.isNullOrBlank()) {
+                    payload["authorCity"] = authorProfile!!.cityLabel.take(80)
+                }
+                if (preparedVideo != null) {
+                    val videoUrl = cloudStorage.uploadFile(
+                        file = preparedVideo.localCachedFile,
+                        remotePath = "feed_posts/$uid/$postId.mp4",
+                        contentType = preparedVideo.mimeType
+                    ).getOrThrow()
+
+                    val thumbUrl = resolveThumbnailForFirestoreOrCloud(
+                        rawThumbnail = preparedVideo.thumbnailDataUrl,
+                        remotePath = "feed_posts/$uid/${postId}_thumb.jpg"
                     )
+
+                    payload["mediaDataUrl"] = videoUrl
+                    payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
+                    payload["mediaDurationSec"] = preparedVideo.durationSec.coerceAtLeast(1L)
+                    payload["mediaByteSize"] = preparedVideo.sizeBytes.coerceAtLeast(0L)
+                    payload["chunkCount"] = 0L
+                    if (!thumbUrl.isNullOrBlank() && thumbUrl.length <= 180_000) {
+                        payload["thumbnailDataUrl"] = thumbUrl
+                    }
+                } else if (rawPhotos.isNotEmpty()) {
+                    val uploadedUrls = coroutineScope {
+                        rawPhotos.mapIndexed { idx, rawPhoto ->
+                            async(Dispatchers.IO) {
+                                cloudStorage.ensureRemoteMediaUrl(
+                                    rawDataUrlOrRemoteUrl = rawPhoto,
+                                    remotePath = "feed_posts/$uid/${postId}_$idx.jpg",
+                                    defaultContentType = "image/jpeg"
+                                ).getOrThrow()
+                            }
+                        }.awaitAll()
+                    }
+                    payload["mediaDataUrl"] = uploadedUrls.first()
+                    payload["mediaUrls"] = if (uploadedUrls.size > 1) uploadedUrls else emptyList<String>()
+                    payload["chunkCount"] = 0L
                 }
-            } else if (validPhotos.isNotEmpty()) {
-                payload["mediaDataUrl"] = validPhotos.first()
-                payload["mediaUrls"] = if (validPhotos.size > 1) {
-                    validPhotos.filter { it.length <= 180_000 }
-                } else {
-                    emptyList()
-                }
-                payload["chunkCount"] = 0L
+                postRef.set(payload).await()
+                Result.success(postId)
             }
-            postRef.set(payload).await()
-            Result.success(postId)
+        } catch (e: TimeoutCancellationException) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "publishFeedPost timed out for $docPath", e)
+            Result.failure(IOException(msg, e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "publishFeedPost failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
-            Result.failure(e)
+            Result.failure(IllegalStateException(msg, e))
         }
     }
 

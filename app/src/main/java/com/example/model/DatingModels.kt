@@ -422,7 +422,7 @@ data class FavoriteRecord(
 @Keep
 @IgnoreExtraProperties
 data class StoryItem(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val authorName: String = "",
     val authorPhoto: String? = null,

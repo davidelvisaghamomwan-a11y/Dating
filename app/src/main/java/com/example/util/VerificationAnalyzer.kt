@@ -431,7 +431,24 @@ object VerificationAnalyzer {
         }
     }
 
-    private fun decodeAndOrientUri(context: Context, uri: Uri): Bitmap? {
+    private fun calculateInSampleSize(
+        rawWidth: Int,
+        rawHeight: Int,
+        reqWidth: Int,
+        reqHeight: Int
+    ): Int {
+        var inSampleSize = 1
+        if (rawHeight > reqHeight || rawWidth > reqWidth) {
+            val halfHeight = rawHeight / 2
+            val halfWidth = rawWidth / 2
+            while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize.coerceAtLeast(1)
+    }
+
+    private fun decodeAndOrientUri(context: Context, uri: Uri, targetMaxDim: Int = 1280): Bitmap? {
         val orientation = try {
             context.contentResolver.openInputStream(uri)?.use { stream ->
                 ExifInterface(stream).getAttributeInt(
@@ -439,11 +456,29 @@ object VerificationAnalyzer {
                     ExifInterface.ORIENTATION_NORMAL
                 )
             } ?: ExifInterface.ORIENTATION_NORMAL
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             ExifInterface.ORIENTATION_NORMAL
         }
-        val original = context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it)
+        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, boundsOpts)
+            }
+        }
+        val sampleSize = if (boundsOpts.outWidth > 0 && boundsOpts.outHeight > 0) {
+            calculateInSampleSize(boundsOpts.outWidth, boundsOpts.outHeight, targetMaxDim, targetMaxDim)
+        } else {
+            1
+        }
+        val decodeOpts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+        }
+        val original = try {
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, decodeOpts)
+            }
+        } catch (_: Throwable) {
+            null
         } ?: return null
         return applyExifOrientation(original, orientation)
     }
@@ -468,7 +503,7 @@ object VerificationAnalyzer {
         }
         return try {
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             bitmap
         }
     }
@@ -476,9 +511,9 @@ object VerificationAnalyzer {
     suspend fun decodeUriToBitmap(context: Context, uri: Uri, maxDim: Int = 1080): Bitmap? =
         withContext(Dispatchers.IO) {
             try {
-                val original = decodeAndOrientUri(context, uri) ?: return@withContext null
+                val original = decodeAndOrientUri(context, uri, targetMaxDim = maxDim) ?: return@withContext null
                 resizeToMaxDim(original, maxDim = maxDim)
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 null
             }
         }
@@ -531,13 +566,26 @@ object VerificationAnalyzer {
 
     fun decodeBitmapFromDataUrl(dataUrl: String?): Bitmap? {
         if (dataUrl.isNullOrBlank()) return null
+        if (!dataUrl.startsWith("data:image", ignoreCase = true) &&
+            (dataUrl.startsWith("http://", ignoreCase = true) || dataUrl.startsWith("https://", ignoreCase = true))
+        ) {
+            return null
+        }
         return try {
             val key = cacheKeyForDataUrl(dataUrl)
             decodedBitmapCache.get(key)?.takeIf { !it.isRecycled }?.let { return it }
 
             val cacheFile = diskImageCacheDir?.let { File(it, "$key.bin") }
             if (cacheFile != null && cacheFile.exists() && cacheFile.length() > 0L) {
-                val diskBmp = BitmapFactory.decodeFile(cacheFile.absolutePath)
+                val diskOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(cacheFile.absolutePath, diskOpts)
+                val diskSample = if (diskOpts.outWidth > 0 && diskOpts.outHeight > 0) {
+                    calculateInSampleSize(diskOpts.outWidth, diskOpts.outHeight, 1280, 1280)
+                } else 1
+                val diskBmp = BitmapFactory.decodeFile(
+                    cacheFile.absolutePath,
+                    BitmapFactory.Options().apply { inSampleSize = diskSample }
+                )
                 if (diskBmp != null) {
                     decodedBitmapCache.put(key, diskBmp)
                     return diskBmp
@@ -547,7 +595,17 @@ object VerificationAnalyzer {
             val base64Part = dataUrl.substringAfter("base64,", dataUrl)
             val bytes = Base64.decode(base64Part, Base64.DEFAULT)
             if (bytes.isEmpty()) return null
-            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val sample = if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                calculateInSampleSize(bounds.outWidth, bounds.outHeight, 1280, 1280)
+            } else 1
+            val decoded = BitmapFactory.decodeByteArray(
+                bytes,
+                0,
+                bytes.size,
+                BitmapFactory.Options().apply { inSampleSize = sample }
+            ) ?: return null
             decodedBitmapCache.put(key, decoded)
             if (cacheFile != null && !cacheFile.exists()) {
                 runCatching {
@@ -570,23 +628,25 @@ object VerificationAnalyzer {
         maxDim: Int = 512,
         maxRawBytes: Int = 55_000
     ): String? {
-        val clean = rawUrl?.trim().orEmpty()
-        if (clean.isBlank()) return null
-        if (clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true)) {
-            return clean.take(2048)
-        }
-        if (!clean.startsWith("data:image", ignoreCase = true)) {
-            return null
-        }
-        val maxDataUrlLen = (maxRawBytes * 4 / 3) + 64
-        val bmp = decodeBitmapFromDataUrl(clean) ?: return null
-        if (clean.length <= maxDataUrlLen && bmp.width <= maxDim && bmp.height <= maxDim) {
-            return clean
-        }
-        return runCatching {
+        return try {
+            val clean = rawUrl?.trim().orEmpty()
+            if (clean.isBlank()) return null
+            if (clean.startsWith("http://", ignoreCase = true) || clean.startsWith("https://", ignoreCase = true)) {
+                return clean.take(2048)
+            }
+            if (!clean.startsWith("data:image", ignoreCase = true)) {
+                return null
+            }
+            val maxDataUrlLen = (maxRawBytes * 4 / 3) + 64
+            val bmp = decodeBitmapFromDataUrl(clean) ?: return null
+            if (clean.length <= maxDataUrlLen && bmp.width <= maxDim && bmp.height <= maxDim) {
+                return clean
+            }
             val compacted = compressBitmapToDataUrl(bmp, maxDim = maxDim, maxRawBytes = maxRawBytes)
             compacted.takeIf { it.length <= 180_000 }
-        }.getOrNull()
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     suspend fun prefetchDataUrls(urls: List<String>) = withContext(Dispatchers.Default) {

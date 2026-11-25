@@ -623,21 +623,49 @@ fun CreateStoryStudioDialog(
                                 onClick = {
                                     if (isPublishing) return@Button
                                     isPublishing = true
+                                    previewError = null
                                     val cap = captionDraft.trim()
                                     val photo = capturedPhotoDataUrl
                                     val vid = capturedVideo
-                                    if (photo != null) {
-                                        onPostPhotoStory(photo, cap) { success ->
+                                    scope.launch {
+                                        try {
+                                            kotlinx.coroutines.withTimeout(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
+                                                if (photo != null) {
+                                                    var done = false
+                                                    onPostPhotoStory(photo, cap) { success ->
+                                                        done = true
+                                                        isPublishing = false
+                                                        if (success) onDismiss()
+                                                        else previewError = "Failed to upload photo story"
+                                                    }
+                                                    while (!done) { kotlinx.coroutines.delay(100L) }
+                                                } else if (vid != null) {
+                                                    var done = false
+                                                    onPostVideoStory(vid, cap) { success ->
+                                                        done = true
+                                                        isPublishing = false
+                                                        if (success) onDismiss()
+                                                        else previewError = "Failed to upload video story"
+                                                    }
+                                                    while (!done) { kotlinx.coroutines.delay(100L) }
+                                                } else {
+                                                    isPublishing = false
+                                                }
+                                            }
+                                        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                                            android.util.Log.e("CreateStoryStudio", "Story upload timed out", e)
+                                            previewError = "Upload timed out. Check network connection."
                                             isPublishing = false
-                                            if (success) onDismiss()
-                                        }
-                                    } else if (vid != null) {
-                                        onPostVideoStory(vid, cap) { success ->
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
                                             isPublishing = false
-                                            if (success) onDismiss()
+                                            throw e
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("CreateStoryStudio", "Story upload error", e)
+                                            previewError = e.localizedMessage ?: "Upload failed"
+                                            isPublishing = false
+                                        } finally {
+                                            isPublishing = false
                                         }
-                                    } else {
-                                        isPublishing = false
                                     }
                                 },
                                 enabled = !isPublishing,

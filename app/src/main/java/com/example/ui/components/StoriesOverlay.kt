@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
 import com.example.model.PublicProfile
 import com.example.model.StoryItem
 import com.example.ui.theme.CoralRose
@@ -426,12 +427,21 @@ fun StoryViewerDialog(
                 val bitmap = remember(story.mediaDataUrl) {
                     story.mediaDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
                 }
+                val isRemoteHttp = story.mediaDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                    story.mediaDataUrl?.startsWith("https://", ignoreCase = true) == true
                 if (bitmap != null) {
                     Image(
                         bitmap = bitmap,
                         contentDescription = "Story photo by ${story.authorName}",
                         contentScale = ContentScale.Fit,
                         filterQuality = FilterQuality.High,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (isRemoteHttp) {
+                    AsyncImage(
+                        model = story.mediaDataUrl,
+                        contentDescription = "Story photo by ${story.authorName}",
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

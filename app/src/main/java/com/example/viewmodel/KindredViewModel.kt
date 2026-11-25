@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiIcebreakerService
 import com.example.ai.IcebreakerAiUiState
+import com.example.data.CloudMediaStorageService
 import com.example.data.KindredRepository
 import com.example.data.SocialAndMediaRepository
 import com.example.model.ActiveMemberPresenceItem
@@ -54,6 +55,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
@@ -1059,6 +1061,9 @@ class KindredViewModel(
     private val _isVideoUploading = MutableStateFlow(false)
     val isVideoUploading: StateFlow<Boolean> = _isVideoUploading.asStateFlow()
 
+    private val _isUploadingMedia = MutableStateFlow(false)
+    val isUploadingMedia: StateFlow<Boolean> = _isUploadingMedia.asStateFlow()
+
     private val _activeChallenge = MutableStateFlow(KindredConstants.VERIFICATION_CHALLENGES.first())
     val activeChallenge: StateFlow<VerificationChallenge> = _activeChallenge.asStateFlow()
 
@@ -1373,25 +1378,45 @@ class KindredViewModel(
         replyToText: String? = null,
         replyToType: String? = null
     ) {
+        val hasMediaAttachment = preparedVideo != null || !mediaDataUrl.isNullOrBlank()
         viewModelScope.launch {
-            val result = repository.sendMessage(
-                matchId = matchId,
-                participantUids = participantUids,
-                text = text,
-                messageType = messageType,
-                mediaDataUrl = mediaDataUrl,
-                mediaGifId = mediaGifId,
-                mediaDurationSec = mediaDurationSec,
-                disappearingSeconds = disappearingSeconds,
-                viewOnce = viewOnce,
-                preparedVideo = preparedVideo,
-                replyToMessageId = replyToMessageId,
-                replyToSenderId = replyToSenderId,
-                replyToText = replyToText,
-                replyToType = replyToType
-            )
-            result.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Failed to send message"
+            if (hasMediaAttachment) _isUploadingMedia.value = true
+            try {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                    val result = repository.sendMessage(
+                        matchId = matchId,
+                        participantUids = participantUids,
+                        text = text,
+                        messageType = messageType,
+                        mediaDataUrl = mediaDataUrl,
+                        mediaGifId = mediaGifId,
+                        mediaDurationSec = mediaDurationSec,
+                        disappearingSeconds = disappearingSeconds,
+                        viewOnce = viewOnce,
+                        preparedVideo = preparedVideo,
+                        replyToMessageId = replyToMessageId,
+                        replyToSenderId = replyToSenderId,
+                        replyToText = replyToText,
+                        replyToType = replyToType
+                    )
+                    result.onFailure { err ->
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "sendMessage failed: $msg", err)
+                        _actionStatusMessage.value = msg
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "sendMessage timed out", e)
+                _actionStatusMessage.value = msg
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "sendMessage unexpected error: $msg", e)
+                _actionStatusMessage.value = msg
+            } finally {
+                if (hasMediaAttachment) _isUploadingMedia.value = false
             }
         }
     }
@@ -1715,34 +1740,53 @@ class KindredViewModel(
     ) {
         viewModelScope.launch {
             _isBusy.value = true
-            val result = repository.saveProfileAndPreferences(
-                email = userEmail,
-                displayName = displayName,
-                age = age,
-                gender = gender,
-                bio = bio,
-                cityLabel = cityLabel,
-                country = country,
-                latitude = latitude,
-                longitude = longitude,
-                interests = interests,
-                photoDataUrl = photoDataUrl,
-                profilePhotos = profilePhotos,
-                discoverable = discoverable,
-                interestedIn = interestedIn,
-                minAgePref = minAgePref,
-                maxAgePref = maxAgePref,
-                maxDistanceKm = maxDistanceKm,
-                verifiedOnlyFilter = verifiedOnlyFilter,
-                dateOfBirth = dateOfBirth,
-                profileCompleted = profileCompleted
-            )
-            _isBusy.value = false
-            result.onSuccess {
-                _actionStatusMessage.value = "Profile & GeoHash index saved"
-                onComplete()
-            }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Failed to save profile"
+            _isUploadingMedia.value = true
+            try {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                    val result = repository.saveProfileAndPreferences(
+                        email = userEmail,
+                        displayName = displayName,
+                        age = age,
+                        gender = gender,
+                        bio = bio,
+                        cityLabel = cityLabel,
+                        country = country,
+                        latitude = latitude,
+                        longitude = longitude,
+                        interests = interests,
+                        photoDataUrl = photoDataUrl,
+                        profilePhotos = profilePhotos,
+                        discoverable = discoverable,
+                        interestedIn = interestedIn,
+                        minAgePref = minAgePref,
+                        maxAgePref = maxAgePref,
+                        maxDistanceKm = maxDistanceKm,
+                        verifiedOnlyFilter = verifiedOnlyFilter,
+                        dateOfBirth = dateOfBirth,
+                        profileCompleted = profileCompleted
+                    )
+                    result.onSuccess {
+                        _actionStatusMessage.value = "Profile & GeoHash index saved"
+                        onComplete()
+                    }.onFailure { err ->
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "saveProfile failed: $msg", err)
+                        _actionStatusMessage.value = msg
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "saveProfile timed out", e)
+                _actionStatusMessage.value = msg
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "saveProfile error: $msg", e)
+                _actionStatusMessage.value = msg
+            } finally {
+                _isUploadingMedia.value = false
+                _isBusy.value = false
             }
         }
     }
@@ -1761,25 +1805,44 @@ class KindredViewModel(
     ) {
         viewModelScope.launch {
             _isBusy.value = true
-            val result = repository.updateProfileContent(
-                email = userEmail,
-                fallbackDisplayName = defaultDisplayName,
-                bio = bio,
-                interests = interests,
-                profilePhotos = profilePhotos,
-                cityLabel = cityLabel,
-                country = country,
-                displayName = displayName,
-                gender = gender,
-                dateOfBirth = dateOfBirth,
-                computedAge = computedAge
-            )
-            _isBusy.value = false
-            result.onSuccess {
-                _actionStatusMessage.value = "Profile updated in Firestore"
-                onComplete()
-            }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Failed to update profile"
+            _isUploadingMedia.value = true
+            try {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                    val result = repository.updateProfileContent(
+                        email = userEmail,
+                        fallbackDisplayName = defaultDisplayName,
+                        bio = bio,
+                        interests = interests,
+                        profilePhotos = profilePhotos,
+                        cityLabel = cityLabel,
+                        country = country,
+                        displayName = displayName,
+                        gender = gender,
+                        dateOfBirth = dateOfBirth,
+                        computedAge = computedAge
+                    )
+                    result.onSuccess {
+                        _actionStatusMessage.value = "Profile updated in Firestore"
+                        onComplete()
+                    }.onFailure { err ->
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "updateProfileContent failed: $msg", err)
+                        _actionStatusMessage.value = msg
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "updateProfileContent timed out", e)
+                _actionStatusMessage.value = msg
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "updateProfileContent error: $msg", e)
+                _actionStatusMessage.value = msg
+            } finally {
+                _isUploadingMedia.value = false
+                _isBusy.value = false
             }
         }
     }
@@ -1923,17 +1986,49 @@ class KindredViewModel(
         prepared: PreparedVideoUpload,
         onComplete: () -> Unit = {}
     ) {
+        uploadProfileVideoWithResult(caption, prepared) { success, _ ->
+            if (success) onComplete()
+        }
+    }
+
+    fun uploadProfileVideoWithResult(
+        caption: String,
+        prepared: PreparedVideoUpload,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
         viewModelScope.launch {
             _isBusy.value = true
             _isVideoUploading.value = true
-            val res = socialRepo.uploadProfileVideo(caption, prepared)
-            _isVideoUploading.value = false
-            _isBusy.value = false
-            res.onSuccess {
-                _actionStatusMessage.value = "Showcase video uploaded and saved to your profile"
-                onComplete()
-            }.onFailure {
-                _actionStatusMessage.value = it.localizedMessage ?: "Video upload failed"
+            _isUploadingMedia.value = true
+            try {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                    val res = socialRepo.uploadProfileVideo(caption, prepared)
+                    res.onSuccess {
+                        _actionStatusMessage.value = "Showcase video uploaded and saved to your profile"
+                        onComplete(true, null)
+                    }.onFailure { err ->
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "uploadProfileVideo failed: $msg", err)
+                        _actionStatusMessage.value = msg
+                        onComplete(false, msg)
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "uploadProfileVideo timed out", e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "uploadProfileVideo error: $msg", e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
+            } finally {
+                _isUploadingMedia.value = false
+                _isVideoUploading.value = false
+                _isBusy.value = false
             }
         }
     }
@@ -1966,25 +2061,35 @@ class KindredViewModel(
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
+            _isUploadingMedia.value = true
             try {
-                withTimeout(45_000L) {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                     val res = socialRepo.postPhotoStory(snap?.myProfile, defaultDisplayName, photoDataUrl, caption)
                     res.onSuccess {
                         _actionStatusMessage.value = "Story shared for 24 hours!"
                         autoRefreshFeed()
                         onComplete(true)
                     }.onFailure { err ->
-                        Log.e("KindredUpload", "postPhotoStory failed", err)
-                        _actionStatusMessage.value = err.localizedMessage ?: "Could not share story"
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "postPhotoStory failed: $msg", err)
+                        _actionStatusMessage.value = msg
                         onComplete(false)
                     }
                 }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "postPhotoStory timed out", e)
+                _actionStatusMessage.value = msg
+                onComplete(false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Log.e("KindredUpload", "postPhotoStory error/timeout", e)
-                _actionStatusMessage.value = e.localizedMessage ?: "Story upload failed or timed out"
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "postPhotoStory error: $msg", e)
+                _actionStatusMessage.value = msg
                 onComplete(false)
             } finally {
+                _isUploadingMedia.value = false
                 _isBusy.value = false
             }
         }
@@ -1998,25 +2103,37 @@ class KindredViewModel(
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
+            _isVideoUploading.value = true
+            _isUploadingMedia.value = true
             try {
-                withTimeout(45_000L) {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                     val res = socialRepo.postVideoStory(snap?.myProfile, defaultDisplayName, prepared, caption)
                     res.onSuccess {
                         _actionStatusMessage.value = "Video story shared for 24 hours!"
                         autoRefreshFeed()
                         onComplete(true)
                     }.onFailure { err ->
-                        Log.e("KindredUpload", "postVideoStory failed", err)
-                        _actionStatusMessage.value = err.localizedMessage ?: "Could not share story"
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "postVideoStory failed: $msg", err)
+                        _actionStatusMessage.value = msg
                         onComplete(false)
                     }
                 }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "postVideoStory timed out", e)
+                _actionStatusMessage.value = msg
+                onComplete(false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Log.e("KindredUpload", "postVideoStory error/timeout", e)
-                _actionStatusMessage.value = e.localizedMessage ?: "Video story upload failed or timed out"
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "postVideoStory error: $msg", e)
+                _actionStatusMessage.value = msg
                 onComplete(false)
             } finally {
+                _isUploadingMedia.value = false
+                _isVideoUploading.value = false
                 _isBusy.value = false
             }
         }
@@ -2080,24 +2197,34 @@ class KindredViewModel(
     ) {
         viewModelScope.launch {
             _isBusy.value = true
+            _isUploadingMedia.value = true
             try {
-                withTimeout(30_000L) {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                     val res = socialRepo.createHighlight(title, coverUrl, items)
                     res.onSuccess {
                         _actionStatusMessage.value = "Highlight created"
                         onDone(true)
                     }.onFailure { err ->
-                        Log.e(TAG, "createStoryHighlight failed", err)
-                        _actionStatusMessage.value = err.localizedMessage ?: "Could not create highlight"
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(TAG, "createStoryHighlight failed: $msg", err)
+                        _actionStatusMessage.value = msg
                         onDone(false)
                     }
                 }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(TAG, "createStoryHighlight timed out", e)
+                _actionStatusMessage.value = msg
+                onDone(false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Log.e(TAG, "createStoryHighlight error/timeout", e)
-                _actionStatusMessage.value = e.localizedMessage ?: "Highlight upload failed or timed out"
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(TAG, "createStoryHighlight error: $msg", e)
+                _actionStatusMessage.value = msg
                 onDone(false)
             } finally {
+                _isUploadingMedia.value = false
                 _isBusy.value = false
             }
         }
@@ -2118,27 +2245,49 @@ class KindredViewModel(
         prepared: PreparedVideoUpload,
         onComplete: () -> Unit = {}
     ) {
+        publishVideoPostWithResult(caption, prepared) { success, _ ->
+            if (success) onComplete()
+        }
+    }
+
+    fun publishVideoPostWithResult(
+        caption: String,
+        prepared: PreparedVideoUpload,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
             _isVideoUploading.value = true
+            _isUploadingMedia.value = true
             try {
-                withTimeout(45_000L) {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                     val res = socialRepo.publishVideoPost(snap?.myProfile, defaultDisplayName, caption, prepared)
                     res.onSuccess {
                         _actionStatusMessage.value = "Video posted to Kindred Reels!"
                         autoRefreshFeed()
-                        onComplete()
+                        onComplete(true, null)
                     }.onFailure { err ->
-                        Log.e("KindredUpload", "publishVideoPost failed", err)
-                        _actionStatusMessage.value = err.localizedMessage ?: "Could not publish video"
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "publishVideoPost failed: $msg", err)
+                        _actionStatusMessage.value = msg
+                        onComplete(false, msg)
                     }
                 }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "publishVideoPost timed out", e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Log.e("KindredUpload", "publishVideoPost error/timeout", e)
-                _actionStatusMessage.value = e.localizedMessage ?: "Video upload failed or timed out"
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "publishVideoPost error: $msg", e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
             } finally {
+                _isUploadingMedia.value = false
                 _isVideoUploading.value = false
                 _isBusy.value = false
             }
@@ -2204,12 +2353,25 @@ class KindredViewModel(
         preparedVideo: PreparedVideoUpload? = null,
         onComplete: () -> Unit = {}
     ) {
+        publishFeedPostWithResult(caption, photoDataUrl, photoUrls, preparedVideo) { success, _ ->
+            if (success) onComplete()
+        }
+    }
+
+    fun publishFeedPostWithResult(
+        caption: String,
+        photoDataUrl: String? = null,
+        photoUrls: List<String> = emptyList(),
+        preparedVideo: PreparedVideoUpload? = null,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
             _isBusy.value = true
+            _isUploadingMedia.value = true
             if (preparedVideo != null) _isVideoUploading.value = true
             try {
-                withTimeout(45_000L) {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                     val res = socialRepo.publishFeedPost(
                         authorProfile = snap?.myProfile,
                         fallbackName = defaultDisplayName,
@@ -2221,17 +2383,28 @@ class KindredViewModel(
                     res.onSuccess {
                         _actionStatusMessage.value = "Shared to your timeline!"
                         autoRefreshFeed()
-                        onComplete()
+                        onComplete(true, null)
                     }.onFailure { err ->
-                        Log.e("KindredUpload", "publishFeedPost failed", err)
-                        _actionStatusMessage.value = err.localizedMessage ?: "Could not publish post"
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "publishFeedPost failed: $msg", err)
+                        _actionStatusMessage.value = msg
+                        onComplete(false, msg)
                     }
                 }
+            } catch (e: TimeoutCancellationException) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "publishFeedPost timed out", e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Log.e("KindredUpload", "publishFeedPost error/timeout", e)
-                _actionStatusMessage.value = e.localizedMessage ?: "Post upload failed or timed out"
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                Log.e(CloudMediaStorageService.TAG, "publishFeedPost error: $msg", e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
             } finally {
+                _isUploadingMedia.value = false
                 _isVideoUploading.value = false
                 _isBusy.value = false
             }

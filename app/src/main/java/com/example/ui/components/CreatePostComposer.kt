@@ -183,7 +183,8 @@ fun CreatePostComposerSheet(
     initialVideo: PreparedVideoUpload? = null,
     onCreateStoryClick: (() -> Unit)? = null,
     onDismiss: () -> Unit,
-    onPublish: (caption: String, photoDataUrl: String?, photoUrls: List<String>, video: PreparedVideoUpload?) -> Unit
+    onPublish: (caption: String, photoDataUrl: String?, photoUrls: List<String>, video: PreparedVideoUpload?) -> Unit,
+    onPublishWithResult: ((caption: String, photoDataUrl: String?, photoUrls: List<String>, video: PreparedVideoUpload?, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -191,6 +192,7 @@ fun CreatePostComposerSheet(
     val photoUrls = remember { mutableStateListOf<String>().apply { addAll(initialPhotos) } }
     var preparedVideo by remember { mutableStateOf<PreparedVideoUpload?>(initialVideo) }
     var isPreparingMedia by remember { mutableStateOf(false) }
+    var isPublishing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -278,25 +280,66 @@ fun CreatePostComposerSheet(
                     )
                     Button(
                         onClick = {
+                            if (isPublishing) return@Button
                             val trimmedCaption = caption.trim()
                             if (trimmedCaption.isBlank() && photoUrls.isEmpty() && preparedVideo == null) {
                                 errorMsg = "Add a caption or media before posting"
                                 return@Button
                             }
+                            isPublishing = true
+                            errorMsg = null
                             val finalCaption = trimmedCaption
-                            onPublish(
-                                finalCaption,
-                                photoUrls.firstOrNull(),
-                                if (photoUrls.size > 1) photoUrls.toList() else emptyList(),
-                                preparedVideo
-                            )
-                            onDismiss()
+                            val firstPhoto = photoUrls.firstOrNull()
+                            val multiPhotos = if (photoUrls.size > 1) photoUrls.toList() else emptyList()
+                            val vid = preparedVideo
+
+                            scope.launch {
+                                try {
+                                    kotlinx.coroutines.withTimeout(45_000L) {
+                                        val pubResult = onPublishWithResult
+                                        if (pubResult != null) {
+                                            var done = false
+                                            pubResult(finalCaption, firstPhoto, multiPhotos, vid) { success, errMsg ->
+                                                done = true
+                                                isPublishing = false
+                                                if (success) {
+                                                    onDismiss()
+                                                } else {
+                                                    errorMsg = errMsg ?: "Publish failed. Please try again."
+                                                }
+                                            }
+                                            while (!done) { kotlinx.coroutines.delay(100L) }
+                                        } else {
+                                            onPublish(finalCaption, firstPhoto, multiPhotos, vid)
+                                            isPublishing = false
+                                            onDismiss()
+                                        }
+                                    }
+                                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                                    android.util.Log.e("CreatePostComposer", "Publish timed out", e)
+                                    errorMsg = "Publishing timed out. Check network connection."
+                                    isPublishing = false
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    isPublishing = false
+                                    throw e
+                                } catch (e: Exception) {
+                                    android.util.Log.e("CreatePostComposer", "Publish error", e)
+                                    errorMsg = e.localizedMessage ?: "Publish failed"
+                                    isPublishing = false
+                                } finally {
+                                    isPublishing = false
+                                }
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
-                        enabled = !isPreparingMedia && (caption.isNotBlank() || photoUrls.isNotEmpty() || preparedVideo != null),
+                        enabled = !isPreparingMedia && !isPublishing && (caption.isNotBlank() || photoUrls.isNotEmpty() || preparedVideo != null),
                         modifier = Modifier.testTag("publish_post_submit_btn")
                     ) {
-                        Text("Share")
+                        if (isPublishing) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                        } else {
+                            Text("Share")
+                        }
                     }
                 }
 

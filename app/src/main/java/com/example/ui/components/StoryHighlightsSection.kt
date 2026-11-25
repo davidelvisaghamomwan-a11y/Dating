@@ -344,6 +344,16 @@ fun CreateHighlightDialog(
     var isSaving by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(isSaving) {
+        if (isSaving) {
+            delay(35_000L)
+            if (isSaving) {
+                isSaving = false
+                errorMsg = "Saving highlight timed out. Please check your connection and try again."
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -381,29 +391,38 @@ fun CreateHighlightDialog(
                     Button(
                         onClick = {
                             if (isSaving) return@Button
-                            val pickedStories = archivedStories.filterIndexed { idx, s ->
-                                val itemKey = s.id.ifBlank { "arch_idx_$idx" }
-                                itemKey in selectedKeys
-                            }
-                            if (pickedStories.isEmpty()) {
-                                errorMsg = "Select at least 1 story for this highlight"
-                                return@Button
-                            }
-                            val finalTitle = title.trim().ifBlank { "Highlights" }
-                            val rawCover = selectedCoverUrl.ifBlank {
-                                pickedStories.firstOrNull()?.let {
-                                    it.thumbnailDataUrl ?: it.mediaDataUrl
-                                }.orEmpty()
-                            }
-                            errorMsg = null
-                            isSaving = true
-                            onSaveHighlight(finalTitle, rawCover, pickedStories) { success ->
-                                isSaving = false
-                                if (success) {
-                                    onDismiss()
-                                } else {
-                                    errorMsg = "Could not save highlight. Try selecting fewer stories."
+                            try {
+                                val pickedStories = archivedStories.filterIndexed { idx, s ->
+                                    val itemKey = s.id.ifBlank { "arch_idx_$idx" }
+                                    itemKey in selectedKeys
                                 }
+                                if (pickedStories.isEmpty()) {
+                                    errorMsg = "Select at least 1 story for this highlight"
+                                    return@Button
+                                }
+                                val finalTitle = title.trim().ifBlank { "Highlights" }
+                                val rawCover = selectedCoverUrl.ifBlank {
+                                    pickedStories.firstOrNull()?.let { first ->
+                                        if (first.mediaType == "VIDEO") {
+                                            first.thumbnailDataUrl
+                                        } else {
+                                            first.thumbnailDataUrl ?: first.mediaDataUrl
+                                        }
+                                    }.orEmpty()
+                                }
+                                errorMsg = null
+                                isSaving = true
+                                onSaveHighlight(finalTitle, rawCover, pickedStories) { success ->
+                                    isSaving = false
+                                    if (success) {
+                                        onDismiss()
+                                    } else {
+                                        errorMsg = "Could not save highlight. Check your connection or try selecting fewer stories."
+                                    }
+                                }
+                            } catch (t: Throwable) {
+                                isSaving = false
+                                errorMsg = t.localizedMessage ?: "Failed to save highlight."
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
@@ -485,8 +504,19 @@ fun CreateHighlightDialog(
                         ) { idx, story ->
                             val selectionKey = story.id.ifBlank { "arch_idx_$idx" }
                             val isSelected = selectionKey in selectedKeys
-                            val previewSource = story.thumbnailDataUrl?.takeIf { it.isNotBlank() }
-                                ?: story.mediaDataUrl?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+                            val previewSource = story.thumbnailDataUrl?.takeIf {
+                                it.startsWith("data:image", ignoreCase = true) ||
+                                    it.startsWith("http://", ignoreCase = true) ||
+                                    it.startsWith("https://", ignoreCase = true)
+                            } ?: if (story.mediaType != "VIDEO") {
+                                story.mediaDataUrl?.takeIf {
+                                    it.startsWith("data:image", ignoreCase = true) ||
+                                        it.startsWith("http://", ignoreCase = true) ||
+                                        it.startsWith("https://", ignoreCase = true)
+                                }
+                            } else {
+                                null
+                            }
 
                             val mediaPreview by produceState<ImageBitmap?>(
                                 initialValue = null,
@@ -621,10 +651,15 @@ fun HighlightViewerDialog(
                 .testTag("highlight_viewer_dialog")
         ) {
             // Media Display
-            val displayImageSource = currentStory.mediaDataUrl
-                ?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
-                ?: currentStory.thumbnailDataUrl
+            val displayImageSource = if (currentStory.mediaType == "VIDEO") {
+                currentStory.thumbnailDataUrl
                     ?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+            } else {
+                currentStory.mediaDataUrl
+                    ?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+                    ?: currentStory.thumbnailDataUrl
+                        ?.takeIf { it.startsWith("data:image", ignoreCase = true) || it.startsWith("http", ignoreCase = true) }
+            }
 
             val imageBitmap by produceState<ImageBitmap?>(
                 initialValue = null,

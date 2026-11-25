@@ -111,6 +111,7 @@ fun EditProfileScreen(
     latestLocation: ResolvedDeviceLocation? = null,
     videos: List<ProfileVideoItem> = emptyList(),
     onUploadVideo: (caption: String, prepared: PreparedVideoUpload) -> Unit = { _, _ -> },
+    onUploadVideoWithResult: ((caption: String, prepared: PreparedVideoUpload, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
     onDeleteVideo: (videoId: String) -> Unit = {},
     onBack: () -> Unit,
     onSaveChanges: (
@@ -172,6 +173,8 @@ fun EditProfileScreen(
     var pendingVideoUpload by remember { mutableStateOf<PreparedVideoUpload?>(null) }
     var videoCaptionDraft by remember { mutableStateOf("") }
     var isPreparingVideo by remember { mutableStateOf(false) }
+    var isUploadingVideo by remember { mutableStateOf(false) }
+    var videoUploadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(latestLocation) {
         val loc = latestLocation ?: return@LaunchedEffect
@@ -1014,8 +1017,11 @@ fun EditProfileScreen(
     pendingVideoUpload?.let { upload ->
         AlertDialog(
             onDismissRequest = {
-                pendingVideoUpload = null
-                videoCaptionDraft = ""
+                if (!isUploadingVideo) {
+                    pendingVideoUpload = null
+                    videoCaptionDraft = ""
+                    videoUploadError = null
+                }
             },
             title = { Text("Add Showcase Video") },
             text = {
@@ -1030,28 +1036,86 @@ fun EditProfileScreen(
                         onValueChange = { if (it.length <= 160) videoCaptionDraft = it },
                         label = { Text("Caption (optional)") },
                         maxLines = 2,
+                        enabled = !isUploadingVideo,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (videoUploadError != null) {
+                        Text(
+                            text = videoUploadError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        onUploadVideo(videoCaptionDraft.trim(), upload)
-                        pendingVideoUpload = null
-                        videoCaptionDraft = ""
+                        if (isUploadingVideo) return@Button
+                        isUploadingVideo = true
+                        videoUploadError = null
+                        val cap = videoCaptionDraft.trim()
+                        scope.launch {
+                            try {
+                                kotlinx.coroutines.withTimeout(45_000L) {
+                                    val uploadRes = onUploadVideoWithResult
+                                    if (uploadRes != null) {
+                                        var done = false
+                                        uploadRes(cap, upload) { success, errMsg ->
+                                            done = true
+                                            isUploadingVideo = false
+                                            if (success) {
+                                                pendingVideoUpload = null
+                                                videoCaptionDraft = ""
+                                                videoUploadError = null
+                                            } else {
+                                                videoUploadError = errMsg ?: "Upload failed"
+                                            }
+                                        }
+                                        while (!done) { kotlinx.coroutines.delay(100L) }
+                                    } else {
+                                        onUploadVideo(cap, upload)
+                                        isUploadingVideo = false
+                                        pendingVideoUpload = null
+                                        videoCaptionDraft = ""
+                                    }
+                                }
+                            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                                android.util.Log.e("EditProfile", "Video upload timed out", e)
+                                videoUploadError = "Upload timed out. Check network connection."
+                                isUploadingVideo = false
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                isUploadingVideo = false
+                                throw e
+                            } catch (e: Exception) {
+                                android.util.Log.e("EditProfile", "Video upload error", e)
+                                videoUploadError = e.localizedMessage ?: "Upload failed"
+                                isUploadingVideo = false
+                            } finally {
+                                isUploadingVideo = false
+                            }
+                        }
                     },
+                    enabled = !isUploadingVideo,
                     colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
                 ) {
-                    Text("Upload")
+                    if (isUploadingVideo) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    } else {
+                        Text("Upload")
+                    }
                 }
             },
             dismissButton = {
                 TextButton(
                     onClick = {
-                        pendingVideoUpload = null
-                        videoCaptionDraft = ""
-                    }
+                        if (!isUploadingVideo) {
+                            pendingVideoUpload = null
+                            videoCaptionDraft = ""
+                            videoUploadError = null
+                        }
+                    },
+                    enabled = !isUploadingVideo
                 ) { Text("Cancel") }
             }
         )
