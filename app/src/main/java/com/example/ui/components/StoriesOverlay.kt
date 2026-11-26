@@ -133,6 +133,9 @@ fun StoriesTrayRow(
     onOpenStory: (Int) -> Unit,
     onPostPhotoStory: (photoDataUrl: String, caption: String, onComplete: (Boolean) -> Unit) -> Unit,
     onPostVideoStory: (prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean) -> Unit) -> Unit,
+    uploadProgress: Float? = null,
+    onPostPhotoStoryWithResult: ((photoDataUrl: String, caption: String, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
+    onPostVideoStoryWithResult: ((prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
     onOpenVideoFeed: () -> Unit = {},
     onStatusMessage: (String) -> Unit = {},
     modifier: Modifier = Modifier
@@ -298,8 +301,11 @@ fun StoriesTrayRow(
         CreateStoryStudioDialog(
             myProfile = myProfile,
             currentUserId = currentUserId,
+            uploadProgress = uploadProgress,
             onPostPhotoStory = onPostPhotoStory,
             onPostVideoStory = onPostVideoStory,
+            onPostPhotoStoryWithResult = onPostPhotoStoryWithResult,
+            onPostVideoStoryWithResult = onPostVideoStoryWithResult,
             onStatusMessage = onStatusMessage,
             onDismiss = { showCreateStoryStudio = false }
         )

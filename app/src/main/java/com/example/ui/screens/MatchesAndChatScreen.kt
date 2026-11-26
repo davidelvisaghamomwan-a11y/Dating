@@ -159,6 +159,8 @@ fun MatchesAndChatScreen(
     onReportUser: (partnerId: String, partnerName: String, reason: String, details: String, alsoBlock: Boolean) -> Unit = { _, _, _, _, _ -> },
     onRetryChat: () -> Unit = {},
     onStatusMessage: (String) -> Unit = {},
+    isUploadingMedia: Boolean = false,
+    uploadProgress: Float? = null,
     onOpenPartnerFullProfile: ((PublicProfile) -> Unit)? = null
 ) {
     val activeThread = remember(matches, selectedMatchId) {
@@ -204,6 +206,8 @@ fun MatchesAndChatScreen(
                             activeCallSession = activeCallSession,
                             activeCallAudioChunks = activeCallAudioChunks,
                             activeCallVideoFrames = activeCallVideoFrames,
+                            isUploadingMedia = isUploadingMedia,
+                            uploadProgress = uploadProgress,
                             showBackButton = false,
                             onBack = { onSelectMatch(null) },
                             onSendMessage = onSendMessage,
@@ -252,6 +256,8 @@ fun MatchesAndChatScreen(
                     activeCallSession = activeCallSession,
                     activeCallAudioChunks = activeCallAudioChunks,
                     activeCallVideoFrames = activeCallVideoFrames,
+                    isUploadingMedia = isUploadingMedia,
+                    uploadProgress = uploadProgress,
                     showBackButton = true,
                     onBack = { onSelectMatch(null) },
                     onSendMessage = onSendMessage,

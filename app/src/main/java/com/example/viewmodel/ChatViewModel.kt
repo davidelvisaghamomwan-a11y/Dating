@@ -169,6 +169,9 @@ class ChatViewModel(
     private val _isUploadingMedia = MutableStateFlow(false)
     val isUploadingMedia: StateFlow<Boolean> = _isUploadingMedia.asStateFlow()
 
+    private val _uploadProgress = MutableStateFlow<Float?>(null)
+    val uploadProgress: StateFlow<Float?> = _uploadProgress.asStateFlow()
+
     fun retry() {
         _retryNonce.value += 1
     }
@@ -194,7 +197,10 @@ class ChatViewModel(
     ) {
         val hasMediaAttachment = preparedVideo != null || !mediaDataUrl.isNullOrBlank()
         viewModelScope.launch {
-            if (hasMediaAttachment) _isUploadingMedia.value = true
+            if (hasMediaAttachment) {
+                _isUploadingMedia.value = true
+                _uploadProgress.value = 0f
+            }
             try {
                 withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                     val result = repository.sendMessage(
@@ -211,7 +217,10 @@ class ChatViewModel(
                         replyToMessageId = replyToMessageId,
                         replyToSenderId = replyToSenderId,
                         replyToText = replyToText,
-                        replyToType = replyToType
+                        replyToType = replyToType,
+                        onProgress = { progress ->
+                            if (hasMediaAttachment) _uploadProgress.value = progress
+                        }
                     )
                     result.onFailure { err ->
                         val msg = CloudMediaStorageService.formatUploadError(err)
@@ -230,7 +239,10 @@ class ChatViewModel(
                 Log.e(CloudMediaStorageService.TAG, "ChatViewModel sendMessage error: $msg", e)
                 _statusError.value = msg
             } finally {
-                if (hasMediaAttachment) _isUploadingMedia.value = false
+                if (hasMediaAttachment) {
+                    _uploadProgress.value = null
+                    _isUploadingMedia.value = false
+                }
             }
         }
     }

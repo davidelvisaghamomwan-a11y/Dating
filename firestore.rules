@@ -50,6 +50,14 @@ service cloud.firestore {
       return val in ['EVERYONE', 'MATCHES_AND_FRIENDS', 'FRIENDS_ONLY', 'FOLLOWERS_ONLY'];
     }
 
+    function isValidStoragePath(path) {
+      return path is string && path.size() <= 512 && (path == '' || path.matches('^users/.*'));
+    }
+
+    function isValidStoragePathList(paths, maxLen) {
+      return paths is list && paths.size() <= maxLen && (paths.size() == 0 || isValidStoragePath(paths[0]));
+    }
+
     // --- Entity Validation Helpers ---
     function isValidPrivateUser(data) {
       return data.userId is string && isValidId(data.userId) &&
@@ -76,7 +84,9 @@ service cloud.firestore {
              data.interests is list && data.interests.size() <= 8 &&
              (data.interests.size() == 0 || (data.interests[0] is string && data.interests[0].size() <= 40)) &&
              (!('photoDataUrl' in data) || (data.photoDataUrl is string && data.photoDataUrl.size() <= 180000)) &&
+             (!('photoStoragePath' in data) || isValidStoragePath(data.photoStoragePath)) &&
              (!('profilePhotos' in data) || (data.profilePhotos is list && data.profilePhotos.size() <= 12 && (data.profilePhotos.size() == 0 || (data.profilePhotos[0] is string && data.profilePhotos[0].size() <= 180000)))) &&
+             (!('photoStoragePaths' in data) || isValidStoragePathList(data.photoStoragePaths, 12)) &&
              data.avatarSeed is string && data.avatarSeed.size() >= 1 && data.avatarSeed.size() <= 40 &&
              data.discoverable is bool &&
              (!('suspended' in data) || data.suspended is bool) &&
@@ -143,7 +153,9 @@ service cloud.firestore {
              data.messageType in ['TEXT', 'PHOTO', 'VIDEO', 'VOICE', 'GIF', 'CALL'] &&
              (data.text.size() >= 1 || data.messageType in ['PHOTO', 'VIDEO', 'VOICE', 'GIF']) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
+             (!('mediaStoragePath' in data) || isValidStoragePath(data.mediaStoragePath)) &&
              (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
+             (!('thumbnailStoragePath' in data) || isValidStoragePath(data.thumbnailStoragePath)) &&
              (!('mediaMimeType' in data) || (data.mediaMimeType is string && data.mediaMimeType.size() <= 80)) &&
              (!('mediaChunkCount' in data) || (data.mediaChunkCount is int && data.mediaChunkCount >= 0 && data.mediaChunkCount <= 1000)) &&
              (!('mediaByteSize' in data) || (data.mediaByteSize is int && data.mediaByteSize >= 0)) &&
@@ -287,7 +299,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
                        isValidPublicProfile(incoming()) &&
                        !incoming().get('suspended', false) &&
                        isValidTimestamp(incoming().createdAt) &&
@@ -301,7 +313,7 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        incoming().get('suspended', false) == existing().get('suspended', false) &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt'])
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt'])
                      ) || (
                        isAdmin() &&
                        isValidId(userId) &&
@@ -324,11 +336,13 @@ service cloud.firestore {
                          incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0 &&
                          incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000 &&
                          (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                         (!('mediaStoragePath' in incoming()) || isValidStoragePath(incoming().mediaStoragePath)) &&
                          (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
+                         (!('thumbnailStoragePath' in incoming()) || isValidStoragePath(incoming().thumbnailStoragePath)) &&
                          (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
                          (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
                          incoming().keys().hasAll(['userId', 'caption', 'mediaDurationSec', 'chunkCount', 'createdAt']) &&
-                         incoming().keys().hasOnly(['userId', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'caption', 'mediaDataUrl', 'mediaStoragePath', 'thumbnailDataUrl', 'thumbnailStoragePath', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
         allow update: if false;
@@ -360,7 +374,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
                        isValidGeoCellProfile(incoming(), cellId) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt);
@@ -372,7 +386,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt']);
 
       allow delete: if isOwner(userId) && isValidGeoCellId(cellId) && isValidId(userId);
     }
@@ -462,7 +476,8 @@ service cloud.firestore {
                          incoming().keys().hasAll(['matchId', 'senderId', 'participantUids', 'text', 'messageType', 'createdAt']) &&
                          incoming().keys().hasOnly([
                            'matchId', 'senderId', 'participantUids', 'text', 'messageType',
-                           'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaChunkCount', 'mediaByteSize',
+                           'mediaDataUrl', 'mediaStoragePath', 'thumbnailDataUrl', 'thumbnailStoragePath',
+                           'mediaMimeType', 'mediaChunkCount', 'mediaByteSize',
                            'mediaGifId', 'mediaDurationSec',
                            'replyToMessageId', 'replyToSenderId', 'replyToText', 'replyToType',
                            'deletedForUids', 'unsent', 'unsentAt',
@@ -500,7 +515,7 @@ service cloud.firestore {
                            ) ||
                            (
                              existing().senderId == request.auth.uid &&
-                             incoming().diff(existing()).affectedKeys().hasOnly(['unsent', 'unsentAt', 'text', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaGifId']) &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['unsent', 'unsentAt', 'text', 'mediaDataUrl', 'mediaStoragePath', 'thumbnailDataUrl', 'thumbnailStoragePath', 'mediaGifId']) &&
                              incoming().unsent == true &&
                              isValidTimestamp(incoming().unsentAt) &&
                              incoming().text == 'Message unsent' &&
@@ -882,7 +897,9 @@ service cloud.firestore {
              (!('authorPhoto' in data) || (data.authorPhoto is string && data.authorPhoto.size() <= 180000)) &&
              (!('authorCountry' in data) || (data.authorCountry is string && data.authorCountry.size() <= 80)) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
+             (!('mediaStoragePath' in data) || isValidStoragePath(data.mediaStoragePath)) &&
              (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
+             (!('thumbnailStoragePath' in data) || isValidStoragePath(data.thumbnailStoragePath)) &&
              (!('caption' in data) || (data.caption is string && data.caption.size() <= 300)) &&
              (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0)) &&
              (!('chunkCount' in data) || (data.chunkCount is int && data.chunkCount >= 0 && data.chunkCount <= 1000)) &&
@@ -895,6 +912,7 @@ service cloud.firestore {
       return data.userId is string &&
              data.title is string && data.title.size() >= 1 && data.title.size() <= 40 &&
              (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 180000)) &&
+             (!('coverStoragePath' in data) || isValidStoragePath(data.coverStoragePath)) &&
              (!('storyItems' in data) || (data.storyItems is list && data.storyItems.size() <= 100));
     }
 
@@ -907,8 +925,11 @@ service cloud.firestore {
              (!('authorCountry' in data) || (data.authorCountry is string && data.authorCountry.size() <= 80)) &&
              (!('authorCity' in data) || (data.authorCity is string && data.authorCity.size() <= 80)) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
+             (!('mediaStoragePath' in data) || isValidStoragePath(data.mediaStoragePath)) &&
              (!('mediaUrls' in data) || (data.mediaUrls is list && data.mediaUrls.size() <= 6 && (data.mediaUrls.size() == 0 || (data.mediaUrls[0] is string && data.mediaUrls[0].size() <= 180000)))) &&
+             (!('mediaStoragePaths' in data) || isValidStoragePathList(data.mediaStoragePaths, 6)) &&
              (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
+             (!('thumbnailStoragePath' in data) || isValidStoragePath(data.thumbnailStoragePath)) &&
              (!('mediaMimeType' in data) || (data.mediaMimeType is string && data.mediaMimeType.size() <= 80)) &&
              (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0)) &&
              (!('mediaByteSize' in data) || (data.mediaByteSize is int && data.mediaByteSize >= 0)) &&
@@ -927,7 +948,7 @@ service cloud.firestore {
                        incoming().userId == request.auth.uid &&
                        isValidStory(incoming()) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'mediaType', 'expiresAtMs', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAt', 'expiresAtMs', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'mediaType', 'mediaDataUrl', 'mediaStoragePath', 'thumbnailDataUrl', 'thumbnailStoragePath', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAt', 'expiresAtMs', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -970,7 +991,7 @@ service cloud.firestore {
                        incoming().userId == request.auth.uid &&
                        isValidHighlight(incoming()) &&
                        incoming().keys().hasAll(['userId', 'title', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'title', 'coverUrl', 'storyItems', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'title', 'coverUrl', 'coverStoragePath', 'storyItems', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -995,14 +1016,16 @@ service cloud.firestore {
                        (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                        (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
                        (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
+                       (!('mediaStoragePath' in incoming()) || isValidStoragePath(incoming().mediaStoragePath)) &&
                        (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
+                       (!('thumbnailStoragePath' in incoming()) || isValidStoragePath(incoming().thumbnailStoragePath)) &&
                        (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
                        incoming().mediaDurationSec is int && incoming().mediaDurationSec >= 0 &&
                        (!('mediaByteSize' in incoming()) || (incoming().mediaByteSize is int && incoming().mediaByteSize >= 0)) &&
                        incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000 &&
                        (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaDurationSec', 'chunkCount', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'caption', 'mediaDataUrl', 'mediaStoragePath', 'thumbnailDataUrl', 'thumbnailStoragePath', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1063,7 +1086,7 @@ service cloud.firestore {
                        incoming().userId == request.auth.uid &&
                        isValidFeedPost(incoming()) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaType', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'mediaStoragePath', 'mediaUrls', 'mediaStoragePaths', 'thumbnailDataUrl', 'thumbnailStoragePath', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&

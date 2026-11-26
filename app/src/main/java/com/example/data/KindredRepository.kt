@@ -62,42 +62,104 @@ class KindredRepository(
         )
     )
 
-    private suspend fun uploadProfilePhotosToCloud(uid: String, photos: List<String>): List<String> {
+    private data class UploadedProfilePhotos(
+        val urls: List<String>,
+        val storagePaths: List<String>
+    )
+
+    private suspend fun uploadProfilePhotosToCloud(
+        uid: String,
+        photos: List<String>,
+        existingPublic: PublicProfile? = null,
+        onProgress: (Float) -> Unit = {}
+    ): UploadedProfilePhotos {
         val cleanedInput = photos
             .map { it.trim() }
             .filter { it.isNotBlank() && (CloudMediaStorageService.isRemoteHttpUrl(it) || it.length <= 920_000) }
             .distinct()
             .take(KindredConstants.MAX_PROFILE_PHOTOS)
 
+        if (cleanedInput.isEmpty()) {
+            return UploadedProfilePhotos(emptyList(), emptyList())
+        }
+
+        val existingUrlToPath = buildMap<String, String> {
+            val primaryUrl = existingPublic?.photoDataUrl?.trim().orEmpty()
+            val primaryPath = existingPublic?.photoStoragePath?.trim().orEmpty()
+            if (primaryUrl.isNotBlank() && primaryPath.startsWith("users/")) {
+                put(primaryUrl, primaryPath)
+            }
+            existingPublic?.profilePhotos?.forEachIndexed { idx, existingUrl ->
+                val cleanUrl = existingUrl.trim()
+                val existingPath = existingPublic.photoStoragePaths.getOrNull(idx)?.trim().orEmpty()
+                if (cleanUrl.isNotBlank() && existingPath.startsWith("users/")) {
+                    put(cleanUrl, existingPath)
+                }
+            }
+        }
+
         val perPhotoMaxBytes = (420_000 / cleanedInput.size.coerceAtLeast(1)).coerceIn(32_000, 115_000)
-        return cleanedInput.mapIndexed { index, photo ->
+        val total = cleanedInput.size.toFloat()
+        val resolvedUrls = mutableListOf<String>()
+        val resolvedPaths = mutableListOf<String>()
+
+        cleanedInput.forEachIndexed { index, photo ->
             if (CloudMediaStorageService.isRemoteHttpUrl(photo)) {
-                photo.take(2048)
+                resolvedUrls += photo.take(2048)
+                resolvedPaths += existingUrlToPath[photo].orEmpty()
+                onProgress(((index + 1f) / total).coerceIn(0f, 1f))
             } else {
-                val uploaded = cloudStorage.ensureRemoteMediaUrl(
-                    rawDataUrlOrRemoteUrl = photo,
-                    remotePath = "profile_photos/$uid/photo_${index}_${abs(photo.hashCode())}.jpg",
-                    defaultContentType = "image/jpeg"
+                val remotePath = CloudMediaStorageService.buildUserPath(
+                    uid = uid,
+                    category = "profile_photos",
+                    fileName = "photo_${index}_${abs(photo.hashCode())}.jpg"
                 )
-                uploaded.getOrElse { err ->
-                    if (CloudMediaStorageService.isStorageUnavailableError(err)) {
+                val uploaded = cloudStorage.ensureRemoteMediaUrlWithMeta(
+                    rawDataUrlOrRemoteUrl = photo,
+                    remotePath = remotePath,
+                    defaultContentType = "image/jpeg",
+                    onProgress = { fraction ->
+                        onProgress(((index + fraction) / total).coerceIn(0f, 1f))
+                    }
+                )
+                uploaded.fold(
+                    onSuccess = { meta ->
+                        if (!CloudMediaStorageService.isRemoteHttpUrl(meta.downloadUrl)) {
+                            throw IllegalStateException("Profile photo ${index + 1} upload returned an invalid URL.")
+                        }
+                        resolvedUrls += meta.downloadUrl.take(2048)
+                        resolvedPaths += meta.storagePath.takeIf { it.startsWith("users/") }.orEmpty()
+                    },
+                    onFailure = { err ->
+                        if (!CloudMediaStorageService.isStorageUnavailableError(err)) {
+                            throw err
+                        }
                         Log.w(
                             CloudMediaStorageService.TAG,
-                            "Storage unavailable for profile photo $index; falling back to inline Firestore photo",
+                            "Storage unavailable for profile photo $index ($remotePath); falling back to inline Firestore photo",
                             err
                         )
-                        MediaImageHelper.compactImageDataUrl(
+                        val compacted = MediaImageHelper.compactImageDataUrl(
                             rawUrl = photo,
                             maxDim = 640,
                             maxRawBytes = perPhotoMaxBytes,
                             maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS
-                        ) ?: ""
-                    } else {
-                        throw err
+                        )?.takeIf { it.isNotBlank() && it.length <= 180_000 }
+                            ?: throw IllegalStateException(
+                                CloudMediaStorageService.formatUploadError(err),
+                                err
+                            )
+                        resolvedUrls += compacted
+                        resolvedPaths += ""
                     }
-                }
+                )
             }
-        }.filter { it.isNotBlank() && (CloudMediaStorageService.isRemoteHttpUrl(it) || it.length <= 180_000) }
+        }
+
+        return UploadedProfilePhotos(
+            urls = resolvedUrls,
+            storagePaths = if (resolvedPaths.any { it.isNotBlank() }) resolvedPaths else emptyList()
+        )
     }
 
     private fun requireUserId(): String {
@@ -503,7 +565,8 @@ class KindredRepository(
         maxAgePref: Int,
         maxDistanceKm: Int,
         dateOfBirth: String = "",
-        profileCompleted: Boolean = true
+        profileCompleted: Boolean = true,
+        onProgress: (Float) -> Unit = {}
     ): Result<Unit> {
         val cleanName = displayName.trim().take(40)
         if (cleanName.length < 2) {
@@ -532,8 +595,6 @@ class KindredRepository(
         return try {
             val uid = requireUserId()
             withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                val cleanPhotos = uploadProfilePhotosToCloud(uid, candidatePhotos)
-                val primaryPhoto = cleanPhotos.firstOrNull()
                 val privateRef = db.collection("users").document(uid)
                 val publicRef = db.collection("publicProfiles").document(uid)
 
@@ -543,6 +604,17 @@ class KindredRepository(
                 val existingPublic = if (publicExists) {
                     publicSnap.toObject(PublicProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                 } else null
+
+                val uploadedPhotos = uploadProfilePhotosToCloud(
+                    uid = uid,
+                    photos = candidatePhotos,
+                    existingPublic = existingPublic,
+                    onProgress = onProgress
+                )
+                val cleanPhotos = uploadedPhotos.urls
+                val cleanPhotoPaths = uploadedPhotos.storagePaths
+                val primaryPhoto = cleanPhotos.firstOrNull()
+                val primaryPhotoPath = cleanPhotoPaths.firstOrNull()?.takeIf { it.startsWith("users/") }
 
                 val batch = db.batch()
                 currentPath = privateRef.path
@@ -598,6 +670,7 @@ class KindredRepository(
                         "geohash4" to geohash4,
                         "interests" to cleanInterests,
                         "profilePhotos" to cleanPhotos,
+                        "photoStoragePaths" to cleanPhotoPaths,
                         "avatarSeed" to uid.take(40),
                         "discoverable" to discoverable,
                         "profileCompleted" to profileCompleted,
@@ -610,6 +683,11 @@ class KindredRepository(
                         updatePublic["photoDataUrl"] = primaryPhoto
                     } else if (existingPublic?.photoDataUrl != null) {
                         updatePublic["photoDataUrl"] = FieldValue.delete()
+                    }
+                    if (primaryPhotoPath != null) {
+                        updatePublic["photoStoragePath"] = primaryPhotoPath
+                    } else if (existingPublic?.photoStoragePath != null) {
+                        updatePublic["photoStoragePath"] = FieldValue.delete()
                     }
                     batch.update(publicRef, updatePublic)
                 } else {
@@ -628,6 +706,7 @@ class KindredRepository(
                         "geohash4" to geohash4,
                         "interests" to cleanInterests,
                         "profilePhotos" to cleanPhotos,
+                        "photoStoragePaths" to cleanPhotoPaths,
                         "avatarSeed" to uid.take(40),
                         "discoverable" to discoverable,
                         "profileCompleted" to profileCompleted,
@@ -639,6 +718,9 @@ class KindredRepository(
                     }
                     if (primaryPhoto != null) {
                         createPublic["photoDataUrl"] = primaryPhoto
+                    }
+                    if (primaryPhotoPath != null) {
+                        createPublic["photoStoragePath"] = primaryPhotoPath
                     }
                     batch.set(publicRef, createPublic)
                 }
@@ -656,7 +738,9 @@ class KindredRepository(
                     coarseLng = coarseLng,
                     interests = cleanInterests,
                     photoDataUrl = primaryPhoto,
+                    photoStoragePath = primaryPhotoPath,
                     profilePhotos = cleanPhotos,
+                    photoStoragePaths = cleanPhotoPaths,
                     discoverable = discoverable,
                     dateOfBirth = resolvedDob,
                     profileCompleted = profileCompleted,
@@ -706,7 +790,8 @@ class KindredRepository(
         displayName: String? = null,
         gender: String? = null,
         dateOfBirth: String? = null,
-        computedAge: Int? = null
+        computedAge: Int? = null,
+        onProgress: (Float) -> Unit = {}
     ): Result<Unit> {
         val cleanBio = bio.trim().take(400)
         val cleanInterests = interests
@@ -759,13 +844,22 @@ class KindredRepository(
                     maxAgePref = 45,
                     maxDistanceKm = 100,
                     dateOfBirth = dateOfBirth.orEmpty(),
-                    profileCompleted = hasExplicitAge && !dateOfBirth.isNullOrBlank()
+                    profileCompleted = hasExplicitAge && !dateOfBirth.isNullOrBlank(),
+                    onProgress = onProgress
                 )
             }
 
             withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                val cleanPhotos = uploadProfilePhotosToCloud(uid, candidatePhotos)
+                val uploadedPhotos = uploadProfilePhotosToCloud(
+                    uid = uid,
+                    photos = candidatePhotos,
+                    existingPublic = existingPublic,
+                    onProgress = onProgress
+                )
+                val cleanPhotos = uploadedPhotos.urls
+                val cleanPhotoPaths = uploadedPhotos.storagePaths
                 val primaryPhoto = cleanPhotos.firstOrNull()
+                val primaryPhotoPath = cleanPhotoPaths.firstOrNull()?.takeIf { it.startsWith("users/") }
 
                 val nextName = displayName?.trim()?.take(40)?.takeIf { it.length >= 2 } ?: existingPublic.displayName
                 val nextGender = gender?.takeIf { it in KindredConstants.GENDER_OPTIONS } ?: existingPublic.gender
@@ -783,6 +877,7 @@ class KindredRepository(
                     "country" to nextCountry,
                     "interests" to cleanInterests,
                     "profilePhotos" to cleanPhotos,
+                    "photoStoragePaths" to cleanPhotoPaths,
                     "profileCompleted" to true,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
@@ -793,6 +888,11 @@ class KindredRepository(
                     updatePublic["photoDataUrl"] = primaryPhoto
                 } else if (existingPublic.photoDataUrl != null) {
                     updatePublic["photoDataUrl"] = FieldValue.delete()
+                }
+                if (primaryPhotoPath != null) {
+                    updatePublic["photoStoragePath"] = primaryPhotoPath
+                } else if (existingPublic.photoStoragePath != null) {
+                    updatePublic["photoStoragePath"] = FieldValue.delete()
                 }
 
                 val geohash = existingPublic.geohash.ifBlank {
@@ -818,7 +918,9 @@ class KindredRepository(
                     coarseLng = existingPublic.coarseLongitude,
                     interests = cleanInterests,
                     photoDataUrl = primaryPhoto,
+                    photoStoragePath = primaryPhotoPath,
                     profilePhotos = cleanPhotos,
+                    photoStoragePaths = cleanPhotoPaths,
                     discoverable = existingPublic.discoverable,
                     dateOfBirth = nextDob,
                     profileCompleted = true,
@@ -1425,7 +1527,8 @@ class KindredRepository(
         replyToMessageId: String? = null,
         replyToSenderId: String? = null,
         replyToText: String? = null,
-        replyToType: String? = null
+        replyToType: String? = null,
+        onProgress: (Float) -> Unit = {}
     ): Result<Unit> {
         val allowedType = when (messageType) {
             "PHOTO", "VIDEO", "VOICE", "GIF", "CALL" -> messageType
@@ -1484,15 +1587,24 @@ class KindredRepository(
                     "createdAt" to FieldValue.serverTimestamp()
                 )
                 if (preparedVideo != null) {
-                    val uploadResult = cloudStorage.uploadFile(
+                    val videoRemotePath = CloudMediaStorageService.buildUserPath(
+                        uid = uid,
+                        category = "chat_media/$matchId",
+                        fileName = "${msgRef.id}.mp4"
+                    )
+                    val uploadResult = cloudStorage.uploadFileWithMeta(
                         file = preparedVideo.localCachedFile,
-                        remotePath = "chat_media/$matchId/${msgRef.id}.mp4",
-                        contentType = preparedVideo.mimeType
+                        remotePath = videoRemotePath,
+                        contentType = preparedVideo.mimeType,
+                        onProgress = { p -> onProgress((p * 0.85f).coerceIn(0f, 0.85f)) }
                     )
                     var videoChunkCount = 0L
                     uploadResult.fold(
-                        onSuccess = { videoUrl ->
-                            payload["mediaDataUrl"] = videoUrl
+                        onSuccess = { meta ->
+                            payload["mediaDataUrl"] = meta.downloadUrl
+                            if (meta.storagePath.startsWith("users/")) {
+                                payload["mediaStoragePath"] = meta.storagePath
+                            }
                         },
                         onFailure = { err ->
                             if (!CloudMediaStorageService.isStorageUnavailableError(err)) {
@@ -1500,7 +1612,7 @@ class KindredRepository(
                             }
                             Log.w(
                                 CloudMediaStorageService.TAG,
-                                "Storage unavailable for chat video $matchId/${msgRef.id}; using Firestore fallback",
+                                "Storage unavailable for chat video $videoRemotePath; using Firestore fallback",
                                 err
                             )
                             val inline = CloudMediaStorageService.readLocalFileAsDataUrl(
@@ -1532,75 +1644,123 @@ class KindredRepository(
 
                     val rawThumb = preparedVideo.thumbnailDataUrl?.trim().orEmpty()
                     if (rawThumb.isNotBlank()) {
-                        val thumbUrl = if (CloudMediaStorageService.isRemoteHttpUrl(rawThumb)) {
-                            rawThumb.take(2048)
+                        if (CloudMediaStorageService.isRemoteHttpUrl(rawThumb)) {
+                            payload["thumbnailDataUrl"] = rawThumb.take(2048)
                         } else {
-                            cloudStorage.ensureRemoteMediaUrl(
+                            val thumbPath = CloudMediaStorageService.buildUserPath(
+                                uid = uid,
+                                category = "chat_media/$matchId",
+                                fileName = "${msgRef.id}_thumb.jpg"
+                            )
+                            val thumbRes = cloudStorage.ensureRemoteMediaUrlWithMeta(
                                 rawDataUrlOrRemoteUrl = rawThumb,
-                                remotePath = "chat_media/$matchId/${msgRef.id}_thumb.jpg",
-                                defaultContentType = "image/jpeg"
-                            ).getOrElse {
-                                MediaImageHelper.compactImageDataUrl(rawThumb, maxDim = 480, maxRawBytes = 40_000).orEmpty()
-                            }
-                        }
-                        if (thumbUrl.isNotBlank() && thumbUrl.length <= 180_000) {
-                            payload["thumbnailDataUrl"] = thumbUrl
+                                remotePath = thumbPath,
+                                defaultContentType = "image/jpeg",
+                                onProgress = { p -> onProgress((0.85f + p * 0.15f).coerceIn(0.85f, 1f)) }
+                            )
+                            thumbRes.fold(
+                                onSuccess = { thumbMeta ->
+                                    payload["thumbnailDataUrl"] = thumbMeta.downloadUrl.take(2048)
+                                    if (thumbMeta.storagePath.startsWith("users/")) {
+                                        payload["thumbnailStoragePath"] = thumbMeta.storagePath
+                                    }
+                                },
+                                onFailure = { err ->
+                                    if (!CloudMediaStorageService.isStorageUnavailableError(err)) {
+                                        throw err
+                                    }
+                                    val compactedThumb = MediaImageHelper.compactImageDataUrl(
+                                        rawThumb,
+                                        maxDim = 480,
+                                        maxRawBytes = 40_000
+                                    ).orEmpty()
+                                    if (compactedThumb.isNotBlank() && compactedThumb.length <= 180_000) {
+                                        payload["thumbnailDataUrl"] = compactedThumb
+                                    }
+                                }
+                            )
                         }
                     }
                     payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
                     payload["mediaChunkCount"] = videoChunkCount
                     payload["mediaByteSize"] = preparedVideo.sizeBytes.coerceAtLeast(0L)
                 } else if (cleanMedia != null) {
+                    var mediaStoragePath: String? = null
                     val resolvedMedia = when (allowedType) {
                         "VOICE" -> {
-                            val uploaded = cloudStorage.ensureRemoteMediaUrl(
-                                rawDataUrlOrRemoteUrl = cleanMedia,
-                                remotePath = "chat_media/$matchId/${msgRef.id}.m4a",
-                                defaultContentType = "audio/mp4"
+                            val voicePath = CloudMediaStorageService.buildUserPath(
+                                uid = uid,
+                                category = "chat_media/$matchId",
+                                fileName = "${msgRef.id}.m4a"
                             )
-                            uploaded.getOrElse { err ->
-                                if (!CloudMediaStorageService.isStorageUnavailableError(err)) throw err
-                                Log.w(
-                                    CloudMediaStorageService.TAG,
-                                    "Storage unavailable for voice note; falling back to inline audio",
-                                    err
-                                )
-                                if (cleanMedia.startsWith("file://")) {
-                                    CloudMediaStorageService.readLocalFileAsDataUrl(
-                                        file = File(cleanMedia.removePrefix("file://")),
-                                        mimeType = "audio/mp4"
-                                    )?.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
-                                        ?: throw IllegalStateException("Voice recording exceeds Firestore fallback size limit.", err)
-                                } else {
-                                    cleanMedia.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
-                                        ?: throw IllegalStateException("Voice recording exceeds Firestore fallback size limit.", err)
+                            val uploaded = cloudStorage.ensureRemoteMediaUrlWithMeta(
+                                rawDataUrlOrRemoteUrl = cleanMedia,
+                                remotePath = voicePath,
+                                defaultContentType = "audio/mp4",
+                                onProgress = onProgress
+                            )
+                            uploaded.fold(
+                                onSuccess = { meta ->
+                                    mediaStoragePath = meta.storagePath.takeIf { it.startsWith("users/") }
+                                    meta.downloadUrl
+                                },
+                                onFailure = { err ->
+                                    if (!CloudMediaStorageService.isStorageUnavailableError(err)) throw err
+                                    Log.w(
+                                        CloudMediaStorageService.TAG,
+                                        "Storage unavailable for voice note ($voicePath); falling back to inline audio",
+                                        err
+                                    )
+                                    if (cleanMedia.startsWith("file://")) {
+                                        CloudMediaStorageService.readLocalFileAsDataUrl(
+                                            file = File(cleanMedia.removePrefix("file://")),
+                                            mimeType = "audio/mp4"
+                                        )?.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
+                                            ?: throw IllegalStateException("Voice recording exceeds Firestore fallback size limit.", err)
+                                    } else {
+                                        cleanMedia.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
+                                            ?: throw IllegalStateException("Voice recording exceeds Firestore fallback size limit.", err)
+                                    }
                                 }
-                            }
+                            )
                         }
                         "PHOTO" -> {
-                            val uploaded = cloudStorage.ensureRemoteMediaUrl(
-                                rawDataUrlOrRemoteUrl = cleanMedia,
-                                remotePath = "chat_media/$matchId/${msgRef.id}.jpg",
-                                defaultContentType = "image/jpeg"
+                            val photoPath = CloudMediaStorageService.buildUserPath(
+                                uid = uid,
+                                category = "chat_media/$matchId",
+                                fileName = "${msgRef.id}.jpg"
                             )
-                            uploaded.getOrElse { err ->
-                                if (!CloudMediaStorageService.isStorageUnavailableError(err)) throw err
-                                Log.w(
-                                    CloudMediaStorageService.TAG,
-                                    "Storage unavailable for chat photo; falling back to inline image",
-                                    err
-                                )
-                                MediaImageHelper.compactImageDataUrl(
-                                    rawUrl = cleanMedia,
-                                    maxDim = 1080,
-                                    maxRawBytes = 580_000,
-                                    maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS
-                                ) ?: throw IllegalStateException("Photo exceeds Firestore fallback limit.", err)
-                            }
+                            val uploaded = cloudStorage.ensureRemoteMediaUrlWithMeta(
+                                rawDataUrlOrRemoteUrl = cleanMedia,
+                                remotePath = photoPath,
+                                defaultContentType = "image/jpeg",
+                                onProgress = onProgress
+                            )
+                            uploaded.fold(
+                                onSuccess = { meta ->
+                                    mediaStoragePath = meta.storagePath.takeIf { it.startsWith("users/") }
+                                    meta.downloadUrl
+                                },
+                                onFailure = { err ->
+                                    if (!CloudMediaStorageService.isStorageUnavailableError(err)) throw err
+                                    Log.w(
+                                        CloudMediaStorageService.TAG,
+                                        "Storage unavailable for chat photo ($photoPath); falling back to inline image",
+                                        err
+                                    )
+                                    MediaImageHelper.compactImageDataUrl(
+                                        rawUrl = cleanMedia,
+                                        maxDim = 1080,
+                                        maxRawBytes = 580_000,
+                                        maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS
+                                    ) ?: throw IllegalStateException("Photo exceeds Firestore fallback limit.", err)
+                                }
+                            )
                         }
                         else -> cleanMedia
                     }
                     payload["mediaDataUrl"] = resolvedMedia
+                    mediaStoragePath?.let { payload["mediaStoragePath"] = it }
                 }
                 if (cleanGif != null) payload["mediaGifId"] = cleanGif
                 if (effectiveDurationSec > 0L) payload["mediaDurationSec"] = effectiveDurationSec
@@ -1769,7 +1929,9 @@ class KindredRepository(
                     "unsentAt" to FieldValue.serverTimestamp(),
                     "text" to "Message unsent",
                     "mediaDataUrl" to FieldValue.delete(),
+                    "mediaStoragePath" to FieldValue.delete(),
                     "thumbnailDataUrl" to FieldValue.delete(),
+                    "thumbnailStoragePath" to FieldValue.delete(),
                     "mediaGifId" to FieldValue.delete()
                 )
             )
@@ -2217,7 +2379,9 @@ class KindredRepository(
         discoverable: Boolean,
         dateOfBirth: String = "",
         profileCompleted: Boolean = true,
-        existingPublic: PublicProfile?
+        existingPublic: PublicProfile?,
+        photoStoragePath: String? = existingPublic?.photoStoragePath,
+        photoStoragePaths: List<String> = existingPublic?.photoStoragePaths ?: emptyList()
     ): Map<String, Any> {
         val map = mutableMapOf<String, Any>(
             "userId" to uid,
@@ -2231,6 +2395,7 @@ class KindredRepository(
             "coarseLongitude" to coarseLng,
             "interests" to interests,
             "profilePhotos" to profilePhotos,
+            "photoStoragePaths" to photoStoragePaths,
             "avatarSeed" to uid.take(40),
             "discoverable" to discoverable,
             "profileCompleted" to profileCompleted,
@@ -2246,6 +2411,9 @@ class KindredRepository(
         }
         if (!photoDataUrl.isNullOrBlank() && photoDataUrl.length <= 180_000) {
             map["photoDataUrl"] = photoDataUrl
+        }
+        if (!photoStoragePath.isNullOrBlank() && photoStoragePath.startsWith("users/")) {
+            map["photoStoragePath"] = photoStoragePath
         }
         return map
     }

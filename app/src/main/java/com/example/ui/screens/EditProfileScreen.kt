@@ -57,6 +57,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -110,6 +111,7 @@ fun EditProfileScreen(
     isBusy: Boolean,
     latestLocation: ResolvedDeviceLocation? = null,
     videos: List<ProfileVideoItem> = emptyList(),
+    uploadProgress: Float? = null,
     onUploadVideo: (caption: String, prepared: PreparedVideoUpload) -> Unit = { _, _ -> },
     onUploadVideoWithResult: ((caption: String, prepared: PreparedVideoUpload, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
     onDeleteVideo: (videoId: String) -> Unit = {},
@@ -134,8 +136,23 @@ fun EditProfileScreen(
             country: String
         ) -> Unit
     )? = null,
+    onSaveDetailedChangesWithResult: (
+        (
+            displayName: String,
+            gender: String,
+            dateOfBirth: String,
+            computedAge: Int?,
+            bio: String,
+            interests: List<String>,
+            profilePhotos: List<String>,
+            cityLabel: String,
+            country: String,
+            onComplete: (Boolean, String?) -> Unit
+        ) -> Unit
+    )? = null,
     onStatusMessage: (String) -> Unit
 ) {
+    var profileSaveError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -947,25 +964,85 @@ fun EditProfileScreen(
                     }
                 }
 
+                if (isBusy && uploadProgress != null) {
+                    val pct = (uploadProgress.coerceIn(0f, 1f) * 100).toInt()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("edit_profile_upload_progress"),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { uploadProgress.coerceIn(0f, 1f) },
+                            color = CoralRose,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = if (pct > 0) "Uploading profile media... $pct%" else "Uploading profile media...",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (!profileSaveError.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("edit_profile_error_banner")
+                    ) {
+                        Text(
+                            text = profileSaveError.orEmpty(),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+
                 // Save CTA
                 Button(
                     onClick = {
+                        profileSaveError = null
                         val dobStr = validDob?.dobFormatted ?: myProfile?.dateOfBirth.orEmpty()
+                        val detailedWithResult = onSaveDetailedChangesWithResult
                         val detailed = onSaveDetailedChanges
-                        if (detailed != null) {
-                            detailed(
-                                editableName.trim().ifBlank { initialName },
-                                editableGender,
-                                dobStr,
-                                validDob?.age,
-                                bio,
-                                selectedInterests,
-                                profilePhotos,
-                                cityLabel,
-                                country
-                            )
-                        } else {
-                            onSaveChanges(bio, selectedInterests, profilePhotos, cityLabel, country)
+                        when {
+                            detailedWithResult != null -> {
+                                detailedWithResult(
+                                    editableName.trim().ifBlank { initialName },
+                                    editableGender,
+                                    dobStr,
+                                    validDob?.age,
+                                    bio,
+                                    selectedInterests,
+                                    profilePhotos,
+                                    cityLabel,
+                                    country
+                                ) { success, errMsg ->
+                                    if (!success) {
+                                        profileSaveError = errMsg ?: "Failed to save profile"
+                                    }
+                                }
+                            }
+                            detailed != null -> {
+                                detailed(
+                                    editableName.trim().ifBlank { initialName },
+                                    editableGender,
+                                    dobStr,
+                                    validDob?.age,
+                                    bio,
+                                    selectedInterests,
+                                    profilePhotos,
+                                    cityLabel,
+                                    country
+                                )
+                            }
+                            else -> {
+                                onSaveChanges(bio, selectedInterests, profilePhotos, cityLabel, country)
+                            }
                         }
                     },
                     enabled = !isBusy,
@@ -1022,6 +1099,26 @@ fun EditProfileScreen(
                         enabled = !isUploadingVideo,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (isUploadingVideo) {
+                        val pct = ((uploadProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()
+                        if (uploadProgress != null) {
+                            LinearProgressIndicator(
+                                progress = { uploadProgress.coerceIn(0f, 1f) },
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Text(
+                            text = if (pct > 0) "Uploading showcase video... $pct%" else "Uploading showcase video...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (videoUploadError != null) {
                         Text(
                             text = videoUploadError.orEmpty(),
@@ -1040,7 +1137,7 @@ fun EditProfileScreen(
                         val cap = videoCaptionDraft.trim()
                         scope.launch {
                             try {
-                                kotlinx.coroutines.withTimeout(45_000L) {
+                                kotlinx.coroutines.withTimeout(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                                     val uploadRes = onUploadVideoWithResult
                                     if (uploadRes != null) {
                                         var done = false

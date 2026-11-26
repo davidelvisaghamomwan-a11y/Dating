@@ -398,6 +398,8 @@ private fun MainKindredApp(
     val adminAllProfilesState by viewModel.adminAllProfilesState.collectAsStateWithLifecycle()
     val statusMessage by viewModel.actionStatusMessage.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
+    val isUploadingMedia by viewModel.isUploadingMedia.collectAsStateWithLifecycle()
+    val uploadProgress by viewModel.uploadProgress.collectAsStateWithLifecycle()
     val latestLocation by viewModel.latestLocation.collectAsStateWithLifecycle()
     var showSearchSheet by remember { mutableStateOf(false) }
 
@@ -848,6 +850,12 @@ private fun MainKindredApp(
                                         onPostVideoStory = { prepared, caption, onDone ->
                                             viewModel.postVideoStory(prepared, caption, onDone)
                                         },
+                                        onPostPhotoStoryWithResult = { photoUrl, caption, onDone ->
+                                            viewModel.postPhotoStoryWithResult(photoUrl, caption, onDone)
+                                        },
+                                        onPostVideoStoryWithResult = { prepared, caption, onDone ->
+                                            viewModel.postVideoStoryWithResult(prepared, caption, onDone)
+                                        },
                                         onMarkStoryViewed = { storyId ->
                                             viewModel.markStoryViewed(storyId)
                                         },
@@ -880,6 +888,10 @@ private fun MainKindredApp(
                                         onPublishFeedPost = { caption, photoDataUrl, photoUrls, preparedVideo, onDone ->
                                             viewModel.publishFeedPost(caption, photoDataUrl, photoUrls, preparedVideo, onDone)
                                         },
+                                        onPublishFeedPostWithResult = { caption, photoDataUrl, photoUrls, preparedVideo, onDone ->
+                                            viewModel.publishFeedPostWithResult(caption, photoDataUrl, photoUrls, preparedVideo, onDone)
+                                        },
+                                        uploadProgress = uploadProgress,
                                         onToggleFeedPostLike = { postId, currentlyLiked ->
                                             viewModel.toggleFeedPostLike(postId, currentlyLiked)
                                         },
@@ -1177,6 +1189,8 @@ private fun MainKindredApp(
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         },
+                                        isUploadingMedia = isUploadingMedia,
+                                        uploadProgress = uploadProgress,
                                         onOpenPartnerFullProfile = { partnerProfile ->
                                             openUserProfileRoute(partnerProfile.userId)
                                         }
@@ -1277,6 +1291,10 @@ private fun MainKindredApp(
                                         onCreateHighlight = { title, coverUrl, items, onDone ->
                                             viewModel.createStoryHighlight(title, coverUrl, items, onDone)
                                         },
+                                        onCreateHighlightWithResult = { title, coverUrl, items, onDone ->
+                                            viewModel.createStoryHighlightWithResult(title, coverUrl, items, onDone)
+                                        },
+                                        uploadProgress = uploadProgress,
                                         onDeleteHighlight = { highlightId ->
                                             viewModel.deleteStoryHighlight(highlightId)
                                         },
@@ -1300,8 +1318,12 @@ private fun MainKindredApp(
                                         isBusy = isBusy,
                                         latestLocation = latestLocation,
                                         videos = myShowcaseVideos,
+                                        uploadProgress = uploadProgress,
                                         onUploadVideo = { caption, prepared ->
                                             viewModel.uploadProfileVideo(caption, prepared)
+                                        },
+                                        onUploadVideoWithResult = { caption, prepared, onDone ->
+                                            viewModel.uploadProfileVideoWithResult(caption, prepared, onDone)
                                         },
                                         onDeleteVideo = { videoId ->
                                             viewModel.deleteProfileVideo(viewModel.currentUserId, videoId)
@@ -1329,6 +1351,21 @@ private fun MainKindredApp(
                                                 dateOfBirth = dob,
                                                 computedAge = age,
                                                 onComplete = { navController.popBackStack() }
+                                            )
+                                        },
+                                        onSaveDetailedChangesWithResult = { name, gender, dob, age, bio, interests, photos, city, country, onDone ->
+                                            viewModel.updateProfileContent(
+                                                bio = bio,
+                                                interests = interests,
+                                                profilePhotos = photos,
+                                                cityLabel = city,
+                                                country = country,
+                                                displayName = name,
+                                                gender = gender,
+                                                dateOfBirth = dob,
+                                                computedAge = age,
+                                                onComplete = { navController.popBackStack() },
+                                                onCompleteResult = onDone
                                             )
                                         },
                                         onStatusMessage = { msg ->
@@ -1560,6 +1597,9 @@ private fun MainKindredApp(
                                         onPublishVideoPost = { caption, prepared ->
                                             viewModel.publishVideoPost(caption, prepared)
                                         },
+                                        onPublishVideoPostWithResult = { caption, prepared, onDone ->
+                                            viewModel.publishVideoPostWithResult(caption, prepared, onDone)
+                                        },
                                         onToggleLike = { postId, currentlyLiked ->
                                             viewModel.toggleVideoPostLike(postId, currentlyLiked)
                                         },
@@ -1591,7 +1631,8 @@ private fun MainKindredApp(
                                         onDeleteComment = { postId, commentId ->
                                             viewModel.deleteVideoPostComment(postId, commentId)
                                         },
-                                        initialPostId = initialReelIdForVideoFeed
+                                        initialPostId = initialReelIdForVideoFeed,
+                                        uploadProgress = uploadProgress
                                     )
                                 }
 
@@ -1776,12 +1817,16 @@ private fun MainKindredApp(
                             if (showGlobalCreatePostSheet) {
                                 CreatePostComposerSheet(
                                     myProfile = data.myProfile,
+                                    uploadProgress = uploadProgress,
                                     onCreateStoryClick = {
                                         showGlobalCreateStoryStudio = true
                                     },
                                     onDismiss = { showGlobalCreatePostSheet = false },
                                     onPublish = { caption, photoDataUrl, photoUrls, video ->
                                         viewModel.publishFeedPost(caption, photoDataUrl, photoUrls, video) {}
+                                    },
+                                    onPublishWithResult = { caption, photoDataUrl, photoUrls, video, onDone ->
+                                        viewModel.publishFeedPostWithResult(caption, photoDataUrl, photoUrls, video, onDone)
                                     }
                                 )
                             }
@@ -1789,11 +1834,18 @@ private fun MainKindredApp(
                                 CreateStoryStudioDialog(
                                     myProfile = data.myProfile,
                                     currentUserId = viewModel.currentUserId,
+                                    uploadProgress = uploadProgress,
                                     onPostPhotoStory = { photoUrl, caption, onDone ->
                                         viewModel.postPhotoStory(photoUrl, caption, onDone)
                                     },
                                     onPostVideoStory = { prepared, caption, onDone ->
                                         viewModel.postVideoStory(prepared, caption, onDone)
+                                    },
+                                    onPostPhotoStoryWithResult = { photoUrl, caption, onDone ->
+                                        viewModel.postPhotoStoryWithResult(photoUrl, caption, onDone)
+                                    },
+                                    onPostVideoStoryWithResult = { prepared, caption, onDone ->
+                                        viewModel.postVideoStoryWithResult(prepared, caption, onDone)
                                     },
                                     onStatusMessage = { msg ->
                                         viewModel.postStatusMessage(msg)

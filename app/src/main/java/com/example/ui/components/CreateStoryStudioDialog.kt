@@ -59,6 +59,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -118,8 +119,11 @@ private class CaptureStoryVideoContract : ActivityResultContracts.CaptureVideo()
 fun CreateStoryStudioDialog(
     myProfile: PublicProfile?,
     currentUserId: String,
+    uploadProgress: Float? = null,
     onPostPhotoStory: (photoDataUrl: String, caption: String, onComplete: (Boolean) -> Unit) -> Unit,
     onPostVideoStory: (prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean) -> Unit) -> Unit,
+    onPostPhotoStoryWithResult: ((photoDataUrl: String, caption: String, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
+    onPostVideoStoryWithResult: ((prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
     onStatusMessage: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -627,31 +631,51 @@ fun CreateStoryStudioDialog(
                                     val cap = captionDraft.trim()
                                     val photo = capturedPhotoDataUrl
                                     val vid = capturedVideo
-                                    scope.launch {
-                                        try {
-                                            kotlinx.coroutines.withTimeout(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                                                if (photo != null) {
-                                                    var done = false
-                                                    onPostPhotoStory(photo, cap) { success ->
-                                                        done = true
-                                                        isPublishing = false
-                                                        if (success) onDismiss()
-                                                        else previewError = "Failed to upload photo story"
-                                                    }
-                                                    while (!done) { kotlinx.coroutines.delay(100L) }
-                                                } else if (vid != null) {
-                                                    var done = false
-                                                    onPostVideoStory(vid, cap) { success ->
-                                                        done = true
-                                                        isPublishing = false
-                                                        if (success) onDismiss()
-                                                        else previewError = "Failed to upload video story"
-                                                    }
-                                                    while (!done) { kotlinx.coroutines.delay(100L) }
-                                                } else {
-                                                    isPublishing = false
-                                                }
-                                            }
+                                     scope.launch {
+                                         try {
+                                             kotlinx.coroutines.withTimeout(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                                                 if (photo != null) {
+                                                     var done = false
+                                                     val photoWithRes = onPostPhotoStoryWithResult
+                                                     if (photoWithRes != null) {
+                                                         photoWithRes(photo, cap) { success, errMsg ->
+                                                             done = true
+                                                             isPublishing = false
+                                                             if (success) onDismiss()
+                                                             else previewError = errMsg ?: "Failed to upload photo story"
+                                                         }
+                                                     } else {
+                                                         onPostPhotoStory(photo, cap) { success ->
+                                                             done = true
+                                                             isPublishing = false
+                                                             if (success) onDismiss()
+                                                             else previewError = "Failed to upload photo story"
+                                                         }
+                                                     }
+                                                     while (!done) { kotlinx.coroutines.delay(100L) }
+                                                 } else if (vid != null) {
+                                                     var done = false
+                                                     val vidWithRes = onPostVideoStoryWithResult
+                                                     if (vidWithRes != null) {
+                                                         vidWithRes(vid, cap) { success, errMsg ->
+                                                             done = true
+                                                             isPublishing = false
+                                                             if (success) onDismiss()
+                                                             else previewError = errMsg ?: "Failed to upload video story"
+                                                         }
+                                                     } else {
+                                                         onPostVideoStory(vid, cap) { success ->
+                                                             done = true
+                                                             isPublishing = false
+                                                             if (success) onDismiss()
+                                                             else previewError = "Failed to upload video story"
+                                                         }
+                                                     }
+                                                     while (!done) { kotlinx.coroutines.delay(100L) }
+                                                 } else {
+                                                     isPublishing = false
+                                                 }
+                                             }
                                         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                                             android.util.Log.e("CreateStoryStudio", "Story upload timed out", e)
                                             previewError = "Upload timed out. Check network connection."
@@ -734,6 +758,7 @@ fun CreateStoryStudioDialog(
                 }
 
                 if (isPublishing) {
+                    val pct = ((uploadProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -751,11 +776,55 @@ fun CreateStoryStudioDialog(
                                 modifier = Modifier.size(56.dp)
                             )
                             Text(
-                                text = "Uploading...",
+                                text = if (pct > 0) "Uploading... $pct%" else "Uploading...",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleLarge
                             )
+                            if (uploadProgress != null) {
+                                LinearProgressIndicator(
+                                    progress = { uploadProgress.coerceIn(0f, 1f) },
+                                    color = StoryInstagramBlue,
+                                    modifier = Modifier.fillMaxWidth(0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                previewError?.let { errText ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 64.dp)
+                            .fillMaxWidth()
+                            .testTag("story_upload_error_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = errText,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { previewError = null },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Dismiss error",
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }

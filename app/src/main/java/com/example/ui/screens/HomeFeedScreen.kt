@@ -191,6 +191,8 @@ fun HomeFeedScreen(
     stories: List<StoryItem> = emptyList(),
     onPostPhotoStory: (photoDataUrl: String, caption: String, onComplete: (Boolean) -> Unit) -> Unit = { _, _, cb -> cb(true) },
     onPostVideoStory: (prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean) -> Unit) -> Unit = { _, _, cb -> cb(true) },
+    onPostPhotoStoryWithResult: ((photoDataUrl: String, caption: String, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
+    onPostVideoStoryWithResult: ((prepared: PreparedVideoUpload, caption: String, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
     onMarkStoryViewed: (String) -> Unit = {},
     onDeleteStory: (String) -> Unit = {},
     resolveStoryVideoFile: suspend (StoryItem) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
@@ -205,6 +207,8 @@ fun HomeFeedScreen(
     onOpenUserProfile: (PublicProfile) -> Unit = {},
     onOpenUserProfileById: (String) -> Unit = {},
     onPublishFeedPost: (caption: String, photoDataUrl: String?, photoUrls: List<String>, preparedVideo: PreparedVideoUpload?, onComplete: () -> Unit) -> Unit = { _, _, _, _, cb -> cb() },
+    onPublishFeedPostWithResult: ((caption: String, photoDataUrl: String?, photoUrls: List<String>, preparedVideo: PreparedVideoUpload?, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
+    uploadProgress: Float? = null,
     onToggleFeedPostLike: (postId: String, currentlyLiked: Boolean) -> Unit = { _, _ -> },
     onToggleFeedPostSave: (postId: String, currentlySaved: Boolean) -> Unit = { _, _ -> },
     observeFeedComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
@@ -603,6 +607,9 @@ fun HomeFeedScreen(
                             onOpenStory = { idx -> activeStoryIndex = idx },
                             onPostPhotoStory = onPostPhotoStory,
                             onPostVideoStory = onPostVideoStory,
+                            uploadProgress = uploadProgress,
+                            onPostPhotoStoryWithResult = onPostPhotoStoryWithResult,
+                            onPostVideoStoryWithResult = onPostVideoStoryWithResult,
                             onOpenVideoFeed = onOpenVideoFeed,
                             onStatusMessage = onLocationError
                         )
@@ -826,10 +833,12 @@ fun HomeFeedScreen(
     if (showPostComposerSheet) {
         CreatePostComposerSheet(
             myProfile = myProfile,
+            uploadProgress = uploadProgress,
             onDismiss = { showPostComposerSheet = false },
             onPublish = { caption, photoDataUrl, photoUrls, video ->
                 onPublishFeedPost(caption, photoDataUrl, photoUrls, video) {}
-            }
+            },
+            onPublishWithResult = onPublishFeedPostWithResult
         )
     }
 

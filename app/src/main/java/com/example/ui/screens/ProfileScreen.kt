@@ -175,6 +175,8 @@ fun ProfileScreen(
     resolveProfileVideoFile: suspend (ProfileVideoItem) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
     onDeleteVideo: (String) -> Unit = {},
     onCreateHighlight: (title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean) -> Unit) -> Unit = { _, _, _, cb -> cb(true) },
+    onCreateHighlightWithResult: ((title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null,
+    uploadProgress: Float? = null,
     onDeleteHighlight: (String) -> Unit = {},
     onBeforeSignOut: suspend () -> Unit = {},
     onStatusMessage: (String) -> Unit = {}
@@ -904,8 +906,10 @@ fun ProfileScreen(
     if (showCreateHighlightDialog) {
         CreateHighlightDialog(
             archivedStories = archivedStories,
+            uploadProgress = uploadProgress,
             onDismiss = { showCreateHighlightDialog = false },
-            onSaveHighlight = onCreateHighlight
+            onSaveHighlight = onCreateHighlight,
+            onSaveHighlightWithResult = onCreateHighlightWithResult
         )
     }
 }

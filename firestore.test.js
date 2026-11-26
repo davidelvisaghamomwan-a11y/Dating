@@ -1028,3 +1028,118 @@ test("Social graph /follows enforces follower identity, self-follow denial, bloc
   );
 });
 
+test("Verified Firebase Storage path fields are allowed on profiles, feed posts, stories, highlights, videos, and chat messages while invalid paths fail", async () => {
+  const created = pastDate(20000);
+  const matchId = `${ALICE_UID}_${BOB_UID}`;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    await adminDb.collection("publicProfiles").doc(ALICE_UID).set(makePublicProfile(ALICE_UID, created));
+    await adminDb.collection("publicProfiles").doc(BOB_UID).set(makePublicProfile(BOB_UID, created));
+    await adminDb.collection("matches").doc(matchId).set({
+      participantUids: [ALICE_UID, BOB_UID],
+      createdBy: ALICE_UID,
+      conversationType: "DIRECT",
+      createdAt: created,
+      updatedAt: created,
+    });
+  });
+
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+
+  // Valid Storage path on publicProfile
+  await assertSucceeds(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).update({
+      photoDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/photo_0.jpg?alt=media",
+      photoStoragePath: `users/${ALICE_UID}/profile_photos/photo_0.jpg`,
+      profilePhotos: ["https://firebasestorage.googleapis.com/v0/b/demo/o/photo_0.jpg?alt=media"],
+      photoStoragePaths: [`users/${ALICE_UID}/profile_photos/photo_0.jpg`],
+      updatedAt: pastDate(1000),
+    })
+  );
+
+  // Invalid Storage path outside users/ fails
+  await assertFails(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).update({
+      photoStoragePath: "invalid_root/photo_0.jpg",
+      updatedAt: pastDate(900),
+    })
+  );
+
+  // Valid Storage paths on feedPost, story, highlight, showcase video, and chat message
+  await assertSucceeds(
+    aliceDb.collection("feedPosts").doc("feed_storage_1").set({
+      userId: ALICE_UID,
+      authorName: "Alice",
+      mediaType: "PHOTO",
+      caption: "With storage metadata",
+      mediaDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/p1.jpg?alt=media",
+      mediaStoragePath: `users/${ALICE_UID}/feed_posts/feed_storage_1_0.jpg`,
+      mediaUrls: ["https://firebasestorage.googleapis.com/v0/b/demo/o/p1.jpg?alt=media"],
+      mediaStoragePaths: [`users/${ALICE_UID}/feed_posts/feed_storage_1_0.jpg`],
+      chunkCount: 0,
+      likedByUids: [],
+      savedByUids: [],
+      commentCount: 0,
+      createdAt: pastDate(800),
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("stories").doc("story_storage_1").set({
+      userId: ALICE_UID,
+      authorName: "Alice",
+      mediaType: "VIDEO",
+      mediaDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/s1.mp4?alt=media",
+      mediaStoragePath: `users/${ALICE_UID}/stories/story_storage_1.mp4`,
+      thumbnailDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/s1.jpg?alt=media",
+      thumbnailStoragePath: `users/${ALICE_UID}/stories/story_storage_1_thumb.jpg`,
+      mediaDurationSec: 12,
+      chunkCount: 0,
+      viewerUids: [ALICE_UID],
+      expiresAt: new Date(Date.now() + 86400000),
+      expiresAtMs: Date.now() + 86400000,
+      createdAt: pastDate(700),
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("highlights").doc("hl_storage_1").set({
+      userId: ALICE_UID,
+      title: "Trips",
+      coverUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/cover.jpg?alt=media",
+      coverStoragePath: `users/${ALICE_UID}/highlights/hl_storage_1_cover.jpg`,
+      storyItems: [],
+      createdAt: pastDate(600),
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).collection("videos").doc("vid_storage_1").set({
+      userId: ALICE_UID,
+      caption: "Stored video",
+      mediaDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/vid.mp4?alt=media",
+      mediaStoragePath: `users/${ALICE_UID}/profile_videos/vid_storage_1.mp4`,
+      thumbnailDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/vid_thumb.jpg?alt=media",
+      thumbnailStoragePath: `users/${ALICE_UID}/profile_videos/vid_storage_1_thumb.jpg`,
+      mediaDurationSec: 20,
+      chunkCount: 0,
+      createdAt: pastDate(500),
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("matches").doc(matchId).collection("messages").doc("msg_storage_1").set({
+      matchId,
+      senderId: ALICE_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      text: "",
+      messageType: "PHOTO",
+      mediaDataUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/chat.jpg?alt=media",
+      mediaStoragePath: `users/${ALICE_UID}/chat_media/${matchId}/msg_storage_1.jpg`,
+      readByUids: [ALICE_UID],
+      createdAt: pastDate(400),
+    })
+  );
+});
+
+

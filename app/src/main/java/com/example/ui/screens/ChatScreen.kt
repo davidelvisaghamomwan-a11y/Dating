@@ -75,6 +75,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -209,6 +210,8 @@ fun ChatScreen(
     val activeCallAudioChunks by chatViewModel.activeCallAudioChunks.collectAsStateWithLifecycle()
     val activeCallVideoFrames by chatViewModel.activeCallVideoFrames.collectAsStateWithLifecycle()
     val statusError by chatViewModel.statusError.collectAsStateWithLifecycle()
+    val isUploadingMedia by chatViewModel.isUploadingMedia.collectAsStateWithLifecycle()
+    val uploadProgress by chatViewModel.uploadProgress.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -246,6 +249,8 @@ fun ChatScreen(
             activeCallSession = activeCallSession,
             activeCallAudioChunks = activeCallAudioChunks,
             activeCallVideoFrames = activeCallVideoFrames,
+            isUploadingMedia = isUploadingMedia,
+            uploadProgress = uploadProgress,
             showBackButton = showBackButton,
             onBack = onBack,
             onSendMessage = { _, participants, text, messageType ->
@@ -326,6 +331,8 @@ fun ChatScreen(
     activeCallSession: CallSession? = null,
     activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
     activeCallVideoFrames: List<CallVideoFrame> = emptyList(),
+    isUploadingMedia: Boolean = false,
+    uploadProgress: Float? = null,
     showBackButton: Boolean = true,
     onBack: () -> Unit,
     onSendMessage: (matchId: String, participantUids: List<String>, text: String, messageType: String) -> Unit,
@@ -1274,6 +1281,34 @@ fun ChatScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
+                if (isUploadingMedia) {
+                    val pct = ((uploadProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .testTag("chat_media_upload_progress"),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (uploadProgress != null) {
+                            LinearProgressIndicator(
+                                progress = { uploadProgress.coerceIn(0f, 1f) },
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Text(
+                            text = if (pct > 0) "Uploading media... $pct%" else "Uploading media...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 if (isRecordingVoice) {
                     Row(
                         modifier = Modifier

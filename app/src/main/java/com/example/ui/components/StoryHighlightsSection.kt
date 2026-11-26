@@ -335,8 +335,10 @@ private fun HighlightNewBubble(
 @Composable
 fun CreateHighlightDialog(
     archivedStories: List<StoryItem>,
+    uploadProgress: Float? = null,
     onDismiss: () -> Unit,
-    onSaveHighlight: (title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean) -> Unit) -> Unit
+    onSaveHighlight: (title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean) -> Unit) -> Unit,
+    onSaveHighlightWithResult: ((title: String, coverUrl: String, items: List<StoryItem>, onComplete: (Boolean, String?) -> Unit) -> Unit)? = null
 ) {
     var title by remember { mutableStateOf("") }
     val selectedKeys = remember { mutableStateListOf<String>() }
@@ -346,7 +348,7 @@ fun CreateHighlightDialog(
 
     LaunchedEffect(isSaving) {
         if (isSaving) {
-            delay(35_000L)
+            delay(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L)
             if (isSaving) {
                 isSaving = false
                 errorMsg = "Saving highlight timed out. Please check your connection and try again."
@@ -412,12 +414,24 @@ fun CreateHighlightDialog(
                                 }
                                 errorMsg = null
                                 isSaving = true
-                                onSaveHighlight(finalTitle, rawCover, pickedStories) { success ->
-                                    isSaving = false
-                                    if (success) {
-                                        onDismiss()
-                                    } else {
-                                        errorMsg = "Could not save highlight. Check your connection or try selecting fewer stories."
+                                val saveWithRes = onSaveHighlightWithResult
+                                if (saveWithRes != null) {
+                                    saveWithRes(finalTitle, rawCover, pickedStories) { success, errText ->
+                                        isSaving = false
+                                        if (success) {
+                                            onDismiss()
+                                        } else {
+                                            errorMsg = errText ?: "Could not save highlight. Check your connection or try selecting fewer stories."
+                                        }
+                                    }
+                                } else {
+                                    onSaveHighlight(finalTitle, rawCover, pickedStories) { success ->
+                                        isSaving = false
+                                        if (success) {
+                                            onDismiss()
+                                        } else {
+                                            errorMsg = "Could not save highlight. Check your connection or try selecting fewer stories."
+                                        }
                                     }
                                 }
                             } catch (t: Throwable) {
@@ -453,6 +467,29 @@ fun CreateHighlightDialog(
                         .fillMaxWidth()
                         .testTag("highlight_title_input")
                 )
+
+                if (isSaving) {
+                    val pct = ((uploadProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (uploadProgress != null) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { uploadProgress.coerceIn(0f, 1f) },
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Text(
+                            text = if (pct > 0) "Saving highlight... $pct%" else "Saving highlight...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
                 if (errorMsg != null) {
                     Text(

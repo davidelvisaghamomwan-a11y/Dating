@@ -60,6 +60,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -120,7 +121,8 @@ fun VideoFeedScreen(
     observeComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
     onAddComment: (String, String) -> Unit = { _, _ -> },
     onDeleteComment: (String, String) -> Unit = { _, _ -> },
-    initialPostId: String? = null
+    initialPostId: String? = null,
+    uploadProgress: Float? = null
 ) {
     BackHandler { onBack() }
     val context = LocalContext.current
@@ -340,6 +342,26 @@ fun VideoFeedScreen(
                         enabled = !isPublishing,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (isPublishing) {
+                        val pct = ((uploadProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()
+                        if (uploadProgress != null) {
+                            LinearProgressIndicator(
+                                progress = { uploadProgress.coerceIn(0f, 1f) },
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Text(
+                            text = if (pct > 0) "Uploading Reel... $pct%" else "Uploading Reel...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     if (uploadError != null) {
                         Text(
                             text = uploadError.orEmpty(),
@@ -358,7 +380,7 @@ fun VideoFeedScreen(
                         val cap = captionDraft.trim()
                         scope.launch {
                             try {
-                                kotlinx.coroutines.withTimeout(45_000L) {
+                                kotlinx.coroutines.withTimeout(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                                     val pubRes = onPublishVideoPostWithResult
                                     if (pubRes != null) {
                                         var done = false

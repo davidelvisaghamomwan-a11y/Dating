@@ -47,6 +47,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -181,6 +182,7 @@ fun CreatePostComposerSheet(
     myProfile: PublicProfile?,
     initialPhotos: List<String> = emptyList(),
     initialVideo: PreparedVideoUpload? = null,
+    uploadProgress: Float? = null,
     onCreateStoryClick: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onPublish: (caption: String, photoDataUrl: String?, photoUrls: List<String>, video: PreparedVideoUpload?) -> Unit,
@@ -295,7 +297,7 @@ fun CreatePostComposerSheet(
 
                             scope.launch {
                                 try {
-                                    kotlinx.coroutines.withTimeout(45_000L) {
+                                    kotlinx.coroutines.withTimeout(com.example.data.CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
                                         val pubResult = onPublishWithResult
                                         if (pubResult != null) {
                                             var done = false
@@ -523,6 +525,34 @@ fun CreatePostComposerSheet(
                 }
 
 
+
+                if (isPublishing) {
+                    val pct = ((uploadProgress ?: 0f).coerceIn(0f, 1f) * 100).toInt()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("create_post_upload_progress"),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (uploadProgress != null) {
+                            LinearProgressIndicator(
+                                progress = { uploadProgress.coerceIn(0f, 1f) },
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = CoralRose,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Text(
+                            text = if (pct > 0) "Uploading post media... $pct%" else "Sharing post...",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
                 if (errorMsg != null) {
                     Text(
