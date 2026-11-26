@@ -883,6 +883,7 @@ private fun MainKindredApp(
                                         videoPosts = videoFeedState,
                                         currentUserId = viewModel.currentUserId,
                                         isFollowingUid = { uid -> uid in followingIdsState },
+                                         isFollowerUid = { uid -> uid in followerIdsState },
                                         onToggleFollow = { profile ->
                                             viewModel.toggleFollow(profile.userId)
                                         },

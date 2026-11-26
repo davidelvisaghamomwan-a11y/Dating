@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
@@ -148,8 +149,8 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 private enum class FeedFilterMode(val label: String) {
-    FOR_YOU("For you"),
-    FOLLOWING("Following")
+    FOLLOWING("Following"),
+    FOLLOWER("Follower")
 }
 
 private sealed interface HomeTimelineItem {
@@ -203,6 +204,7 @@ fun HomeFeedScreen(
     videoPosts: List<VideoPost> = emptyList(),
     currentUserId: String = myProfile?.userId ?: "",
     isFollowingUid: (String) -> Boolean = { false },
+    isFollowerUid: (String) -> Boolean = { false },
     onToggleFollow: (PublicProfile) -> Unit = {},
     onOpenUserProfile: (PublicProfile) -> Unit = {},
     onOpenUserProfileById: (String) -> Unit = {},
@@ -237,7 +239,7 @@ fun HomeFeedScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
-    var filterMode by remember { mutableStateOf(FeedFilterMode.FOR_YOU) }
+    var filterMode by remember { mutableStateOf(FeedFilterMode.FOLLOWING) }
     var showFeedFilterMenu by remember { mutableStateOf(false) }
     var activeStoryIndex by remember { mutableStateOf<Int?>(null) }
     var showPostComposerSheet by remember { mutableStateOf(false) }
@@ -268,17 +270,18 @@ fun HomeFeedScreen(
         }
     }
 
-    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId, isFollowingUid) {
+    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId, isFollowingUid, isFollowerUid) {
         val rawCombined = buildList<HomeTimelineItem> {
             feedPosts.forEach { add(HomeTimelineItem.PostItem(it)) }
             videoPosts.forEach { add(HomeTimelineItem.ReelItem(it)) }
         }
-        val filtered = if (filterMode == FeedFilterMode.FOLLOWING) {
-            rawCombined.filter { item ->
+        val filtered = when (filterMode) {
+            FeedFilterMode.FOLLOWING -> rawCombined.filter { item ->
                 item.userId == currentUserId || isFollowingUid(item.userId)
             }
-        } else {
-            rawCombined
+            FeedFilterMode.FOLLOWER -> rawCombined.filter { item ->
+                item.userId == currentUserId || isFollowerUid(item.userId)
+            }
         }
         filtered.sortedWith(
             compareByDescending<HomeTimelineItem> { it.createdAtSeconds }
@@ -287,14 +290,14 @@ fun HomeFeedScreen(
     }
 
     // Prioritize other people's Reels for the "Suggested reels" horizontal shelf on Home
-    val shelfReels = remember(videoPosts, filterMode, currentUserId, isFollowingUid) {
-        val base = if (filterMode == FeedFilterMode.FOLLOWING) {
-            videoPosts.filter {
+    val shelfReels = remember(videoPosts, filterMode, currentUserId, isFollowingUid, isFollowerUid) {
+        val base = when (filterMode) {
+            FeedFilterMode.FOLLOWING -> videoPosts.filter {
                 it.userId != currentUserId && isFollowingUid(it.userId)
             }
-        } else {
-            val others = videoPosts.filter { it.userId != currentUserId }
-            others.ifEmpty { videoPosts }
+            FeedFilterMode.FOLLOWER -> videoPosts.filter {
+                it.userId != currentUserId && isFollowerUid(it.userId)
+            }
         }
         base.take(15)
     }
@@ -450,19 +453,6 @@ fun HomeFeedScreen(
                         onDismissRequest = { showFeedFilterMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("For you") },
-                            leadingIcon = { Icon(Icons.Filled.AutoAwesome, contentDescription = null) },
-                            trailingIcon = {
-                                if (filterMode == FeedFilterMode.FOR_YOU) {
-                                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFF0095F6))
-                                }
-                            },
-                            onClick = {
-                                filterMode = FeedFilterMode.FOR_YOU
-                                showFeedFilterMenu = false
-                            }
-                        )
-                        DropdownMenuItem(
                             text = { Text("Following") },
                             leadingIcon = { Icon(Icons.Filled.Group, contentDescription = null) },
                             trailingIcon = {
@@ -476,28 +466,16 @@ fun HomeFeedScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Search People") },
-                            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                            onClick = {
-                                showFeedFilterMenu = false
-                                onOpenSearch()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Refresh GPS Location") },
-                            leadingIcon = { Icon(Icons.Filled.MyLocation, contentDescription = null) },
-                            onClick = {
-                                showFeedFilterMenu = false
-                                if (LocationAndGeoHelper.hasLocationPermission(context)) {
-                                    fetchAndApplyGps()
-                                } else {
-                                    locationPermissionLauncher.launch(
-                                        arrayOf(
-                                            Manifest.permission.ACCESS_COARSE_LOCATION,
-                                            Manifest.permission.ACCESS_FINE_LOCATION
-                                        )
-                                    )
+                            text = { Text("Follower") },
+                            leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                            trailingIcon = {
+                                if (filterMode == FeedFilterMode.FOLLOWER) {
+                                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFF0095F6))
                                 }
+                            },
+                            onClick = {
+                                filterMode = FeedFilterMode.FOLLOWER
+                                showFeedFilterMenu = false
                             }
                         )
                     }
@@ -636,19 +614,17 @@ fun HomeFeedScreen(
                                     modifier = Modifier.size(40.dp)
                                 )
                                 Text(
-                                    text = if (filterMode == FeedFilterMode.FOLLOWING) {
-                                        "No Posts from Following Yet"
-                                    } else {
-                                        "Welcome to Kindred"
+                                    text = when (filterMode) {
+                                        FeedFilterMode.FOLLOWING -> "No Posts from Following Yet"
+                                        FeedFilterMode.FOLLOWER -> "No Posts from Followers Yet"
                                     },
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = if (filterMode == FeedFilterMode.FOLLOWING) {
-                                        "Switch to \"For you\" to explore posts and reels from members across Kindred, or follow people below."
-                                    } else {
-                                        "Share photos, reels, and updates with the Kindred community."
+                                    text = when (filterMode) {
+                                        FeedFilterMode.FOLLOWING -> "Posts from accounts you follow will appear here."
+                                        FeedFilterMode.FOLLOWER -> "Posts from your followers will appear here."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
