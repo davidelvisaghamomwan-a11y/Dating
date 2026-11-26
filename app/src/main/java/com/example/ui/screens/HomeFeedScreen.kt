@@ -11,6 +11,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -103,6 +104,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -1221,7 +1223,50 @@ private fun HomeReelPostCard(
 
     var showMenu by remember { mutableStateOf(false) }
     var showHeartPop by remember { mutableStateOf(false) }
+    val heartScale = remember { Animatable(0.2f) }
+    val heartAlpha = remember { Animatable(1f) }
     val likeScale = remember { Animatable(1f) }
+
+    fun triggerHeartAnimation() {
+        if (!isLiked) {
+            onToggleLike()
+        }
+        scope.launch {
+            showHeartPop = true
+            heartScale.snapTo(0.2f)
+            heartAlpha.snapTo(1f)
+            launch {
+                likeScale.animateTo(1.35f, spring(Spring.DampingRatioMediumBouncy))
+                likeScale.animateTo(1f)
+            }
+            heartScale.animateTo(
+                targetValue = 1.3f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+            heartScale.animateTo(
+                targetValue = 1.0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessLow
+                )
+            )
+            delay(500L)
+            launch {
+                heartScale.animateTo(
+                    targetValue = 1.2f,
+                    animationSpec = tween(durationMillis = 250)
+                )
+            }
+            heartAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 250)
+            )
+            showHeartPop = false
+        }
+    }
     var userPaused by remember(reel.id) { mutableStateOf(false) }
     var isMuted by remember(reel.id) { mutableStateOf(false) }
     var resolvedVideoFile by remember(reel.id) { mutableStateOf<File?>(null) }
@@ -1466,16 +1511,7 @@ private fun HomeReelPostCard(
                 .pointerInput(reel.id) {
                     detectTapGestures(
                         onDoubleTap = {
-                            if (!isLiked) {
-                                onToggleLike()
-                            }
-                            scope.launch {
-                                showHeartPop = true
-                                likeScale.animateTo(1.3f, spring(Spring.DampingRatioMediumBouncy))
-                                likeScale.animateTo(1f)
-                                delay(400L)
-                                showHeartPop = false
-                            }
+                            triggerHeartAnimation()
                         },
                         onTap = {
                             userPaused = !userPaused
@@ -1600,19 +1636,23 @@ private fun HomeReelPostCard(
                 )
             }
 
-            androidx.compose.animation.AnimatedVisibility(
-                visible = showHeartPop,
-                enter = scaleIn(spring(Spring.DampingRatioMediumBouncy)) + fadeIn(),
-                exit = scaleOut() + fadeOut()
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Favorite,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.95f),
-                    modifier = Modifier
-                        .size(90.dp)
-                        .scale(likeScale.value)
-                )
+            if (showHeartPop) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Favorite,
+                        contentDescription = "Liked",
+                        tint = Color.White.copy(alpha = heartAlpha.value),
+                        modifier = Modifier
+                            .size(105.dp)
+                            .scale(heartScale.value)
+                            .graphicsLayer {
+                                shadowElevation = 20f
+                            }
+                    )
+                }
             }
         }
 

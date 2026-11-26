@@ -8,6 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -72,6 +73,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -151,7 +153,50 @@ fun InstagramFeedPostCard(
 
     var showMenu by remember { mutableStateOf(false) }
     var showHeartPop by remember { mutableStateOf(false) }
+    val heartScale = remember { Animatable(0.2f) }
+    val heartAlpha = remember { Animatable(1f) }
     val likeScale = remember { Animatable(1f) }
+
+    fun triggerHeartAnimation() {
+        if (!isLiked) {
+            onToggleLike()
+        }
+        scope.launch {
+            showHeartPop = true
+            heartScale.snapTo(0.2f)
+            heartAlpha.snapTo(1f)
+            launch {
+                likeScale.animateTo(1.35f, spring(Spring.DampingRatioMediumBouncy))
+                likeScale.animateTo(1f)
+            }
+            heartScale.animateTo(
+                targetValue = 1.3f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+            heartScale.animateTo(
+                targetValue = 1.0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessLow
+                )
+            )
+            delay(500L)
+            launch {
+                heartScale.animateTo(
+                    targetValue = 1.2f,
+                    animationSpec = tween(durationMillis = 250)
+                )
+            }
+            heartAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 250)
+            )
+            showHeartPop = false
+        }
+    }
 
     // Video State: Prefetch video file immediately so it starts playing automatically on scroll into view
     var userPaused by remember(post.id) { mutableStateOf(false) }
@@ -406,16 +451,7 @@ fun InstagramFeedPostCard(
                 .pointerInput(post.id) {
                     detectTapGestures(
                         onDoubleTap = {
-                            if (!isLiked) {
-                                onToggleLike()
-                            }
-                            scope.launch {
-                                showHeartPop = true
-                                likeScale.animateTo(1.3f, spring(Spring.DampingRatioMediumBouncy))
-                                likeScale.animateTo(1f)
-                                delay(400L)
-                                showHeartPop = false
-                            }
+                            triggerHeartAnimation()
                         },
                         onTap = {
                             if (post.mediaType == "VIDEO") {
@@ -531,20 +567,27 @@ fun InstagramFeedPostCard(
                     ) { page ->
                         val url = photoUrls[page]
                         val bmp = decodedBitmaps[url]
+                        val pagerImageModifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(post.id, page) {
+                                detectTapGestures(
+                                    onDoubleTap = { triggerHeartAnimation() }
+                                )
+                            }
                         if (bmp != null) {
                             Image(
                                 bitmap = bmp,
                                 contentDescription = "Photo ${page + 1}",
                                 contentScale = ContentScale.Crop,
                                 filterQuality = FilterQuality.High,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = pagerImageModifier
                             )
                         } else {
                             AsyncImage(
                                 model = url,
                                 contentDescription = "Photo ${page + 1}",
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = pagerImageModifier
                             )
                         }
                     }
@@ -586,20 +629,27 @@ fun InstagramFeedPostCard(
                 photoUrls.size == 1 -> {
                     val url = photoUrls.first()
                     val bmp = decodedBitmaps[url]
+                    val singlePhotoModifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(post.id) {
+                            detectTapGestures(
+                                onDoubleTap = { triggerHeartAnimation() }
+                            )
+                        }
                     if (bmp != null) {
                         Image(
                             bitmap = bmp,
                             contentDescription = "Post photo",
                             contentScale = ContentScale.Crop,
                             filterQuality = FilterQuality.High,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = singlePhotoModifier
                         )
                     } else {
                         AsyncImage(
                             model = url,
                             contentDescription = "Post photo",
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = singlePhotoModifier
                         )
                     }
                 }
@@ -622,19 +672,23 @@ fun InstagramFeedPostCard(
                 }
             }
 
-            androidx.compose.animation.AnimatedVisibility(
-                visible = showHeartPop,
-                enter = scaleIn(spring(Spring.DampingRatioMediumBouncy)) + fadeIn(),
-                exit = scaleOut() + fadeOut()
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Favorite,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.95f),
-                    modifier = Modifier
-                        .size(90.dp)
-                        .scale(likeScale.value)
-                )
+            if (showHeartPop) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Favorite,
+                        contentDescription = "Liked",
+                        tint = Color.White.copy(alpha = heartAlpha.value),
+                        modifier = Modifier
+                            .size(105.dp)
+                            .scale(heartScale.value)
+                            .graphicsLayer {
+                                shadowElevation = 20f
+                            }
+                    )
+                }
             }
         }
 
