@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -106,6 +107,8 @@ fun InstagramFeedPostCard(
     authorProfile: PublicProfile? = null,
     currentUserId: String,
     isFollowing: Boolean = false,
+    isSuggested: Boolean = false,
+    onDismissSuggestion: () -> Unit = {},
     onToggleFollow: () -> Unit = {},
     resolveVideoFile: suspend (FeedPost) -> Result<File>,
     onToggleLike: () -> Unit,
@@ -185,9 +188,39 @@ fun InstagramFeedPostCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color(0xFF000000))
             .testTag("feed_post_card_${post.id}")
     ) {
+        if (isSuggested) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Suggested for you",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = Color.White.copy(alpha = 0.75f)
+                )
+                IconButton(
+                    onClick = onDismissSuggestion,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Dismiss suggestion",
+                        tint = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
         // 1. Professional Post Header: Avatar, Username + Verified Badge, Location/Audio Subtitle, Follow & Options
         Row(
             modifier = Modifier
@@ -230,7 +263,7 @@ fun InstagramFeedPostCard(
                                 lineHeight = 18.sp
                             ),
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onBackground,
+                            color = Color.White,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
@@ -256,7 +289,7 @@ fun InstagramFeedPostCard(
                             fontSize = 12.sp,
                             lineHeight = 15.sp
                         ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = Color.White.copy(alpha = 0.65f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -269,21 +302,27 @@ fun InstagramFeedPostCard(
             ) {
                 if (!isOwner) {
                     val followLabel = if (isFollowing) "Following" else "Follow"
-                    TextButton(
-                        onClick = onToggleFollow,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color(0xFF262626),
                         modifier = Modifier
-                            .height(34.dp)
+                            .height(32.dp)
+                            .clickable(onClick = onToggleFollow)
                             .testTag("post_follow_btn_${post.id}")
                     ) {
-                        Text(
-                            text = followLabel,
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else InstagramBlue
-                        )
+                        Box(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = followLabel,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = Color.White
+                            )
+                        }
                     }
                 }
 
@@ -295,7 +334,7 @@ fun InstagramFeedPostCard(
                         Icon(
                             Icons.Filled.MoreVert,
                             contentDescription = "Post options",
-                            tint = MaterialTheme.colorScheme.onBackground,
+                            tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -654,7 +693,7 @@ fun InstagramFeedPostCard(
                     Icon(
                         imageVector = Icons.Filled.ChatBubbleOutline,
                         contentDescription = "Comment",
-                        tint = MaterialTheme.colorScheme.onBackground,
+                        tint = Color.White,
                         modifier = Modifier.size(23.dp)
                     )
                     if (post.commentCount > 0) {
@@ -670,7 +709,7 @@ fun InstagramFeedPostCard(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Send,
                     contentDescription = "Share",
-                    tint = MaterialTheme.colorScheme.onBackground,
+                    tint = Color.White,
                     modifier = Modifier
                         .size(23.dp)
                         .clickable {
@@ -738,7 +777,7 @@ fun InstagramFeedPostCard(
                 Text(
                     text = "View all $count ${if (count == 1L) "comment" else "comments"}",
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Color.White.copy(alpha = 0.65f),
                     modifier = Modifier
                         .clickable(onClick = onOpenComments)
                         .padding(vertical = 1.dp)

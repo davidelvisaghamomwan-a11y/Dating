@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -240,6 +241,7 @@ fun HomeFeedScreen(
     val scope = rememberCoroutineScope()
 
     var filterMode by remember { mutableStateOf(FeedFilterMode.FOLLOWING) }
+    var dismissedSuggestedPostIds by remember { mutableStateOf(emptySet<String>()) }
     var showFeedFilterMenu by remember { mutableStateOf(false) }
     var activeStoryIndex by remember { mutableStateOf<Int?>(null) }
     var showPostComposerSheet by remember { mutableStateOf(false) }
@@ -270,17 +272,17 @@ fun HomeFeedScreen(
         }
     }
 
-    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId, isFollowingUid, isFollowerUid) {
+    val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId, isFollowingUid, isFollowerUid, dismissedSuggestedPostIds) {
         val rawCombined = buildList<HomeTimelineItem> {
             feedPosts.forEach { add(HomeTimelineItem.PostItem(it)) }
             videoPosts.forEach { add(HomeTimelineItem.ReelItem(it)) }
         }
         val filtered = when (filterMode) {
             FeedFilterMode.FOLLOWING -> rawCombined.filter { item ->
-                item.userId == currentUserId || isFollowingUid(item.userId)
+                item.key !in dismissedSuggestedPostIds
             }
             FeedFilterMode.FOLLOWER -> rawCombined.filter { item ->
-                item.userId == currentUserId || isFollowerUid(item.userId)
+                (item.userId == currentUserId || isFollowerUid(item.userId)) && item.key !in dismissedSuggestedPostIds
             }
         }
         filtered.sortedWith(
@@ -290,16 +292,9 @@ fun HomeFeedScreen(
     }
 
     // Prioritize other people's Reels for the "Suggested reels" horizontal shelf on Home
-    val shelfReels = remember(videoPosts, filterMode, currentUserId, isFollowingUid, isFollowerUid) {
-        val base = when (filterMode) {
-            FeedFilterMode.FOLLOWING -> videoPosts.filter {
-                it.userId != currentUserId && isFollowingUid(it.userId)
-            }
-            FeedFilterMode.FOLLOWER -> videoPosts.filter {
-                it.userId != currentUserId && isFollowerUid(it.userId)
-            }
-        }
-        base.take(15)
+    val shelfReels = remember(videoPosts, currentUserId) {
+        val others = videoPosts.filter { it.userId != currentUserId }
+        (if (others.isNotEmpty()) others else videoPosts).take(15)
     }
 
     val peopleToKnow = remember(suggestedProfiles, candidates) {
@@ -656,11 +651,16 @@ fun HomeFeedScreen(
                             when (item) {
                                 is HomeTimelineItem.PostItem -> {
                                     val post = item.post
+                                    val isSuggested = post.userId != currentUserId && !isFollowingUid(post.userId)
                                     InstagramFeedPostCard(
                                         post = post,
                                         authorProfile = profilesByUid[post.userId],
                                         currentUserId = currentUserId,
                                         isFollowing = isFollowingUid(post.userId),
+                                        isSuggested = isSuggested,
+                                        onDismissSuggestion = {
+                                            dismissedSuggestedPostIds = dismissedSuggestedPostIds + item.key
+                                        },
                                         onToggleFollow = {
                                             val profile = profilesByUid[post.userId] ?: PublicProfile(
                                                 userId = post.userId,
@@ -690,11 +690,16 @@ fun HomeFeedScreen(
 
                                 is HomeTimelineItem.ReelItem -> {
                                     val reel = item.reel
+                                    val isSuggested = reel.userId != currentUserId && !isFollowingUid(reel.userId)
                                     HomeReelPostCard(
                                         reel = reel,
                                         authorProfile = profilesByUid[reel.userId],
                                         currentUserId = currentUserId,
                                         isFollowing = isFollowingUid(reel.userId),
+                                        isSuggested = isSuggested,
+                                        onDismissSuggestion = {
+                                            dismissedSuggestedPostIds = dismissedSuggestedPostIds + item.key
+                                        },
                                         onToggleFollow = {
                                             val profile = profilesByUid[reel.userId] ?: PublicProfile(
                                                 userId = reel.userId,
@@ -1175,6 +1180,8 @@ private fun HomeReelPostCard(
     authorProfile: PublicProfile? = null,
     currentUserId: String,
     isFollowing: Boolean,
+    isSuggested: Boolean = false,
+    onDismissSuggestion: () -> Unit = {},
     onToggleFollow: () -> Unit,
     resolveVideoFile: suspend (VideoPost) -> Result<File>,
     onToggleLike: () -> Unit,
@@ -1249,9 +1256,39 @@ private fun HomeReelPostCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color(0xFF000000))
             .testTag("home_reel_card_${reel.id}")
     ) {
+        if (isSuggested) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Suggested for you",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    color = Color.White.copy(alpha = 0.75f)
+                )
+                IconButton(
+                    onClick = onDismissSuggestion,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Dismiss suggestion",
+                        tint = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
         // 1. Instagram-style Header (Avatar, Username + Verified, Original Audio • Reel, Follow, More)
         Row(
             modifier = Modifier
@@ -1333,25 +1370,28 @@ private fun HomeReelPostCard(
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 if (!isOwner) {
-                    TextButton(
-                        onClick = onToggleFollow,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    val followLabel = if (isFollowing) "Following" else "Follow"
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = Color(0xFF262626),
                         modifier = Modifier
-                            .height(34.dp)
+                            .height(32.dp)
+                            .clickable(onClick = onToggleFollow)
                             .testTag("reel_follow_btn_${reel.id}")
                     ) {
-                        Text(
-                            text = if (isFollowing) "Following" else "Follow",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = if (isFollowing) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                Color(0xFF0095F6)
-                            }
-                        )
+                        Box(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = followLabel,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = Color.White
+                            )
+                        }
                     }
                 }
 
