@@ -1052,6 +1052,8 @@ class KindredViewModel(
             _isAdminUser.value = socialRepo.checkIsAdmin(userEmail)
         }
 
+        val sessionStartTimeMs = System.currentTimeMillis()
+
         viewModelScope.launch {
             var initialized = false
             val knownMatchIds = mutableSetOf<String>()
@@ -1079,7 +1081,9 @@ class KindredViewModel(
                             knownMatchIds += m.id
                             knownLastMessageAt[m.id] = m.lastMessageAt?.toDate()?.time ?: 0L
                         }
-                        initialized = true
+                        if (matches.isNotEmpty()) {
+                            initialized = true
+                        }
                         return@collect
                     }
 
@@ -1090,6 +1094,10 @@ class KindredViewModel(
 
                         val latestMsgMs = match.lastMessageAt?.toDate()?.time ?: 0L
                         val previousMsgMs = knownLastMessageAt[match.id] ?: 0L
+                        if (latestMsgMs <= sessionStartTimeMs) {
+                            knownLastMessageAt[match.id] = maxOf(previousMsgMs, latestMsgMs)
+                            return@forEach
+                        }
                         if (latestMsgMs > previousMsgMs) {
                             knownLastMessageAt[match.id] = latestMsgMs
                             val senderId = match.lastMessageSenderId
@@ -1124,8 +1132,17 @@ class KindredViewModel(
                     Log.w(TAG, "Incoming call notification watcher paused", error)
                 }
                 .collect { (sessions, profileMap) ->
+                    val now = System.currentTimeMillis()
                     sessions
-                        .filter { it.status == "RINGING" && it.calleeUid == currentUserId }
+                        .filter { call ->
+                            if (call.status != "RINGING" || call.calleeUid != currentUserId) return@filter false
+                            val callCreatedAtMs = call.createdAt?.toDate()?.time ?: 0L
+                            if (callCreatedAtMs > 0L && (now - callCreatedAtMs) > 60_000L) {
+                                false
+                            } else {
+                                true
+                            }
+                        }
                         .forEach { ringingCall ->
                             if (notifiedIncomingCallIds.add(ringingCall.id)) {
                                 val callerName = profileMap[ringingCall.callerUid]?.displayName ?: "Kindred Member"
@@ -1156,11 +1173,20 @@ class KindredViewModel(
                     it.followingUid == currentUserId && it.followerUid != currentUserId
                 }
                 if (!initializedFollows) {
-                    incomingFollows.forEach { seenFollowIds += it.id }
-                    initializedFollows = true
+                    incomingFollows.forEach { follow ->
+                        seenFollowIds += follow.id
+                    }
+                    if (follows.isNotEmpty()) {
+                        initializedFollows = true
+                    }
                     return@collect
                 }
                 incomingFollows.forEach { follow ->
+                    val createdAtMs = follow.createdAt?.toDate()?.time ?: 0L
+                    if (createdAtMs <= sessionStartTimeMs) {
+                        seenFollowIds += follow.id
+                        return@forEach
+                    }
                     if (seenFollowIds.add(follow.id)) {
                         val name = profileMap[follow.followerUid]?.displayName
                             ?: follow.followerName.ifBlank { "Kindred Member" }

@@ -41,6 +41,7 @@ class KindredBackgroundService : Service() {
 
     private val seenFollowIds = mutableSetOf<String>()
     private var followsInitialized = false
+    private val serviceStartTimeMs = System.currentTimeMillis()
 
     private var ringtoneController: CallRingtoneController? = null
 
@@ -166,11 +167,18 @@ class KindredBackgroundService : Service() {
 
                     if (!followsInitialized) {
                         follows.forEach { seenFollowIds += it.id }
-                        followsInitialized = true
+                        if (follows.isNotEmpty()) {
+                            followsInitialized = true
+                        }
                         return@addSnapshotListener
                     }
 
                     follows.forEach { follow ->
+                        val createdAtMs = follow.createdAt?.toDate()?.time ?: 0L
+                        if (createdAtMs <= serviceStartTimeMs) {
+                            seenFollowIds += follow.id
+                            return@forEach
+                        }
                         if (seenFollowIds.add(follow.id) && follow.followerUid != uid) {
                             resolveDisplayName(db, follow.followerUid, follow.followerName.ifBlank { "Kindred Member" }) { followerName ->
                                 KindredNotificationHelper.showSocialNotification(
@@ -196,13 +204,19 @@ class KindredBackgroundService : Service() {
             records.forEach { m ->
                 knownLastMessageMs[m.id] = m.lastMessageAt?.toDate()?.time ?: 0L
             }
-            matchesInitialized = true
+            if (records.isNotEmpty()) {
+                matchesInitialized = true
+            }
             return
         }
 
         records.forEach { match ->
             val msgMs = match.lastMessageAt?.toDate()?.time ?: 0L
             val prevMs = knownLastMessageMs[match.id] ?: 0L
+            if (msgMs <= serviceStartTimeMs) {
+                knownLastMessageMs[match.id] = maxOf(prevMs, msgMs)
+                return@forEach
+            }
             if (msgMs > prevMs) {
                 knownLastMessageMs[match.id] = msgMs
                 val senderId = match.lastMessageSenderId
@@ -288,11 +302,18 @@ class KindredBackgroundService : Service() {
 
                         if (postId !in initializedCommentPosts) {
                             comments.forEach { seenCommentIds += it.id }
-                            initializedCommentPosts += postId
+                            if (comments.isNotEmpty()) {
+                                initializedCommentPosts += postId
+                            }
                             return@addSnapshotListener
                         }
 
                         comments.forEach { comment ->
+                            val commentCreatedAtMs = comment.createdAt?.toDate()?.time ?: 0L
+                            if (commentCreatedAtMs <= serviceStartTimeMs) {
+                                seenCommentIds += comment.id
+                                return@forEach
+                            }
                             if (seenCommentIds.add(comment.id) && comment.userId != uid) {
                                 val commenterName = comment.authorName.ifBlank { "Kindred Member" }
                                 KindredNotificationHelper.showPostCommentNotification(
@@ -330,7 +351,16 @@ class KindredBackgroundService : Service() {
         matchId: String,
         sessions: List<CallSession>
     ) {
-        val ringingForMe = sessions.filter { it.status == "RINGING" && it.calleeUid == uid }
+        val now = System.currentTimeMillis()
+        val ringingForMe = sessions.filter { session ->
+            if (session.status != "RINGING" || session.calleeUid != uid) return@filter false
+            val callCreatedAtMs = session.createdAt?.toDate()?.time ?: 0L
+            if (callCreatedAtMs > 0L && (now - callCreatedAtMs) > 60_000L) {
+                false
+            } else {
+                true
+            }
+        }
         val ringingIdsNow = ringingForMe.map { it.id }.toSet()
 
         val staleIds = activeRingingCallIds - ringingIdsNow
