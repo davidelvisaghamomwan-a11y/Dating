@@ -101,6 +101,7 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.example.auth.GoogleAuthHelper
+import com.example.auth.PendingRegistrationPrefs
 import com.example.communication.CallRingtoneController
 import com.example.data.KindredRepository
 import com.example.model.PublicProfile
@@ -125,10 +126,8 @@ import com.example.ui.screens.HomeFeedScreen
 import com.example.ui.screens.FriendsHubScreen
 import com.example.ui.screens.MatchesAndChatScreen
 import com.example.ui.screens.ProfileScreen
-import com.example.ui.screens.ProfileSetupScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.UserProfileDetailScreen
-import com.example.ui.screens.VerificationScreen
 import com.example.ui.screens.VideoFeedScreen
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.KindredTheme
@@ -136,8 +135,8 @@ import com.example.update.AppReleaseInfo
 import com.example.update.AppUpdateChecker
 import com.example.update.UpdateCheckResult
 import com.example.util.LocationAndGeoHelper
+import com.example.util.MediaImageHelper
 import com.example.util.PresenceUtils
-import com.example.util.VerificationAnalyzer
 import com.example.viewmodel.KindredPushAlert
 import com.example.viewmodel.KindredViewModel
 import com.google.firebase.Firebase
@@ -159,7 +158,6 @@ const val ROUTE_HOME = "home"
 const val ROUTE_SEARCH = "search"
 const val ROUTE_ACTIVITY = "activity"
 const val ROUTE_MATCHES = "matches"
-const val ROUTE_VERIFY = "verify"
 const val ROUTE_PROFILE = "profile"
 const val ROUTE_EDIT_PROFILE = "edit_profile"
 const val ROUTE_SETTINGS = "settings"
@@ -236,7 +234,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureAppCheck(this, intent)
-        VerificationAnalyzer.initImageCache(applicationContext)
+        MediaImageHelper.initImageCache(applicationContext)
         Coil.setImageLoader {
             ImageLoader.Builder(applicationContext)
                 .memoryCache {
@@ -353,8 +351,7 @@ private fun MainKindredApp(
                     geoService = geoService,
                     currentUserId = user.uid,
                     userEmail = user.email,
-                    defaultDisplayName = user.displayName,
-                    isEmailVerified = user.isEmailVerified
+                    defaultDisplayName = user.displayName
                 )
             }
         }
@@ -399,10 +396,8 @@ private fun MainKindredApp(
     val isAdminUser by viewModel.isAdminUser.collectAsStateWithLifecycle()
     val adminReportsState by viewModel.adminReportsState.collectAsStateWithLifecycle()
     val adminAllProfilesState by viewModel.adminAllProfilesState.collectAsStateWithLifecycle()
-    val icebreakerAiState by viewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusMessage by viewModel.actionStatusMessage.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
-    val activeChallenge by viewModel.activeChallenge.collectAsStateWithLifecycle()
     val latestLocation by viewModel.latestLocation.collectAsStateWithLifecycle()
     var showSearchSheet by remember { mutableStateOf(false) }
 
@@ -630,54 +625,27 @@ private fun MainKindredApp(
     }
 
     val successData = (dashboardState as? UiState.Success)?.data
-    val requiresProfileSetup = successData != null && (
-        successData.myProfile == null || !successData.myProfile.profileCompleted
-        )
 
-    if (requiresProfileSetup) {
-        val currentSnap = successData!!
-        ProfileSetupScreen(
-            existingProfile = currentSnap.myProfile,
-            defaultDisplayName = viewModel.defaultDisplayName,
-            latestLocation = latestLocation,
-            isBusy = isBusy,
-            onSaveSetup = { displayName, age, dob, gender, bio, cityLabel, country, lat, lng, interests, photos ->
-                viewModel.saveProfile(
-                    displayName = displayName,
-                    age = age,
-                    gender = gender,
-                    bio = bio,
-                    cityLabel = cityLabel,
-                    country = country,
-                    latitude = lat,
-                    longitude = lng,
-                    interests = interests,
-                    photoDataUrl = photos.firstOrNull(),
-                    profilePhotos = photos,
-                    discoverable = true,
-                    interestedIn = currentSnap.privateUser?.interestedIn ?: "Everyone",
-                    minAgePref = (currentSnap.privateUser?.minAgePref ?: 18L).toInt(),
-                    maxAgePref = (currentSnap.privateUser?.maxAgePref ?: 45L).toInt(),
-                    maxDistanceKm = (currentSnap.privateUser?.maxDistanceKm ?: 100L).toInt(),
-                    verifiedOnlyFilter = currentSnap.privateUser?.verifiedOnlyFilter ?: false,
-                    dateOfBirth = dob,
-                    profileCompleted = true
-                )
-            },
-            onSignOut = {
-                GoogleAuthHelper.signOut(
-                    credentialManager = credentialManager,
-                    scope = presenceScope,
-                    onBeforeSignOut = {
-                        KindredNotificationHelper.activeMatchIdInForeground = null
-                        KindredBackgroundService.stop(context)
-                        viewModel.unregisterFcmTokenOnSignOut()
-                        viewModel.updatePresenceNow(false)
-                    }
-                )
-            }
-        )
-        return
+    LaunchedEffect(
+        user.uid,
+        successData != null,
+        successData?.myProfile == null,
+        successData?.privateUser == null,
+        successData?.myProfile?.profileCompleted
+    ) {
+        val snap = successData ?: return@LaunchedEffect
+        val needsBootstrap = snap.myProfile == null ||
+            snap.privateUser == null ||
+            !snap.myProfile.profileCompleted
+        if (needsBootstrap) {
+            val pending = PendingRegistrationPrefs.get(context)
+            viewModel.bootstrapProfileIfMissing(
+                existingProfile = snap.myProfile,
+                existingPrivateUser = snap.privateUser,
+                pending = pending,
+                onConsumed = { PendingRegistrationPrefs.clear(context) }
+            )
+        }
     }
 
     fun openUserProfileRoute(uid: String) {
@@ -1094,12 +1062,10 @@ private fun MainKindredApp(
                                         activeCallSession = activeMatchCallSession,
                                         activeCallAudioChunks = activeCallAudioChunks,
                                         activeCallVideoFrames = activeCallVideoFrames,
-                                        icebreakerAiState = icebreakerAiState,
                                         onSelectMatch = { matchId ->
                                             selectedMatchId?.takeIf { it != matchId }?.let { prev ->
                                                 viewModel.setTypingStatus(prev, false)
                                             }
-                                            viewModel.resetIcebreakerAiState()
                                             viewModel.selectMatch(matchId)
                                         },
                                         onOpenSearch = { showSearchSheet = true },
@@ -1161,9 +1127,6 @@ private fun MainKindredApp(
                                         onUpdateDisappearingTimer = { matchId, ttl ->
                                             viewModel.updateDisappearingTimer(matchId, ttl)
                                         },
-                                        onGenerateAiIcebreakers = { myProf, partnerProf, tone ->
-                                            viewModel.generateAiIcebreakers(myProf, partnerProf, tone)
-                                        },
                                         onStartCall = { matchId, calleeUid, participants, callType ->
                                             viewModel.startCall(matchId, calleeUid, participants, callType)
                                         },
@@ -1220,21 +1183,6 @@ private fun MainKindredApp(
                                     )
                                 }
 
-                                composable(ROUTE_VERIFY) {
-                                    VerificationScreen(
-                                        myProfile = data.myProfile,
-                                        isEmailVerified = viewModel.isEmailVerified,
-                                        verifications = data.verifications,
-                                        activeChallenge = activeChallenge,
-                                        isBusy = isBusy,
-                                        onCycleChallenge = { viewModel.cycleVerificationChallenge() },
-                                        onSubmitVerification = { challenge, analysis, locVerified ->
-                                            viewModel.submitVerification(challenge, analysis, locVerified)
-                                        },
-                                        onNavigateToProfile = { navigateToTab(ROUTE_PROFILE) }
-                                    )
-                                }
-
                                 composable(ROUTE_PROFILE) {
                                     val myFeedPosts = remember(feedPostsState, viewModel.currentUserId) {
                                         feedPostsState.filter { it.userId == viewModel.currentUserId }
@@ -1284,9 +1232,6 @@ private fun MainKindredApp(
                                             navController.navigate(ROUTE_ADMIN_DASHBOARD) {
                                                 launchSingleTop = true
                                             }
-                                        },
-                                        onOpenVerification = {
-                                            navigateToTab(ROUTE_VERIFY)
                                         },
                                         onOpenVideoFeed = {
                                             navController.navigate(ROUTE_VIDEO_FEED) {
@@ -1402,11 +1347,6 @@ private fun MainKindredApp(
                                         onBack = { navController.popBackStack() },
                                         onOpenEditProfile = {
                                             navController.navigate(ROUTE_EDIT_PROFILE) {
-                                                launchSingleTop = true
-                                            }
-                                        },
-                                        onOpenVerification = {
-                                            navController.navigate(ROUTE_VERIFY) {
                                                 launchSingleTop = true
                                             }
                                         },

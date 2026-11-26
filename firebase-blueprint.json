@@ -11,40 +11,17 @@
         "minAgePref": { "type": "integer" },
         "maxAgePref": { "type": "integer" },
         "maxDistanceKm": { "type": "integer" },
-        "verifiedOnlyFilter": { "type": "boolean" },
         "hideOnlineStatus": { "type": "boolean" },
         "exactLatitude": { "type": "number" },
         "exactLongitude": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "interestedIn", "minAgePref", "maxAgePref", "maxDistanceKm", "verifiedOnlyFilter", "createdAt", "updatedAt"]
-    },
-    "VerificationRecord": {
-      "title": "VerificationRecord",
-      "description": "Immutable live-camera liveness and face detection audit record.",
-      "type": "object",
-      "properties": {
-        "userId": { "type": "string" },
-        "challengeCode": { "type": "string" },
-        "challengePrompt": { "type": "string" },
-        "faceCount": { "type": "integer" },
-        "faceConfidence": { "type": "number" },
-        "eyesDistancePx": { "type": "number" },
-        "photoSha256": { "type": "string" },
-        "locationVerified": { "type": "boolean" },
-        "googleVerified": { "type": "boolean" },
-        "comparedPhotoCount": { "type": "integer" },
-        "photoSimilarityScore": { "type": "number" },
-        "livenessPassed": { "type": "boolean" },
-        "faceMatchPassed": { "type": "boolean" },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["userId", "challengeCode", "challengePrompt", "faceCount", "faceConfidence", "eyesDistancePx", "photoSha256", "locationVerified", "googleVerified", "comparedPhotoCount", "photoSimilarityScore", "livenessPassed", "faceMatchPassed", "createdAt"]
+      "required": ["userId", "interestedIn", "minAgePref", "maxAgePref", "maxDistanceKm", "createdAt", "updatedAt"]
     },
     "PublicProfile": {
       "title": "PublicProfile",
-      "description": "Discoverable social profile with up to 12 photos, GeoHash index, privacy settings, and verification badge.",
+      "description": "Discoverable social profile with up to 12 photos, GeoHash index, and privacy settings.",
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
@@ -69,15 +46,10 @@
         "photosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
         "videosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
         "infoVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
-        "verificationStatus": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"] },
-        "verificationId": { "type": "string" },
-        "verificationScore": { "type": "integer" },
-        "verificationHash": { "type": "string" },
-        "verifiedAt": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "verificationStatus", "verificationScore", "createdAt", "updatedAt"]
+      "required": ["userId", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "createdAt", "updatedAt"]
     },
     "GeoCellProfile": {
       "title": "GeoCellProfile",
@@ -105,15 +77,10 @@
         "photosVisibility": { "type": "string" },
         "videosVisibility": { "type": "string" },
         "infoVisibility": { "type": "string" },
-        "verificationStatus": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"] },
-        "verificationId": { "type": "string" },
-        "verificationScore": { "type": "integer" },
-        "verificationHash": { "type": "string" },
-        "verifiedAt": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "geohash", "cellPrecision", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "verificationStatus", "verificationScore", "createdAt", "updatedAt"]
+      "required": ["userId", "geohash", "cellPrecision", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "createdAt", "updatedAt"]
     },
     "ProfileVideoItem": {
       "title": "ProfileVideoItem",
@@ -184,7 +151,7 @@
         "senderId": { "type": "string" },
         "participantUids": { "type": "array" },
         "text": { "type": "string" },
-        "messageType": { "type": "string", "enum": ["TEXT", "ICEBREAKER", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL"] },
+        "messageType": { "type": "string", "enum": ["TEXT", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL"] },
         "mediaDataUrl": { "type": "string" },
         "thumbnailDataUrl": { "type": "string" },
         "mediaMimeType": { "type": "string" },
@@ -450,7 +417,6 @@
         "authorPhoto": { "type": "string" },
         "authorCountry": { "type": "string" },
         "authorCity": { "type": "string" },
-        "authorVerified": { "type": "boolean" },
         "caption": { "type": "string" },
         "mediaType": { "type": "string", "enum": ["NONE", "TEXT", "PHOTO", "VIDEO"] },
         "mediaDataUrl": { "type": "string" },
@@ -476,7 +442,6 @@
         "userId": { "type": "string" },
         "authorName": { "type": "string" },
         "authorPhoto": { "type": "string" },
-        "authorVerified": { "type": "boolean" },
         "text": { "type": "string" },
         "likedByUids": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -507,7 +472,6 @@
   },
   "firestore": {
     "/users/{userId}": { "schema": { "$ref": "#/entities/PrivateUser" } },
-    "/users/{userId}/verifications/{verificationId}": { "schema": { "$ref": "#/entities/VerificationRecord" } },
     "/users/{userId}/fcmTokens/{tokenId}": { "schema": { "$ref": "#/entities/FcmToken" } },
     "/users/{userId}/favorites/{targetUid}": { "schema": { "$ref": "#/entities/FavoriteRecord" } },
     "/publicProfiles/{userId}": { "schema": { "$ref": "#/entities/PublicProfile" } },

@@ -4,8 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ai.AiIcebreakerService
-import com.example.ai.IcebreakerAiUiState
 import com.example.data.CloudMediaStorageService
 import com.example.data.KindredRepository
 import com.example.data.SocialAndMediaRepository
@@ -40,7 +38,7 @@ import java.io.File
 /**
  * Dedicated ViewModel for standalone [com.example.ui.screens.ChatScreen] invocations,
  * managing real-time Firestore messages, read receipts, typing indicators, partner presence,
- * call signaling, live call video frames, and AI icebreakers for a single match thread.
+ * call signaling, and live call video frames for a single match thread.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
@@ -48,7 +46,6 @@ class ChatViewModel(
     val matchId: String,
     val currentUserId: String,
     val partnerUserId: String = "",
-    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService(),
     private val socialRepo: SocialAndMediaRepository? = null
 ) : ViewModel() {
 
@@ -165,9 +162,6 @@ class ChatViewModel(
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
             initialValue = emptyList()
         )
-
-    private val _icebreakerAiState = MutableStateFlow<IcebreakerAiUiState>(IcebreakerAiUiState.Idle)
-    val icebreakerAiState: StateFlow<IcebreakerAiUiState> = _icebreakerAiState.asStateFlow()
 
     private val _statusError = MutableStateFlow<String?>(null)
     val statusError: StateFlow<String?> = _statusError.asStateFlow()
@@ -298,24 +292,6 @@ class ChatViewModel(
     fun setTypingStatus(isTyping: Boolean) {
         viewModelScope.launch {
             repository.setTypingStatus(matchId, isTyping)
-        }
-    }
-
-    fun generateAiIcebreakers(partnerProfile: PublicProfile?, tone: String) {
-        if (_icebreakerAiState.value is IcebreakerAiUiState.Loading) return
-        _icebreakerAiState.value = IcebreakerAiUiState.Loading
-        viewModelScope.launch {
-            aiIcebreakerService.generateAiOpeners(
-                myProfile = null,
-                partnerProfile = partnerProfile,
-                tonePreference = tone
-            ).onSuccess {
-                _icebreakerAiState.value = IcebreakerAiUiState.Success(it)
-            }.onFailure { err ->
-                _icebreakerAiState.value = IcebreakerAiUiState.Error(
-                    err.localizedMessage ?: "Failed to generate AI icebreakers"
-                )
-            }
         }
     }
 

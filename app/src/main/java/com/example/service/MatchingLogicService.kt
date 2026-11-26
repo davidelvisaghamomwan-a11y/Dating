@@ -42,7 +42,6 @@ data class UserLocationAndPreferences(
     val minAge: Int,
     val maxAge: Int,
     val maxDistanceKm: Double,
-    val verifiedOnly: Boolean,
     val myInterests: List<String>
 )
 
@@ -226,7 +225,6 @@ class MatchingLogicService(
                     minAge = prefs.minAge,
                     maxAge = prefs.maxAge,
                     interestedIn = prefs.interestedIn,
-                    verifiedOnly = prefs.verifiedOnly,
                     myInterests = prefs.myInterests,
                     excludedUserIds = swipedIds,
                     blockedUserIds = blockedIds
@@ -257,7 +255,6 @@ class MatchingLogicService(
                 minAge = prefs.minAge,
                 maxAge = prefs.maxAge,
                 interestedIn = prefs.interestedIn,
-                verifiedOnly = prefs.verifiedOnly,
                 myInterests = prefs.myInterests,
                 excludedUserIds = swipedIds,
                 blockedUserIds = blockedIds
@@ -323,7 +320,6 @@ class MatchingLogicService(
                 minAge = minAge,
                 maxAge = maxAge,
                 maxDistanceKm = maxDistanceKm,
-                verifiedOnly = privateUser?.verifiedOnlyFilter ?: false,
                 myInterests = myProfile?.interests.orEmpty()
             )
         }
@@ -408,15 +404,14 @@ class MatchingLogicService(
                         sharedInterests.size.coerceAtMost(5) * 5
                     }
 
-                    val verifiedPoints = if (candidate.isProfileVerified) 15 else 0
                     val geoCellPoints = when {
-                        sharedPrefix >= 5 -> 10
-                        sharedPrefix == 4 -> 8
-                        sharedPrefix == 3 -> 5
-                        else -> 2
+                        sharedPrefix >= 5 -> 15
+                        sharedPrefix == 4 -> 10
+                        sharedPrefix == 3 -> 7
+                        else -> 3
                     }
 
-                    val totalScore = (distancePoints + interestPoints + verifiedPoints + geoCellPoints)
+                    val totalScore = (distancePoints + interestPoints + geoCellPoints)
                         .coerceIn(1, 100)
 
                     val reasons = buildList {
@@ -429,9 +424,6 @@ class MatchingLogicService(
                         if (sharedInterests.isNotEmpty()) {
                             add("${sharedInterests.size} shared ${if (sharedInterests.size == 1) "interest" else "interests"}")
                         }
-                        if (candidate.isProfileVerified) {
-                            add("Verified profile")
-                        }
                     }
 
                     DiscoveryCandidate(
@@ -442,8 +434,7 @@ class MatchingLogicService(
                         sharedInterests = sharedInterests,
                         matchReasons = reasons,
                         distanceScore = distancePoints,
-                        interestScore = interestPoints,
-                        trustScore = verifiedPoints
+                        interestScore = interestPoints
                     )
                 }
                 .sortedWith(

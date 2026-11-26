@@ -32,7 +32,6 @@ function makePrivateUser(uid, created = pastDate(5000)) {
     minAgePref: 21,
     maxAgePref: 38,
     maxDistanceKm: 50,
-    verifiedOnlyFilter: false,
     exactLatitude: 37.7749,
     exactLongitude: -122.4194,
     createdAt: created,
@@ -56,8 +55,6 @@ function makePublicProfile(uid, created = pastDate(5000)) {
     interests: ["Coffee", "Hiking", "Photography"],
     avatarSeed: uid,
     discoverable: true,
-    verificationStatus: "UNVERIFIED",
-    verificationScore: 30,
     createdAt: created,
     updatedAt: created,
   };
@@ -78,8 +75,6 @@ function makeGeoCellProfile(uid, cellId, created = pastDate(5000)) {
     interests: ["Coffee", "Hiking", "Photography"],
     avatarSeed: uid,
     discoverable: true,
-    verificationStatus: "UNVERIFIED",
-    verificationScore: 30,
     createdAt: created,
     updatedAt: created,
   };
@@ -138,7 +133,7 @@ test("Private users collection enforces owner-only PII isolation and immutable c
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).update({
       maxDistanceKm: 80,
-      verifiedOnlyFilter: true,
+      hideOnlineStatus: true,
       updatedAt: pastDate(1000),
     })
   );
@@ -194,7 +189,7 @@ test("GeoHash cells enforce prefix parity, discoverable list filtering, and owne
   );
 });
 
-test("Public profiles and geoCells block spoofed verification without audit record", async () => {
+test("Public profiles enforce owner-only writes, discoverable list filtering, and suspend-flag protection", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const created = pastDate(10000);
@@ -212,110 +207,25 @@ test("Public profiles and geoCells block spoofed verification without audit reco
     bobDb.collection("publicProfiles").where("discoverable", "==", true).get()
   );
 
-  // Shadow update / spoofed verificationStatus without verification record must FAIL
+  // User cannot self-suspend or modify another user's public profile
   await assertFails(
     aliceDb.collection("publicProfiles").doc(ALICE_UID).update({
-      verificationStatus: "VERIFIED",
-      verificationId: "ver_fake",
-      verificationScore: 95,
-      verificationHash: SAMPLE_SHA256,
-      verifiedAt: pastDate(1000),
+      suspended: true,
       updatedAt: pastDate(1000),
     })
   );
-
-  // Atomic batch creating verification audit record + updating publicProfile & geoCell SUCCEEDS
-  const verId = "ver_1001";
-  const nowTs = pastDate(1000);
-  const batch = aliceDb.batch();
-  batch.set(
-    aliceDb.collection("users").doc(ALICE_UID).collection("verifications").doc(verId),
-    {
-      userId: ALICE_UID,
-      challengeCode: "SMILE_CENTER",
-      challengePrompt: "Look directly at the camera with a natural smile",
-      faceCount: 1,
-      faceConfidence: 0.88,
-      eyesDistancePx: 64.5,
-      photoSha256: SAMPLE_SHA256,
-      locationVerified: true,
-      googleVerified: true,
-      comparedPhotoCount: 2,
-      photoSimilarityScore: 0.84,
-      livenessPassed: true,
-      faceMatchPassed: true,
-      createdAt: nowTs,
-    }
-  );
-  batch.update(aliceDb.collection("publicProfiles").doc(ALICE_UID), {
-    verificationStatus: "VERIFIED",
-    verificationId: verId,
-    verificationScore: 95,
-    verificationHash: SAMPLE_SHA256,
-    verifiedAt: nowTs,
-    updatedAt: nowTs,
-  });
-  batch.update(aliceDb.collection("geoCells").doc("9q8y").collection("profiles").doc(ALICE_UID), {
-    verificationStatus: "VERIFIED",
-    verificationId: verId,
-    verificationScore: 95,
-    verificationHash: SAMPLE_SHA256,
-    verifiedAt: nowTs,
-    updatedAt: nowTs,
-  });
-  await assertSucceeds(batch.commit());
-
-  // Catfish / low similarity verification record must FAIL
   await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("verifications").doc("ver_catfish").set({
-      userId: ALICE_UID,
-      challengeCode: "SMILE_CENTER",
-      challengePrompt: "Look directly at the camera with a natural smile",
-      faceCount: 1,
-      faceConfidence: 0.88,
-      eyesDistancePx: 64.5,
-      photoSha256: SAMPLE_SHA256,
-      locationVerified: true,
-      googleVerified: true,
-      comparedPhotoCount: 1,
-      photoSimilarityScore: 0.38,
-      livenessPassed: true,
-      faceMatchPassed: false,
-      createdAt: pastDate(700),
+    bobDb.collection("publicProfiles").doc(ALICE_UID).update({
+      bio: "Hijacked bio",
+      updatedAt: pastDate(1000),
     })
   );
-
-  // Hash mismatch between verification record and public profile must FAIL
-  const badBatch = aliceDb.batch();
-  const verId2 = "ver_1002";
-  badBatch.set(
-    aliceDb.collection("users").doc(ALICE_UID).collection("verifications").doc(verId2),
-    {
-      userId: ALICE_UID,
-      challengeCode: "HEAD_TILT",
-      challengePrompt: "Tilt your head slightly left",
-      faceCount: 1,
-      faceConfidence: 0.91,
-      eyesDistancePx: 70.0,
-      photoSha256: SAMPLE_SHA256,
-      locationVerified: true,
-      googleVerified: true,
-      comparedPhotoCount: 1,
-      photoSimilarityScore: 0.89,
-      livenessPassed: true,
-      faceMatchPassed: true,
-      createdAt: pastDate(500),
-    }
+  await assertSucceeds(
+    aliceDb.collection("publicProfiles").doc(ALICE_UID).update({
+      bio: "Updated bio for coffee and architecture.",
+      updatedAt: pastDate(900),
+    })
   );
-  badBatch.update(aliceDb.collection("publicProfiles").doc(ALICE_UID), {
-    verificationStatus: "VERIFIED",
-    verificationId: verId2,
-    verificationScore: 98,
-    verificationHash: OTHER_SHA256,
-    verifiedAt: pastDate(500),
-    updatedAt: pastDate(500),
-  });
-  await assertFails(badBatch.commit());
 });
 
 test("Swipes, atomic mutual matches, and real-time chat isolation", async () => {
@@ -931,7 +841,6 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
     aliceDb.collection("stories").doc("story_1").set({
       userId: ALICE_UID,
       authorName: "Alice",
-      authorVerified: true,
       mediaType: "PHOTO",
       mediaDataUrl: "data:image/jpeg;base64,STORY",
       caption: "Coffee stop",
@@ -998,7 +907,6 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
     aliceDb.collection("feedPosts").doc("feed_1").set({
       userId: ALICE_UID,
       authorName: "Alice",
-      authorVerified: true,
       mediaType: "PHOTO",
       caption: "Golden hour walk",
       mediaDataUrl: "data:image/jpeg;base64,PHOTO",
@@ -1015,7 +923,6 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
       postId: "feed_1",
       userId: BOB_UID,
       authorName: "Bob",
-      authorVerified: false,
       text: "Great shot!",
       likedByUids: [],
       createdAt: pastDate(100),

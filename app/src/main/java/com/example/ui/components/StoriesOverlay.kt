@@ -47,7 +47,6 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -92,7 +91,7 @@ import com.example.model.PublicProfile
 import com.example.model.StoryItem
 import com.example.ui.theme.CoralRose
 import com.example.util.PreparedVideoUpload
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -478,7 +477,7 @@ fun StoryViewerDialog(
                 }
             } else {
                 val bitmap = remember(story.mediaDataUrl) {
-                    story.mediaDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                    story.mediaDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                 }
                 val isRemoteHttp = story.mediaDataUrl?.startsWith("http://", ignoreCase = true) == true ||
                     story.mediaDataUrl?.startsWith("https://", ignoreCase = true) == true
@@ -640,27 +639,13 @@ fun StoryViewerDialog(
                             shape = CircleShape,
                             initialsFontSizeSp = 15
                         )
-                        val isVerified = profilesByUid[story.userId]?.isProfileVerified ?: story.authorVerified
                         Column {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = story.authorName.ifBlank { "Member" },
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                if (isVerified) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Verified,
-                                        contentDescription = "Verified creator",
-                                        tint = Color(0xFF0095F6),
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = story.authorName.ifBlank { "Member" },
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
                             Text(
                                 text = "${story.viewerUids.size} views",
                                 color = Color.White.copy(alpha = 0.78f),
@@ -869,25 +854,12 @@ fun StoryViewerDialog(
                                 initialsFontSizeSp = 15
                             )
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Text(
-                                        text = name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color.White
-                                    )
-                                    if (viewerProfile?.isProfileVerified == true) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Verified,
-                                            contentDescription = "Verified",
-                                            tint = Color(0xFF0095F6),
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
+                                Text(
+                                    text = name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
                                 Text(
                                     text = "Viewed story",
                                     style = MaterialTheme.typography.bodySmall,

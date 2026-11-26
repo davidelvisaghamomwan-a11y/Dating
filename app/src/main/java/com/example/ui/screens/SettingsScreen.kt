@@ -48,7 +48,6 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhoneInTalk
 import androidx.compose.material.icons.outlined.SystemUpdate
-import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -116,7 +115,6 @@ fun SettingsScreen(
     isAdmin: Boolean = false,
     onBack: () -> Unit,
     onOpenEditProfile: () -> Unit = {},
-    onOpenVerification: () -> Unit = {},
     onOpenFollowersFollowing: () -> Unit = {},
     onOpenActivity: () -> Unit = {},
     onOpenAdminDashboard: () -> Unit = {},
@@ -183,8 +181,6 @@ fun SettingsScreen(
         if (query.isEmpty()) return true
         return keywords.any { it.lowercase().contains(query) }
     }
-
-    val isVerified = myProfile?.isProfileVerified == true
 
     Scaffold(
         topBar = {
@@ -289,28 +285,16 @@ fun SettingsScreen(
                 }
 
                 // Section 1: Your account
-                val showAccountSection = matches("account", "edit profile", "bio", "photos", "verify", "verification", "badge")
+                val showAccountSection = matches("account", "edit profile", "bio", "photos")
                 if (showAccountSection) {
                     SettingsSectionHeader("Your account")
-                    if (matches("account", "edit profile", "bio", "photos")) {
-                        InstagramSettingsRow(
-                            icon = Icons.Outlined.AccountCircle,
-                            title = "Accounts Center & Edit profile",
-                            subtitle = myProfile?.displayName?.takeIf { it.isNotBlank() } ?: "Name, bio, photos, location",
-                            onClick = onOpenEditProfile,
-                            testTag = "settings_row_edit_profile"
-                        )
-                    }
-                    if (matches("verify", "verification", "badge", "identity")) {
-                        InstagramSettingsRow(
-                            icon = Icons.Outlined.VerifiedUser,
-                            title = "Identity verification",
-                            trailingValue = if (isVerified) "Verified" else "Not verified",
-                            trailingValueColor = if (isVerified) EmeraldMint else MaterialTheme.colorScheme.onSurfaceVariant,
-                            onClick = onOpenVerification,
-                            testTag = "settings_row_verification"
-                        )
-                    }
+                    InstagramSettingsRow(
+                        icon = Icons.Outlined.AccountCircle,
+                        title = "Accounts Center & Edit profile",
+                        subtitle = myProfile?.displayName?.takeIf { it.isNotBlank() } ?: "Name, bio, photos, location",
+                        onClick = onOpenEditProfile,
+                        testTag = "settings_row_edit_profile"
+                    )
                     SettingsSectionDivider()
                 }
 

@@ -92,7 +92,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.model.PublicProfile
 import com.example.ui.theme.CoralRose
 import com.example.util.PreparedVideoUpload
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.launch
 import java.io.File
@@ -183,7 +183,7 @@ fun CreateStoryStudioDialog(
         scope.launch {
             isPreparingMedia = true
             previewError = null
-            val dataUrl = VerificationAnalyzer.compressUriForFeedPostDataUrl(
+            val dataUrl = MediaImageHelper.compressUriForFeedPostDataUrl(
                 context = context,
                 uri = uri,
                 maxDim = 1080,
@@ -565,7 +565,7 @@ fun CreateStoryStudioDialog(
                 } else {
                     Box(modifier = Modifier.fillMaxSize()) {
                         if (photoData != null) {
-                            val bmp = remember(photoData) { VerificationAnalyzer.decodeBase64DataUrl(photoData) }
+                            val bmp = remember(photoData) { MediaImageHelper.decodeBase64DataUrl(photoData) }
                             if (bmp != null) {
                                 Image(
                                     bitmap = bmp,

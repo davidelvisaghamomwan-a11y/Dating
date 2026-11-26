@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">Kindred</string>
-    <string name="tagline">Intentional connections, verified in real time.</string>
+    <string name="tagline">Intentional connections in real time.</string>
     <string name="sign_in_with_google">Continue with Google</string>
     <string name="create_account_with_google">Create Account with Google</string>
     <string name="signing_in">Signing in...</string>
@@ -10,10 +10,8 @@
     <string name="nav_activity">Activity</string>
     <string name="nav_reels">Reels</string>
     <string name="nav_matches">Messages</string>
-    <string name="nav_verify">Verify</string>
     <string name="nav_profile">Profile</string>
     <string name="matches_title">Messages</string>
-    <string name="verify_title">Profile Verification</string>
     <string name="profile_title">Your Profile</string>
     <string name="btn_like">Like</string>
     <string name="btn_pass">Pass</string>
@@ -22,7 +20,6 @@
     <string name="swipe_pass_label">PASS</string>
     <string name="btn_send">Send message</string>
     <string name="btn_update_location">Refresh GPS</string>
-    <string name="btn_start_verification">Start Camera Check</string>
     <string name="btn_save_profile">Save Profile</string>
     <string name="btn_edit_profile">Edit Bio, Location, Interests &amp; Photos</string>
     <string name="edit_profile_title">Edit Profile</string>
@@ -32,8 +29,6 @@
     <string name="cd_app_logo">Kindred emblem</string>
     <string name="cd_auth_hero">Twilight rooftop illustration</string>
     <string name="cd_match_art">Constellation match illustration</string>
-    <string name="cd_verify_shield">Security verification shield</string>
-    <string name="cd_verified_badge">Verified profile badge</string>
     <string name="cd_profile_photo">Profile photo</string>
     <string name="chat_back_cd">Back to messages</string>
     <string name="chat_unmatch_cd">Remove chat</string>
@@ -69,13 +64,12 @@
     <string name="chat_pick_video_cd">Attach video</string>
     <string name="chat_pick_gif_cd">Send animated GIF</string>
     <string name="chat_record_voice_cd">Record voice note</string>
-    <string name="chat_icebreakers_cd">Profile icebreakers and AI openers</string>
     <string name="chat_timer_cd">Disappearing message timer</string>
     <string name="chat_typing_label">typing…</string>
     <string name="chat_end_call_cd">End call</string>
     <string name="report_user_cd">Report profile</string>
-    <string name="location_gate_title">Verify Your Location</string>
-    <string name="location_gate_subtitle">Kindred verifies your city and country via GPS so people know where creators and friends are sharing from.</string>
+    <string name="location_gate_title">Share Your Location</string>
+    <string name="location_gate_subtitle">Kindred uses your city and country via GPS so people know where creators and friends are sharing from.</string>
     <string name="nav_video_feed">Reels</string>
     <string name="nav_active_users">Online</string>
     <string name="nav_who_likes_me">Activity</string>

@@ -58,26 +58,9 @@ service cloud.firestore {
              data.minAgePref is int && data.minAgePref >= 18 && data.minAgePref <= 99 &&
              data.maxAgePref is int && data.maxAgePref >= data.minAgePref && data.maxAgePref <= 99 &&
              data.maxDistanceKm is int && data.maxDistanceKm >= 5 && data.maxDistanceKm <= 500 &&
-             data.verifiedOnlyFilter is bool &&
              (!('hideOnlineStatus' in data) || data.hideOnlineStatus is bool) &&
              (!('exactLatitude' in data) || (data.exactLatitude is number && data.exactLatitude >= -90.0 && data.exactLatitude <= 90.0)) &&
              (!('exactLongitude' in data) || (data.exactLongitude is number && data.exactLongitude >= -180.0 && data.exactLongitude <= 180.0));
-    }
-
-    function isValidVerificationRecord(data) {
-      return data.userId is string && isValidId(data.userId) &&
-             data.challengeCode is string && data.challengeCode.size() >= 3 && data.challengeCode.size() <= 64 &&
-             data.challengePrompt is string && data.challengePrompt.size() >= 5 && data.challengePrompt.size() <= 160 &&
-             data.faceCount is int && data.faceCount >= 1 && data.faceCount <= 3 &&
-             data.faceConfidence is number && data.faceConfidence >= 0.45 && data.faceConfidence <= 1.0 &&
-             data.eyesDistancePx is number && data.eyesDistancePx >= 8.0 && data.eyesDistancePx <= 5000.0 &&
-             data.photoSha256 is string && data.photoSha256.size() == 64 && data.photoSha256.matches('^[a-f0-9]{64}$') &&
-             data.locationVerified is bool &&
-             data.googleVerified is bool &&
-             data.comparedPhotoCount is int && data.comparedPhotoCount >= 1 && data.comparedPhotoCount <= 12 &&
-             data.photoSimilarityScore is number && data.photoSimilarityScore >= 0.65 && data.photoSimilarityScore <= 1.0 &&
-             data.livenessPassed == true &&
-             data.faceMatchPassed == true;
     }
 
     function isValidSharedProfileFields(data) {
@@ -102,18 +85,7 @@ service cloud.firestore {
              (!('videosVisibility' in data) || isValidVisibility(data.videosVisibility)) &&
              (!('infoVisibility' in data) || isValidVisibility(data.infoVisibility)) &&
              (!('dateOfBirth' in data) || (data.dateOfBirth is string && data.dateOfBirth.size() <= 16)) &&
-             (!('profileCompleted' in data) || data.profileCompleted is bool) &&
-             data.verificationStatus in ['UNVERIFIED', 'VERIFIED'] &&
-             data.verificationScore is int && data.verificationScore >= 0 && data.verificationScore <= 100 &&
-             (!('verificationId' in data) || (data.verificationId is string && data.verificationId.size() <= 128)) &&
-             (!('verificationHash' in data) || (data.verificationHash is string && data.verificationHash.size() <= 64)) &&
-             (!('verifiedAt' in data) || isValidTimestamp(data.verifiedAt)) &&
-             (data.verificationStatus == 'UNVERIFIED' || (
-               data.verificationScore >= 70 &&
-               ('verificationId' in data) && isValidId(data.verificationId) &&
-               ('verificationHash' in data) && data.verificationHash is string && data.verificationHash.size() == 64 && data.verificationHash.matches('^[a-f0-9]{64}$') &&
-               ('verifiedAt' in data) && isValidTimestamp(data.verifiedAt)
-             ));
+             (!('profileCompleted' in data) || data.profileCompleted is bool);
     }
 
     function isValidPublicProfile(data) {
@@ -168,7 +140,7 @@ service cloud.firestore {
              data.participantUids[0] is string && isValidId(data.participantUids[0]) &&
              data.participantUids[1] is string && isValidId(data.participantUids[1]) &&
              data.text is string && data.text.size() <= 1000 &&
-             data.messageType in ['TEXT', 'ICEBREAKER', 'PHOTO', 'VIDEO', 'VOICE', 'GIF', 'CALL'] &&
+             data.messageType in ['TEXT', 'PHOTO', 'VIDEO', 'VOICE', 'GIF', 'CALL'] &&
              (data.text.size() >= 1 || data.messageType in ['PHOTO', 'VIDEO', 'VOICE', 'GIF']) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
              (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
@@ -257,8 +229,8 @@ service cloud.firestore {
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().keys().hasAll(['userId', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'hideOnlineStatus', 'exactLatitude', 'exactLongitude', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasAll(['userId', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'hideOnlineStatus', 'exactLatitude', 'exactLongitude', 'createdAt', 'updatedAt']) &&
                        isValidPrivateUser(incoming()) &&
                        isValidTimestamp(incoming().createdAt) &&
                        isValidTimestamp(incoming().updatedAt);
@@ -269,26 +241,9 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'verifiedOnlyFilter', 'hideOnlineStatus', 'exactLatitude', 'exactLongitude', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'interestedIn', 'minAgePref', 'maxAgePref', 'maxDistanceKm', 'hideOnlineStatus', 'exactLatitude', 'exactLongitude', 'updatedAt']);
 
       allow delete: if isOwner(userId) && isValidId(userId);
-
-      // 2. Immutable Live-Camera Verification Audit Subcollection
-      match /verifications/{verificationId} {
-        allow get, list: if isOwner(userId);
-
-        allow create: if isOwner(userId) &&
-                         isValidId(userId) &&
-                         isValidId(verificationId) &&
-                         incoming().userId == request.auth.uid &&
-                         incoming().keys().hasAll(['userId', 'challengeCode', 'challengePrompt', 'faceCount', 'faceConfidence', 'eyesDistancePx', 'photoSha256', 'locationVerified', 'googleVerified', 'comparedPhotoCount', 'photoSimilarityScore', 'livenessPassed', 'faceMatchPassed', 'createdAt']) &&
-                         incoming().keys().hasOnly(['userId', 'challengeCode', 'challengePrompt', 'faceCount', 'faceConfidence', 'eyesDistancePx', 'photoSha256', 'locationVerified', 'googleVerified', 'comparedPhotoCount', 'photoSimilarityScore', 'livenessPassed', 'faceMatchPassed', 'createdAt']) &&
-                         isValidVerificationRecord(incoming()) &&
-                         isValidTimestamp(incoming().createdAt);
-
-        allow update: if false;
-        allow delete: if isOwner(userId) && isValidId(userId);
-      }
 
       // 2b. Device FCM Push Notification Tokens
       match /fcmTokens/{tokenId} {
@@ -323,7 +278,7 @@ service cloud.firestore {
       }
     }
 
-    // 3. Public Discovery Profiles (Coarse coordinates, GeoHash index, up to 12 photos & verification proof)
+    // 3. Public Discovery Profiles (Coarse coordinates, GeoHash index, up to 12 photos)
     match /publicProfiles/{userId} {
       allow get: if isSignedIn() && isValidId(userId);
       allow list: if isSignedIn() && (existing().discoverable == true || isAdmin());
@@ -331,19 +286,12 @@ service cloud.firestore {
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().keys().hasAll(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationScore', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
                        isValidPublicProfile(incoming()) &&
                        !incoming().get('suspended', false) &&
                        isValidTimestamp(incoming().createdAt) &&
-                       isValidTimestamp(incoming().updatedAt) &&
-                       (
-                         incoming().verificationStatus == 'UNVERIFIED' ||
-                         (
-                           existsAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)) &&
-                           getAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)).data.photoSha256 == incoming().verificationHash
-                         )
-                       );
+                       isValidTimestamp(incoming().updatedAt);
 
       allow update: if (
                        isOwner(userId) &&
@@ -353,14 +301,7 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        incoming().get('suspended', false) == existing().get('suspended', false) &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
-                       (
-                         incoming().verificationStatus == 'UNVERIFIED' ||
-                         (
-                           existsAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)) &&
-                           getAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)).data.photoSha256 == incoming().verificationHash
-                         )
-                       )
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt'])
                      ) || (
                        isAdmin() &&
                        isValidId(userId) &&
@@ -418,18 +359,11 @@ service cloud.firestore {
                        isValidGeoCellId(cellId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
-                       incoming().keys().hasAll(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'verificationStatus', 'verificationScore', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasAll(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
                        isValidGeoCellProfile(incoming(), cellId) &&
                        isValidTimestamp(incoming().createdAt) &&
-                       isValidTimestamp(incoming().updatedAt) &&
-                       (
-                         incoming().verificationStatus == 'UNVERIFIED' ||
-                         (
-                           existsAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)) &&
-                           getAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)).data.photoSha256 == incoming().verificationHash
-                         )
-                       );
+                       isValidTimestamp(incoming().updatedAt);
 
       allow update: if isOwner(userId) &&
                        isValidGeoCellId(cellId) &&
@@ -438,14 +372,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'verificationStatus', 'verificationId', 'verificationScore', 'verificationHash', 'verifiedAt', 'updatedAt']) &&
-                       (
-                         incoming().verificationStatus == 'UNVERIFIED' ||
-                         (
-                           existsAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)) &&
-                           getAfter(/databases/$(database)/documents/users/$(userId)/verifications/$(incoming().verificationId)).data.photoSha256 == incoming().verificationHash
-                         )
-                       );
+                       incoming().diff(existing()).affectedKeys().hasOnly(['geohash', 'cellPrecision', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'interests', 'photoDataUrl', 'profilePhotos', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt']);
 
       allow delete: if isOwner(userId) && isValidGeoCellId(cellId) && isValidId(userId);
     }
@@ -954,7 +881,6 @@ service cloud.firestore {
              data.mediaType in ['PHOTO', 'VIDEO'] &&
              (!('authorPhoto' in data) || (data.authorPhoto is string && data.authorPhoto.size() <= 180000)) &&
              (!('authorCountry' in data) || (data.authorCountry is string && data.authorCountry.size() <= 80)) &&
-             (!('authorVerified' in data) || data.authorVerified is bool) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
              (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
              (!('caption' in data) || (data.caption is string && data.caption.size() <= 300)) &&
@@ -980,7 +906,6 @@ service cloud.firestore {
              (!('authorPhoto' in data) || (data.authorPhoto is string && data.authorPhoto.size() <= 180000)) &&
              (!('authorCountry' in data) || (data.authorCountry is string && data.authorCountry.size() <= 80)) &&
              (!('authorCity' in data) || (data.authorCity is string && data.authorCity.size() <= 80)) &&
-             (!('authorVerified' in data) || data.authorVerified is bool) &&
              (!('mediaDataUrl' in data) || (data.mediaDataUrl is string && data.mediaDataUrl.size() <= 920000)) &&
              (!('mediaUrls' in data) || (data.mediaUrls is list && data.mediaUrls.size() <= 6 && (data.mediaUrls.size() == 0 || (data.mediaUrls[0] is string && data.mediaUrls[0].size() <= 180000)))) &&
              (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 180000)) &&
@@ -1002,7 +927,7 @@ service cloud.firestore {
                        incoming().userId == request.auth.uid &&
                        isValidStory(incoming()) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'mediaType', 'expiresAtMs', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorVerified', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAt', 'expiresAtMs', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'mediaType', 'mediaDataUrl', 'thumbnailDataUrl', 'caption', 'mediaDurationSec', 'chunkCount', 'viewerUids', 'expiresAt', 'expiresAtMs', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1069,7 +994,6 @@ service cloud.firestore {
                        incoming().caption is string && incoming().caption.size() <= 300 &&
                        (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                        (!('authorCountry' in incoming()) || (incoming().authorCountry is string && incoming().authorCountry.size() <= 80)) &&
-                       (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                        (!('mediaDataUrl' in incoming()) || (incoming().mediaDataUrl is string && incoming().mediaDataUrl.size() <= 920000)) &&
                        (!('thumbnailDataUrl' in incoming()) || (incoming().thumbnailDataUrl is string && incoming().thumbnailDataUrl.size() <= 180000)) &&
                        (!('mediaMimeType' in incoming()) || (incoming().mediaMimeType is string && incoming().mediaMimeType.size() <= 80)) &&
@@ -1078,7 +1002,7 @@ service cloud.firestore {
                        incoming().chunkCount is int && incoming().chunkCount >= 0 && incoming().chunkCount <= 1000 &&
                        (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaDurationSec', 'chunkCount', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorVerified', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'caption', 'mediaDataUrl', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1116,10 +1040,9 @@ service cloud.firestore {
                          incoming().userId == request.auth.uid &&
                          incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
                          (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
-                         (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                          incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
                          incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'authorVerified', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
         allow update: if false;
@@ -1140,7 +1063,7 @@ service cloud.firestore {
                        incoming().userId == request.auth.uid &&
                        isValidFeedPost(incoming()) &&
                        incoming().keys().hasAll(['userId', 'authorName', 'caption', 'mediaType', 'createdAt']) &&
-                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'authorVerified', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'authorName', 'authorPhoto', 'authorCountry', 'authorCity', 'caption', 'mediaType', 'mediaDataUrl', 'mediaUrls', 'thumbnailDataUrl', 'mediaMimeType', 'mediaDurationSec', 'mediaByteSize', 'chunkCount', 'likedByUids', 'savedByUids', 'commentCount', 'createdAt']) &&
                        isValidTimestamp(incoming().createdAt);
 
       allow update: if isSignedIn() &&
@@ -1179,11 +1102,10 @@ service cloud.firestore {
                          incoming().userId == request.auth.uid &&
                          incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
                          (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
-                         (!('authorVerified' in incoming()) || incoming().authorVerified is bool) &&
                          incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
                          (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
                          incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'authorVerified', 'text', 'likedByUids', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'likedByUids', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
         allow update: if isSignedIn() &&

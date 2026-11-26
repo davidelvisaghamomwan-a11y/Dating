@@ -17,7 +17,6 @@ data class PrivateUser(
     val minAgePref: Long = 20L,
     val maxAgePref: Long = 45L,
     val maxDistanceKm: Long = 50L,
-    val verifiedOnlyFilter: Boolean = false,
     val hideOnlineStatus: Boolean = false,
     val exactLatitude: Double? = null,
     val exactLongitude: Double? = null,
@@ -53,16 +52,9 @@ data class PublicProfile(
     val photosVisibility: String = VisibilityLevel.EVERYONE,
     val videosVisibility: String = VisibilityLevel.EVERYONE,
     val infoVisibility: String = VisibilityLevel.EVERYONE,
-    val verificationStatus: String = "UNVERIFIED",
-    val verificationId: String? = null,
-    val verificationScore: Long = 30L,
-    val verificationHash: String? = null,
-    val verifiedAt: Timestamp? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
-    val isProfileVerified: Boolean
-        get() = verificationStatus == "VERIFIED"
 
     fun allProfilePhotos(): List<String> =
         (listOfNotNull(photoDataUrl) + profilePhotos)
@@ -101,26 +93,6 @@ object VisibilityLevel {
         else -> "Everyone"
     }
 }
-
-@Keep
-@IgnoreExtraProperties
-data class VerificationRecord(
-    @DocumentId val id: String = "",
-    val userId: String = "",
-    val challengeCode: String = "",
-    val challengePrompt: String = "",
-    val faceCount: Long = 0L,
-    val faceConfidence: Double = 0.0,
-    val eyesDistancePx: Double = 0.0,
-    val photoSha256: String = "",
-    val locationVerified: Boolean = false,
-    val googleVerified: Boolean = true,
-    val comparedPhotoCount: Long = 0L,
-    val photoSimilarityScore: Double = 0.0,
-    val livenessPassed: Boolean = false,
-    val faceMatchPassed: Boolean = false,
-    @ServerTimestamp val createdAt: Timestamp? = null
-)
 
 @Keep
 @IgnoreExtraProperties
@@ -330,7 +302,6 @@ sealed interface SocialActivityItem {
     val actorUid: String
     val actorName: String
     val actorPhoto: String?
-    val actorVerified: Boolean
 
     data class NewFollower(
         override val id: String,
@@ -338,7 +309,6 @@ sealed interface SocialActivityItem {
         override val actorUid: String,
         override val actorName: String,
         override val actorPhoto: String?,
-        override val actorVerified: Boolean,
         val follow: FollowRecord
     ) : SocialActivityItem
 
@@ -348,7 +318,6 @@ sealed interface SocialActivityItem {
         override val actorUid: String,
         override val actorName: String,
         override val actorPhoto: String?,
-        override val actorVerified: Boolean,
         val post: FeedPost
     ) : SocialActivityItem
 
@@ -358,7 +327,6 @@ sealed interface SocialActivityItem {
         override val actorUid: String,
         override val actorName: String,
         override val actorPhoto: String?,
-        override val actorVerified: Boolean,
         val reel: VideoPost
     ) : SocialActivityItem
 
@@ -368,7 +336,6 @@ sealed interface SocialActivityItem {
         override val actorUid: String,
         override val actorName: String,
         override val actorPhoto: String?,
-        override val actorVerified: Boolean,
         val post: FeedPost,
         val comment: FeedComment
     ) : SocialActivityItem
@@ -379,7 +346,6 @@ sealed interface SocialActivityItem {
         override val actorUid: String,
         override val actorName: String,
         override val actorPhoto: String?,
-        override val actorVerified: Boolean,
         val reel: VideoPost,
         val comment: FeedComment
     ) : SocialActivityItem
@@ -427,7 +393,6 @@ data class StoryItem(
     val authorName: String = "",
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
-    val authorVerified: Boolean = false,
     val mediaType: String = "PHOTO",
     val mediaDataUrl: String? = null,
     val thumbnailDataUrl: String? = null,
@@ -471,7 +436,6 @@ data class VideoPost(
     val authorName: String = "",
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
-    val authorVerified: Boolean = false,
     val caption: String = "",
     val mediaDataUrl: String? = null,
     val thumbnailDataUrl: String? = null,
@@ -494,7 +458,6 @@ data class FeedPost(
     val authorPhoto: String? = null,
     val authorCountry: String? = null,
     val authorCity: String? = null,
-    val authorVerified: Boolean = false,
     val caption: String = "",
     val mediaType: String = "NONE",
     val mediaDataUrl: String? = null,
@@ -543,16 +506,9 @@ data class FeedComment(
     val authorId: String = "",
     val authorName: String = "",
     val authorPhoto: String? = null,
-    val authorVerified: Boolean = false,
     val text: String = "",
     val likedByUids: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null
-)
-
-data class IcebreakerSuggestion(
-    val prompt: String,
-    val tone: String,
-    val reason: String
 )
 
 @Keep
@@ -646,8 +602,7 @@ data class DiscoveryCandidate(
     val sharedInterests: List<String> = emptyList(),
     val matchReasons: List<String> = emptyList(),
     val distanceScore: Int = 0,
-    val interestScore: Int = 0,
-    val trustScore: Int = 0
+    val interestScore: Int = 0
 )
 
 data class MatchingCriteria(
@@ -659,7 +614,6 @@ data class MatchingCriteria(
     val minAge: Int = 18,
     val maxAge: Int = 99,
     val interestedIn: String = "Everyone",
-    val verifiedOnly: Boolean = false,
     val myInterests: List<String> = emptyList(),
     val excludedUserIds: Set<String> = emptySet(),
     val blockedUserIds: Set<String> = emptySet()
@@ -670,40 +624,6 @@ data class MatchThreadItem(
     val partnerId: String,
     val partnerProfile: PublicProfile?,
     val distanceKm: Double?
-)
-
-data class VerificationChallenge(
-    val code: String,
-    val prompt: String,
-    val hint: String
-)
-
-data class ProfilePhotoComparison(
-    val photoIndex: Int,
-    val photoDataUrl: String,
-    val faceDetected: Boolean,
-    val similarityScore: Float,
-    val geometryScore: Float,
-    val structureScore: Float,
-    val toneScore: Float,
-    val matched: Boolean,
-    val reason: String
-)
-
-data class LivenessAnalysisResult(
-    val passed: Boolean,
-    val livenessPassed: Boolean = false,
-    val faceMatchPassed: Boolean = false,
-    val faceCount: Int,
-    val confidence: Float,
-    val eyesDistancePx: Float,
-    val photoSha256: String,
-    val comparedPhotoCount: Int = 0,
-    val bestSimilarityScore: Float = 0f,
-    val averageSimilarityScore: Float = 0f,
-    val perPhotoComparisons: List<ProfilePhotoComparison> = emptyList(),
-    val capturedSelfiePreviewDataUrl: String? = null,
-    val summary: String
 )
 
 object KindredConstants {
@@ -753,24 +673,6 @@ object KindredConstants {
             ?.value
             ?: emptyList()
     }
-
-    val VERIFICATION_CHALLENGES = listOf(
-        VerificationChallenge(
-            code = "SMILE_CENTER",
-            prompt = "Look directly into the front camera with a natural smile",
-            hint = "Keep your face centered inside the ring with even lighting."
-        ),
-        VerificationChallenge(
-            code = "EYES_LEVEL",
-            prompt = "Hold your phone at eye level and face straight forward",
-            hint = "Remove sunglasses or hats so both eyes are clearly visible."
-        ),
-        VerificationChallenge(
-            code = "SLIGHT_TILT",
-            prompt = "Frame your face clearly and hold steady for liveness capture",
-            hint = "Ensure only your face is in the frame during capture."
-        )
-    )
 
     val REPORT_REASONS = listOf(
         "Harassment or abusive behavior",

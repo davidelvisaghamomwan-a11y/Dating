@@ -32,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -65,7 +64,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.ai.IcebreakerAiUiState
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
 import com.example.model.CallVideoFrame
@@ -109,7 +107,6 @@ fun MatchesAndChatScreen(
     activeCallSession: CallSession? = null,
     activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
     activeCallVideoFrames: List<CallVideoFrame> = emptyList(),
-    icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     onSelectMatch: (String?) -> Unit,
     onOpenSearch: () -> Unit = {},
     onSendMessage: (String, List<String>, String, String) -> Unit,
@@ -149,7 +146,6 @@ fun MatchesAndChatScreen(
     onResolveVideoFile: (suspend (ChatMessage) -> Result<File>)? = null,
     onTypingChanged: (matchId: String, isTyping: Boolean) -> Unit = { _, _ -> },
     onUpdateDisappearingTimer: (matchId: String, ttlSeconds: Long) -> Unit = { _, _ -> },
-    onGenerateAiIcebreakers: (myProfile: PublicProfile?, partnerProfile: PublicProfile?, tone: String) -> Unit = { _, _, _ -> },
     onStartCall: (matchId: String, calleeUid: String, participantUids: List<String>, callType: String) -> Unit = { _, _, _, _ -> },
     onAnswerCall: (CallSession) -> Unit = {},
     onDeclineCall: (CallSession) -> Unit = {},
@@ -208,7 +204,6 @@ fun MatchesAndChatScreen(
                             activeCallSession = activeCallSession,
                             activeCallAudioChunks = activeCallAudioChunks,
                             activeCallVideoFrames = activeCallVideoFrames,
-                            icebreakerAiState = icebreakerAiState,
                             showBackButton = false,
                             onBack = { onSelectMatch(null) },
                             onSendMessage = onSendMessage,
@@ -222,9 +217,6 @@ fun MatchesAndChatScreen(
                             onResolveVideoFile = onResolveVideoFile,
                             onTypingChanged = onTypingChanged,
                             onUpdateDisappearingTimer = onUpdateDisappearingTimer,
-                            onGenerateAiIcebreakers = { tone ->
-                                onGenerateAiIcebreakers(myProfile, activeThread.partnerProfile, tone)
-                            },
                             onStartCall = onStartCall,
                             onAnswerCall = onAnswerCall,
                             onDeclineCall = onDeclineCall,
@@ -260,7 +252,6 @@ fun MatchesAndChatScreen(
                     activeCallSession = activeCallSession,
                     activeCallAudioChunks = activeCallAudioChunks,
                     activeCallVideoFrames = activeCallVideoFrames,
-                    icebreakerAiState = icebreakerAiState,
                     showBackButton = true,
                     onBack = { onSelectMatch(null) },
                     onSendMessage = onSendMessage,
@@ -274,9 +265,6 @@ fun MatchesAndChatScreen(
                     onResolveVideoFile = onResolveVideoFile,
                     onTypingChanged = onTypingChanged,
                     onUpdateDisappearingTimer = onUpdateDisappearingTimer,
-                    onGenerateAiIcebreakers = { tone ->
-                        onGenerateAiIcebreakers(myProfile, activeThread.partnerProfile, tone)
-                    },
                     onStartCall = onStartCall,
                     onAnswerCall = onAnswerCall,
                     onDeclineCall = onDeclineCall,
@@ -704,14 +692,6 @@ private fun InboxListPane(
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false)
                                         )
-                                        if (partner?.isProfileVerified == true) {
-                                            Icon(
-                                                imageVector = Icons.Filled.VerifiedUser,
-                                                contentDescription = stringResource(R.string.cd_verified_badge),
-                                                tint = EmeraldMint,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
                                     }
 
                                     if (timestampLabel.isNotBlank()) {

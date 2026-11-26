@@ -44,8 +44,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Verified
-import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -115,13 +113,13 @@ import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.StoryHighlightsSection
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import java.io.File
 
-private val InstagramVerifiedBlue = Color(0xFF0095F6)
+private val KindredActionBlue = Color(0xFF0095F6)
 
 private sealed interface ProfileGridEntry {
     val sortTimestamp: Long
@@ -163,7 +161,6 @@ fun ProfileScreen(
     onOpenFollowersFollowing: (Int) -> Unit = {},
     onOpenActivity: () -> Unit = {},
     onOpenAdminDashboard: () -> Unit = {},
-    onOpenVerification: () -> Unit = {},
     onOpenVideoFeed: () -> Unit = {},
     onOpenCreatePost: () -> Unit = {},
     onOpenCreateStory: () -> Unit = {},
@@ -206,7 +203,6 @@ fun ProfileScreen(
     val primaryPhoto = remember(myProfile) { myProfile?.allProfilePhotos()?.firstOrNull() }
     val avatarSeed = myProfile?.avatarSeed ?: currentUserId
     val bio = myProfile?.bio.orEmpty().trim()
-    val isVerified = myProfile?.isProfileVerified == true
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Posts, 1 = Reels, 2 = Saved
     var showAccountQuickMenu by remember { mutableStateOf(false) }
@@ -282,14 +278,6 @@ fun ProfileScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            if (isVerified) {
-                                Icon(
-                                    imageVector = Icons.Filled.Verified,
-                                    contentDescription = "Verified profile",
-                                    tint = InstagramVerifiedBlue,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
                             Icon(
                                 imageVector = Icons.Filled.KeyboardArrowDown,
                                 contentDescription = "Account menu",
@@ -302,22 +290,6 @@ fun ProfileScreen(
                             expanded = showAccountQuickMenu,
                             onDismissRequest = { showAccountQuickMenu = false }
                         ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(if (isVerified) "Identity Verified" else "Verify Identity")
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Filled.VerifiedUser,
-                                        contentDescription = null,
-                                        tint = if (isVerified) EmeraldMint else CoralRose
-                                    )
-                                },
-                                onClick = {
-                                    showAccountQuickMenu = false
-                                    onOpenVerification()
-                                }
-                            )
                             DropdownMenuItem(
                                 text = { Text("Followers & Following (${followersCount + followingCount})") },
                                 leadingIcon = {
@@ -467,27 +439,14 @@ fun ProfileScreen(
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 14.5.sp
-                            ),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        if (isVerified) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = "Verified",
-                                tint = InstagramVerifiedBlue,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.5.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
 
                     if (bio.isNotBlank()) {
                         Text(
@@ -709,7 +668,7 @@ fun ProfileScreen(
                             ) {
                                 Text(
                                     text = if (selectedTab == 1) "Open Reels" else "Share your first post",
-                                    color = InstagramVerifiedBlue,
+                                    color = KindredActionBlue,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -1095,7 +1054,7 @@ private fun ProfileGridTile(
 
     val decodedBitmap = remember(thumbSource) {
         if (!thumbSource.isNullOrBlank() && thumbSource.startsWith("data:image")) {
-            VerificationAnalyzer.decodeBase64DataUrl(thumbSource)
+            MediaImageHelper.decodeBase64DataUrl(thumbSource)
         } else null
     }
 

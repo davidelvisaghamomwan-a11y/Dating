@@ -4,8 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ai.AiIcebreakerService
-import com.example.ai.IcebreakerAiUiState
+import com.example.auth.PendingRegistrationData
 import com.example.data.CloudMediaStorageService
 import com.example.data.KindredRepository
 import com.example.data.SocialAndMediaRepository
@@ -22,7 +21,6 @@ import com.example.model.FeedComment
 import com.example.model.FeedPost
 import com.example.model.FollowRecord
 import com.example.model.KindredConstants
-import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
 import com.example.model.PrivateUser
@@ -38,8 +36,6 @@ import com.example.model.SuggestedFriendItem
 import com.example.model.TypingStatus
 import com.example.model.UiState
 import com.example.model.UserPresence
-import com.example.model.VerificationChallenge
-import com.example.model.VerificationRecord
 import com.example.model.VideoPost
 import com.example.service.GeoHashMatchingService
 import com.example.service.GeoHashSpatialSnapshot
@@ -48,7 +44,6 @@ import com.example.util.LocationAndGeoHelper
 import com.example.util.PreparedVideoUpload
 import com.example.util.PresenceUtils
 import com.example.util.ResolvedDeviceLocation
-import com.example.util.VerificationAnalyzer
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -110,7 +105,6 @@ data class DashboardSnapshot(
     val discoveryCandidates: List<DiscoveryCandidate>,
     val searchableProfiles: List<DiscoveryCandidate> = emptyList(),
     val matches: List<MatchThreadItem>,
-    val verifications: List<VerificationRecord>,
     val geoHashMeta: GeoHashContextMeta?,
     val blockedUsers: List<BlockedUserItem> = emptyList()
 )
@@ -137,8 +131,6 @@ class KindredViewModel(
     val currentUserId: String,
     val userEmail: String?,
     val defaultDisplayName: String?,
-    val isEmailVerified: Boolean,
-    private val aiIcebreakerService: AiIcebreakerService = AiIcebreakerService(),
     private val socialRepo: SocialAndMediaRepository = repository.socialRepository
 ) : ViewModel() {
 
@@ -163,7 +155,6 @@ class KindredViewModel(
     private val myProfileFlow = repository.observeMyPublicProfile(currentUserId)
     private val allProfilesFlow = repository.observeDiscoverableProfiles(currentUserId)
     private val matchesFlow = repository.observeMyMatches(currentUserId)
-    private val verificationsFlow = repository.observeVerifications(currentUserId)
     private val usersIBlockedFlow = repository.observeUsersIBlocked(currentUserId)
         .catch { emit(emptyList()) }
         .onStart { emit(emptyList()) }
@@ -238,22 +229,11 @@ class KindredViewModel(
         allProfilesFlow,
         spatialGeoCellsFlow,
         sortedMatchesFlow,
-        verificationsFlow,
         blockingStateFlow
-    ) { values ->
-        @Suppress("UNCHECKED_CAST")
-        val locationTriple = values[0] as Triple<PrivateUser?, PublicProfile?, ResolvedDeviceLocation?>
+    ) { locationTriple, allProfiles, spatialSnapshot, matches, blocking ->
         val privateUser = locationTriple.first
         val myProfile = locationTriple.second
         val liveLocation = locationTriple.third
-        @Suppress("UNCHECKED_CAST")
-        val allProfiles = values[1] as List<PublicProfile>
-        val spatialSnapshot = values[2] as GeoHashSpatialSnapshot?
-        @Suppress("UNCHECKED_CAST")
-        val matches = values[3] as List<MatchRecord>
-        @Suppress("UNCHECKED_CAST")
-        val verifications = values[4] as List<VerificationRecord>
-        val blocking = values[5] as BlockingSnapshot
 
         val blockedIds = blocking.allBlockedIds
         val myLat = liveLocation?.exactLatitude ?: privateUser?.exactLatitude ?: myProfile?.coarseLatitude
@@ -288,7 +268,6 @@ class KindredViewModel(
             minAge = 18,
             maxAge = 99,
             interestedIn = "Everyone",
-            verifiedOnly = false,
             myInterests = myInterests,
             excludedUserIds = emptySet(),
             blockedUserIds = blockedIds
@@ -324,10 +303,7 @@ class KindredViewModel(
                     sharedInterests = sharedInterests
                 )
             }
-            .sortedWith(
-                compareByDescending<DiscoveryCandidate> { it.profile.isProfileVerified }
-                    .thenBy { it.distanceKm }
-            )
+            .sortedBy { it.distanceKm }
 
         val profileById = allSearchableMap
         val matchItems = matches
@@ -377,7 +353,6 @@ class KindredViewModel(
             discoveryCandidates = candidates,
             searchableProfiles = searchableCandidates,
             matches = matchItems,
-            verifications = verifications,
             geoHashMeta = geoMeta,
             blockedUsers = blockedUserItems
         )
@@ -933,7 +908,6 @@ class KindredViewModel(
                     actorUid = follow.followerUid,
                     actorName = actor?.displayName ?: follow.followerName.ifBlank { "Kindred Member" },
                     actorPhoto = actor?.allProfilePhotos()?.firstOrNull() ?: follow.followerPhoto,
-                    actorVerified = actor?.isProfileVerified == true,
                     follow = follow
                 )
             }
@@ -951,7 +925,6 @@ class KindredViewModel(
                             actorUid = likerUid,
                             actorName = actor?.displayName ?: "Kindred Member",
                             actorPhoto = actor?.allProfilePhotos()?.firstOrNull(),
-                            actorVerified = actor?.isProfileVerified == true,
                             post = post
                         )
                     }
@@ -970,7 +943,6 @@ class KindredViewModel(
                             actorUid = likerUid,
                             actorName = actor?.displayName ?: "Kindred Member",
                             actorPhoto = actor?.allProfilePhotos()?.firstOrNull(),
-                            actorVerified = actor?.isProfileVerified == true,
                             reel = reel
                         )
                     }
@@ -987,7 +959,6 @@ class KindredViewModel(
                         actorUid = comment.userId,
                         actorName = actor?.displayName ?: comment.authorName.ifBlank { "Kindred Member" },
                         actorPhoto = actor?.allProfilePhotos()?.firstOrNull() ?: comment.authorPhoto,
-                        actorVerified = actor?.isProfileVerified == true || comment.authorVerified,
                         post = post,
                         comment = comment
                     )
@@ -1005,7 +976,6 @@ class KindredViewModel(
                         actorUid = comment.userId,
                         actorName = actor?.displayName ?: comment.authorName.ifBlank { "Kindred Member" },
                         actorPhoto = actor?.allProfilePhotos()?.firstOrNull() ?: comment.authorPhoto,
-                        actorVerified = actor?.isProfileVerified == true || comment.authorVerified,
                         reel = reel,
                         comment = comment
                     )
@@ -1069,11 +1039,7 @@ class KindredViewModel(
     private val _isUploadingMedia = MutableStateFlow(false)
     val isUploadingMedia: StateFlow<Boolean> = _isUploadingMedia.asStateFlow()
 
-    private val _activeChallenge = MutableStateFlow(KindredConstants.VERIFICATION_CHALLENGES.first())
-    val activeChallenge: StateFlow<VerificationChallenge> = _activeChallenge.asStateFlow()
-
-    private val _icebreakerAiState = MutableStateFlow<IcebreakerAiUiState>(IcebreakerAiUiState.Idle)
-    val icebreakerAiState: StateFlow<IcebreakerAiUiState> = _icebreakerAiState.asStateFlow()
+    private val profileBootstrapAttempted = AtomicBoolean(false)
 
     private val _pushAlerts = MutableSharedFlow<KindredPushAlert>(extraBufferCapacity = 16)
     val pushAlerts: SharedFlow<KindredPushAlert> = _pushAlerts.asSharedFlow()
@@ -1269,10 +1235,69 @@ class KindredViewModel(
         _actionStatusMessage.value = message
     }
 
-    fun cycleVerificationChallenge() {
-        val list = KindredConstants.VERIFICATION_CHALLENGES
-        val nextIndex = (list.indexOf(_activeChallenge.value) + 1) % list.size
-        _activeChallenge.value = list[nextIndex]
+    fun bootstrapProfileIfMissing(
+        existingProfile: PublicProfile?,
+        existingPrivateUser: PrivateUser?,
+        pending: PendingRegistrationData?,
+        onConsumed: () -> Unit = {}
+    ) {
+        if (!profileBootstrapAttempted.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                val loc = _latestLocation.value
+                val lat = loc?.exactLatitude ?: existingPrivateUser?.exactLatitude ?: existingProfile?.coarseLatitude ?: 37.7749
+                val lng = loc?.exactLongitude ?: existingPrivateUser?.exactLongitude ?: existingProfile?.coarseLongitude ?: -122.4194
+                val city = loc?.cityLabel?.takeIf { it.isNotBlank() }
+                    ?: existingProfile?.cityLabel?.takeIf { it.isNotBlank() }
+                    ?: "Nearby"
+                val country = loc?.countryName?.takeIf { it.isNotBlank() }
+                    ?: existingProfile?.country?.takeIf { it.isNotBlank() }
+                    ?: "United States"
+                val resolvedName = pending?.displayName?.trim()?.takeIf { it.length >= 2 }
+                    ?: existingProfile?.displayName?.trim()?.takeIf { it.length >= 2 }
+                    ?: defaultDisplayName?.trim()?.takeIf { it.length >= 2 }
+                    ?: userEmail?.substringBefore('@')?.trim()?.takeIf { it.length >= 2 }
+                    ?: "Kindred Member"
+                val resolvedAge = pending?.age?.takeIf { it in 18..99 }
+                    ?: existingProfile?.age?.toInt()?.takeIf { it in 18..99 }
+                    ?: 24
+                val resolvedGender = pending?.gender?.takeIf { it.isNotBlank() }
+                    ?: existingProfile?.gender?.takeIf { it.isNotBlank() }
+                    ?: "Woman"
+
+                val result = repository.saveProfileAndPreferences(
+                    email = userEmail,
+                    displayName = resolvedName.take(40),
+                    age = resolvedAge,
+                    gender = resolvedGender,
+                    bio = existingProfile?.bio.orEmpty(),
+                    cityLabel = city,
+                    country = country,
+                    latitude = lat,
+                    longitude = lng,
+                    interests = existingProfile?.interests.orEmpty(),
+                    photoDataUrl = existingProfile?.photoDataUrl,
+                    profilePhotos = existingProfile?.allProfilePhotos().orEmpty(),
+                    discoverable = existingProfile?.discoverable ?: true,
+                    interestedIn = existingPrivateUser?.interestedIn ?: "Everyone",
+                    minAgePref = (existingPrivateUser?.minAgePref ?: 18L).toInt(),
+                    maxAgePref = (existingPrivateUser?.maxAgePref ?: 99L).toInt(),
+                    maxDistanceKm = (existingPrivateUser?.maxDistanceKm ?: 100L).toInt(),
+                    dateOfBirth = existingProfile?.dateOfBirth.orEmpty(),
+                    profileCompleted = true
+                )
+                if (result.isSuccess) {
+                    onConsumed()
+                } else {
+                    profileBootstrapAttempted.set(false)
+                }
+            } catch (e: CancellationException) {
+                profileBootstrapAttempted.set(false)
+                throw e
+            } catch (_: Exception) {
+                profileBootstrapAttempted.set(false)
+            }
+        }
     }
 
     fun onLiveLocationTick(resolved: ResolvedDeviceLocation) {
@@ -1501,33 +1526,6 @@ class KindredViewModel(
         }
     }
 
-    fun generateAiIcebreakers(
-        myProfile: PublicProfile?,
-        partnerProfile: PublicProfile?,
-        tone: String = "Balanced"
-    ) {
-        if (_icebreakerAiState.value is IcebreakerAiUiState.Loading) return
-        _icebreakerAiState.value = IcebreakerAiUiState.Loading
-        viewModelScope.launch {
-            val result = aiIcebreakerService.generateAiOpeners(
-                myProfile = myProfile,
-                partnerProfile = partnerProfile,
-                tonePreference = tone
-            )
-            result.onSuccess { suggestions ->
-                _icebreakerAiState.value = IcebreakerAiUiState.Success(suggestions)
-            }.onFailure { err ->
-                _icebreakerAiState.value = IcebreakerAiUiState.Error(
-                    err.localizedMessage ?: "Failed to generate AI icebreakers"
-                )
-            }
-        }
-    }
-
-    fun resetIcebreakerAiState() {
-        _icebreakerAiState.value = IcebreakerAiUiState.Idle
-    }
-
     fun startCall(
         matchId: String,
         calleeUid: String,
@@ -1738,7 +1736,6 @@ class KindredViewModel(
         minAgePref: Int,
         maxAgePref: Int,
         maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean,
         dateOfBirth: String = "",
         profileCompleted: Boolean = true,
         onComplete: () -> Unit = {}
@@ -1766,7 +1763,6 @@ class KindredViewModel(
                         minAgePref = minAgePref,
                         maxAgePref = maxAgePref,
                         maxDistanceKm = maxDistanceKm,
-                        verifiedOnlyFilter = verifiedOnlyFilter,
                         dateOfBirth = dateOfBirth,
                         profileCompleted = profileCompleted
                     )
@@ -1866,28 +1862,6 @@ class KindredViewModel(
                 onComplete()
             }.onFailure { err ->
                 _actionStatusMessage.value = err.localizedMessage ?: "Failed to update visibility"
-            }
-        }
-    }
-
-    fun submitVerification(
-        challenge: VerificationChallenge,
-        analysis: LivenessAnalysisResult,
-        locationVerified: Boolean
-    ) {
-        viewModelScope.launch {
-            _isBusy.value = true
-            val result = repository.submitVerification(
-                challenge = challenge,
-                analysis = analysis,
-                locationVerified = locationVerified,
-                googleVerified = isEmailVerified
-            )
-            _isBusy.value = false
-            result.onSuccess { score ->
-                _actionStatusMessage.value = "Profile verified! Trust score: $score/100"
-            }.onFailure { err ->
-                _actionStatusMessage.value = err.localizedMessage ?: "Verification failed"
             }
         }
     }

@@ -20,8 +20,8 @@ import com.example.model.StoryItem
 import com.example.model.SwipeRecord
 import com.example.model.UserPresence
 import com.example.model.VideoPost
+import com.example.util.MediaImageHelper
 import com.example.util.PreparedVideoUpload
-import com.example.util.VerificationAnalyzer
 import com.example.util.VideoClipHelper
 import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
@@ -179,13 +179,12 @@ class SocialAndMediaRepository(
             } else null
         }.recoverCatching {
             val d = data ?: return null
-            val resolvedId = id
+                val resolvedId = id
             val userId = (d["userId"] as? String) ?: (d["authorId"] as? String) ?: ""
             val authorName = (d["authorName"] as? String) ?: "Kindred Member"
             val authorPhoto = d["authorPhoto"] as? String
             val authorCountry = d["authorCountry"] as? String
             val authorCity = d["authorCity"] as? String
-            val authorVerified = d["authorVerified"] as? Boolean ?: false
             val caption = (d["caption"] as? String) ?: ""
             val mediaType = (d["mediaType"] as? String) ?: "NONE"
             val mediaDataUrl = d["mediaDataUrl"] as? String
@@ -213,7 +212,6 @@ class SocialAndMediaRepository(
                 authorPhoto = authorPhoto,
                 authorCountry = authorCountry,
                 authorCity = authorCity,
-                authorVerified = authorVerified,
                 caption = caption,
                 mediaType = mediaType,
                 mediaDataUrl = mediaDataUrl,
@@ -249,7 +247,6 @@ class SocialAndMediaRepository(
             val authorName = (d["authorName"] as? String) ?: "Kindred Member"
             val authorPhoto = d["authorPhoto"] as? String
             val authorCountry = d["authorCountry"] as? String
-            val authorVerified = d["authorVerified"] as? Boolean ?: false
             val caption = (d["caption"] as? String) ?: ""
             val mediaDataUrl = d["mediaDataUrl"] as? String
             val thumbnailDataUrl = d["thumbnailDataUrl"] as? String
@@ -266,7 +263,6 @@ class SocialAndMediaRepository(
                 authorName = authorName,
                 authorPhoto = authorPhoto,
                 authorCountry = authorCountry,
-                authorVerified = authorVerified,
                 caption = caption,
                 mediaDataUrl = mediaDataUrl,
                 thumbnailDataUrl = thumbnailDataUrl,
@@ -282,6 +278,86 @@ class SocialAndMediaRepository(
         }.getOrNull()
     }
 
+    private data class ResolvedVideoUpload(
+        val inlineMediaUrl: String? = null,
+        val chunks: List<String> = emptyList()
+    )
+
+    private suspend fun resolveImageForFirestoreOrCloud(
+        rawImage: String,
+        remotePath: String,
+        maxDim: Int = 1080,
+        maxRawBytes: Int = 580_000,
+        maxDataUrlChars: Int = CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS
+    ): String {
+        val clean = rawImage.trim()
+        if (CloudMediaStorageService.isRemoteHttpUrl(clean)) return clean.take(2048)
+        val uploaded = cloudStorage.ensureRemoteMediaUrl(
+            rawDataUrlOrRemoteUrl = clean,
+            remotePath = remotePath,
+            defaultContentType = "image/jpeg"
+        )
+        return uploaded.getOrElse { err ->
+            if (CloudMediaStorageService.isStorageUnavailableError(err)) {
+                Log.w(
+                    CloudMediaStorageService.TAG,
+                    "Storage unavailable for $remotePath; falling back to inline Firestore image",
+                    err
+                )
+                MediaImageHelper.compactImageDataUrl(
+                    rawUrl = clean,
+                    maxDim = maxDim,
+                    maxRawBytes = maxRawBytes,
+                    maxDataUrlChars = maxDataUrlChars
+                ) ?: throw IllegalStateException("Photo exceeds Firestore fallback limit or could not be encoded.", err)
+            } else {
+                throw err
+            }
+        }
+    }
+
+    private suspend fun resolveVideoForFirestoreOrCloud(
+        prepared: PreparedVideoUpload,
+        remotePath: String
+    ): ResolvedVideoUpload {
+        val uploaded = cloudStorage.uploadFile(
+            file = prepared.localCachedFile,
+            remotePath = remotePath,
+            contentType = prepared.mimeType
+        )
+        return uploaded.fold(
+            onSuccess = { url -> ResolvedVideoUpload(inlineMediaUrl = url) },
+            onFailure = { err ->
+                if (!CloudMediaStorageService.isStorageUnavailableError(err)) {
+                    throw err
+                }
+                Log.w(
+                    CloudMediaStorageService.TAG,
+                    "Storage unavailable for $remotePath; falling back to Firestore video storage",
+                    err
+                )
+                val inline = CloudMediaStorageService.readLocalFileAsDataUrl(
+                    file = prepared.localCachedFile,
+                    mimeType = prepared.mimeType
+                )?.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
+                if (inline != null) {
+                    ResolvedVideoUpload(inlineMediaUrl = inline)
+                } else {
+                    val chunks = withContext(Dispatchers.IO) {
+                        VideoClipHelper.streamFileIntoBase64Chunks(prepared.localCachedFile)
+                    }
+                    if (chunks.isEmpty() || chunks.size > VideoClipHelper.MAX_CHUNKS) {
+                        throw IllegalStateException(
+                            "Video is too large for inline Firestore fallback (${chunks.size} chunks). Configure a Firebase Storage bucket to upload large videos.",
+                            err
+                        )
+                    }
+                    ResolvedVideoUpload(chunks = chunks)
+                }
+            }
+        )
+    }
+
     private suspend fun resolveThumbnailForFirestoreOrCloud(
         rawThumbnail: String?,
         remotePath: String
@@ -295,7 +371,7 @@ class SocialAndMediaRepository(
             defaultContentType = "image/jpeg"
         )
         return uploaded.getOrElse {
-            VerificationAnalyzer.compactImageDataUrl(clean, maxDim = 480, maxRawBytes = 40_000)
+            MediaImageHelper.compactImageDataUrl(clean, maxDim = 480, maxRawBytes = 40_000)
         }
     }
 
@@ -801,11 +877,17 @@ class SocialAndMediaRepository(
             val videoRef = db.collection("publicProfiles").document(uid).collection("videos").document()
             docPath = videoRef.path
             withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                val videoUrl = cloudStorage.uploadFile(
-                    file = prepared.localCachedFile,
-                    remotePath = "videos/$uid/${videoRef.id}.mp4",
-                    contentType = prepared.mimeType
-                ).getOrThrow()
+                val resolvedVideo = resolveVideoForFirestoreOrCloud(
+                    prepared = prepared,
+                    remotePath = "videos/$uid/${videoRef.id}.mp4"
+                )
+                if (resolvedVideo.chunks.isNotEmpty()) {
+                    uploadChunksToSubcollection(
+                        parentCollection = profileVideoChunksRef(uid, videoRef.id),
+                        ownerUid = uid,
+                        chunks = resolvedVideo.chunks
+                    )
+                }
 
                 val thumbUrl = resolveThumbnailForFirestoreOrCloud(
                     rawThumbnail = prepared.thumbnailDataUrl,
@@ -815,13 +897,15 @@ class SocialAndMediaRepository(
                 val payload = mutableMapOf<String, Any>(
                     "userId" to uid,
                     "caption" to caption.trim().take(300),
-                    "mediaDataUrl" to videoUrl,
                     "mediaMimeType" to prepared.mimeType.take(80),
                     "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
                     "mediaByteSize" to prepared.sizeBytes.coerceAtLeast(0L),
-                    "chunkCount" to 0L,
+                    "chunkCount" to resolvedVideo.chunks.size.toLong(),
                     "createdAt" to FieldValue.serverTimestamp()
                 )
+                if (!resolvedVideo.inlineMediaUrl.isNullOrBlank()) {
+                    payload["mediaDataUrl"] = resolvedVideo.inlineMediaUrl
+                }
                 if (!thumbUrl.isNullOrBlank() && thumbUrl.length <= 180_000) {
                     payload["thumbnailDataUrl"] = thumbUrl
                 }
@@ -912,18 +996,17 @@ class SocialAndMediaRepository(
             val storyRef = db.collection("stories").document()
             docPath = storyRef.path
             withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                val photoUrl = cloudStorage.ensureRemoteMediaUrl(
-                    rawDataUrlOrRemoteUrl = photoDataUrl,
+                val photoUrl = resolveImageForFirestoreOrCloud(
+                    rawImage = photoDataUrl,
                     remotePath = "stories/$uid/${storyRef.id}.jpg",
-                    defaultContentType = "image/jpeg"
-                ).getOrThrow()
+                    maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS
+                )
 
                 val expiresMs = System.currentTimeMillis() + 86_400_000L
                 val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
                 val payload = mutableMapOf<String, Any>(
                     "userId" to uid,
                     "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                    "authorVerified" to (authorProfile?.isProfileVerified == true),
                     "mediaType" to "PHOTO",
                     "mediaDataUrl" to photoUrl,
                     "caption" to caption.trim().take(300),
@@ -970,33 +1053,39 @@ class SocialAndMediaRepository(
             val storyRef = db.collection("stories").document()
             docPath = storyRef.path
             withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                val videoUrl = cloudStorage.uploadFile(
-                    file = prepared.localCachedFile,
-                    remotePath = "stories/$uid/${storyRef.id}.mp4",
-                    contentType = prepared.mimeType
-                ).getOrThrow()
+                val resolvedVideo = resolveVideoForFirestoreOrCloud(
+                    prepared = prepared,
+                    remotePath = "stories/$uid/${storyRef.id}.mp4"
+                )
 
                 val thumbUrl = resolveThumbnailForFirestoreOrCloud(
                     rawThumbnail = prepared.thumbnailDataUrl,
                     remotePath = "stories/$uid/${storyRef.id}_thumb.jpg"
                 )
 
+                if (resolvedVideo.chunks.isNotEmpty()) {
+                    uploadChunksToSubcollection(
+                        parentCollection = storyChunksRef(storyRef.id),
+                        ownerUid = uid,
+                        chunks = resolvedVideo.chunks
+                    )
+                }
+
                 val expiresMs = System.currentTimeMillis() + 86_400_000L
                 val expiresTimestamp = Timestamp(java.util.Date(expiresMs))
                 val payload = mutableMapOf<String, Any>(
                     "userId" to uid,
                     "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                    "authorVerified" to (authorProfile?.isProfileVerified == true),
                     "mediaType" to "VIDEO",
-                    "mediaDataUrl" to videoUrl,
                     "caption" to caption.trim().take(300),
                     "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
-                    "chunkCount" to 0L,
+                    "chunkCount" to resolvedVideo.chunks.size.toLong(),
                     "viewerUids" to listOf(uid),
                     "expiresAt" to expiresTimestamp,
                     "expiresAtMs" to expiresMs,
                     "createdAt" to FieldValue.serverTimestamp()
                 )
+                resolvedVideo.inlineMediaUrl?.let { payload["mediaDataUrl"] = it }
                 val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
                 if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
                     payload["authorPhoto"] = authorPhoto
@@ -1140,7 +1229,7 @@ class SocialAndMediaRepository(
                             rawPhoto.take(2048)
                         } else {
                             withContext(Dispatchers.Default) {
-                                VerificationAnalyzer.compactImageDataUrl(
+                                MediaImageHelper.compactImageDataUrl(
                                     rawUrl = rawPhoto,
                                     maxDim = perItemMaxDim,
                                     maxRawBytes = perItemMaxBytes
@@ -1155,7 +1244,7 @@ class SocialAndMediaRepository(
                                 safeMediaUrl.take(2048)
                             } else if (safeMediaUrl.startsWith("data:image")) {
                                 withContext(Dispatchers.Default) {
-                                    VerificationAnalyzer.compactImageDataUrl(safeMediaUrl, maxDim = 420, maxRawBytes = 35_000).orEmpty()
+                                    MediaImageHelper.compactImageDataUrl(safeMediaUrl, maxDim = 420, maxRawBytes = 35_000).orEmpty()
                                 }
                             } else ""
                         }
@@ -1271,11 +1360,17 @@ class SocialAndMediaRepository(
             val postRef = db.collection("videoPosts").document()
             docPath = postRef.path
             withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS) {
-                val videoUrl = cloudStorage.uploadFile(
-                    file = prepared.localCachedFile,
-                    remotePath = "reels/$uid/${postRef.id}.mp4",
-                    contentType = prepared.mimeType
-                ).getOrThrow()
+                val resolvedVideo = resolveVideoForFirestoreOrCloud(
+                    prepared = prepared,
+                    remotePath = "reels/$uid/${postRef.id}.mp4"
+                )
+                if (resolvedVideo.chunks.isNotEmpty()) {
+                    uploadChunksToSubcollection(
+                        parentCollection = videoPostChunksRef(postRef.id),
+                        ownerUid = uid,
+                        chunks = resolvedVideo.chunks
+                    )
+                }
 
                 val thumbUrl = resolveThumbnailForFirestoreOrCloud(
                     rawThumbnail = prepared.thumbnailDataUrl,
@@ -1285,16 +1380,17 @@ class SocialAndMediaRepository(
                 val payload = mutableMapOf<String, Any>(
                     "userId" to uid,
                     "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                    "authorVerified" to (authorProfile?.isProfileVerified == true),
                     "caption" to caption.trim().take(300),
-                    "mediaDataUrl" to videoUrl,
                     "mediaMimeType" to prepared.mimeType.take(80),
                     "mediaDurationSec" to prepared.durationSec.coerceAtLeast(1L),
                     "mediaByteSize" to prepared.sizeBytes.coerceAtLeast(0L),
-                    "chunkCount" to 0L,
+                    "chunkCount" to resolvedVideo.chunks.size.toLong(),
                     "likedByUids" to emptyList<String>(),
                     "createdAt" to FieldValue.serverTimestamp()
                 )
+                if (!resolvedVideo.inlineMediaUrl.isNullOrBlank()) {
+                    payload["mediaDataUrl"] = resolvedVideo.inlineMediaUrl
+                }
                 val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
                 if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
                     payload["authorPhoto"] = authorPhoto
@@ -1448,7 +1544,6 @@ class SocialAndMediaRepository(
                 "postId" to postId,
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "text" to cleanText,
                 "createdAt" to FieldValue.serverTimestamp()
             )
@@ -1520,7 +1615,6 @@ class SocialAndMediaRepository(
                 val payload = mutableMapOf<String, Any>(
                     "userId" to uid,
                     "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                    "authorVerified" to (authorProfile?.isProfileVerified == true),
                     "mediaType" to mediaType,
                     "caption" to cleanCaption,
                     "likedByUids" to emptyList<String>(),
@@ -1539,39 +1633,63 @@ class SocialAndMediaRepository(
                     payload["authorCity"] = authorProfile!!.cityLabel.take(80)
                 }
                 if (preparedVideo != null) {
-                    val videoUrl = cloudStorage.uploadFile(
-                        file = preparedVideo.localCachedFile,
-                        remotePath = "feed_posts/$uid/$postId.mp4",
-                        contentType = preparedVideo.mimeType
-                    ).getOrThrow()
+                    val resolvedVideo = resolveVideoForFirestoreOrCloud(
+                        prepared = preparedVideo,
+                        remotePath = "feed_posts/$uid/$postId.mp4"
+                    )
+                    if (resolvedVideo.chunks.isNotEmpty()) {
+                        uploadChunksToSubcollection(
+                            parentCollection = feedPostChunksRef(postId),
+                            ownerUid = uid,
+                            chunks = resolvedVideo.chunks
+                        )
+                    }
 
                     val thumbUrl = resolveThumbnailForFirestoreOrCloud(
                         rawThumbnail = preparedVideo.thumbnailDataUrl,
                         remotePath = "feed_posts/$uid/${postId}_thumb.jpg"
                     )
 
-                    payload["mediaDataUrl"] = videoUrl
+                    if (!resolvedVideo.inlineMediaUrl.isNullOrBlank()) {
+                        payload["mediaDataUrl"] = resolvedVideo.inlineMediaUrl
+                    }
                     payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
                     payload["mediaDurationSec"] = preparedVideo.durationSec.coerceAtLeast(1L)
                     payload["mediaByteSize"] = preparedVideo.sizeBytes.coerceAtLeast(0L)
-                    payload["chunkCount"] = 0L
+                    payload["chunkCount"] = resolvedVideo.chunks.size.toLong()
                     if (!thumbUrl.isNullOrBlank() && thumbUrl.length <= 180_000) {
                         payload["thumbnailDataUrl"] = thumbUrl
                     }
                 } else if (rawPhotos.isNotEmpty()) {
+                    val perPhotoMaxRawBytes = if (rawPhotos.size == 1) {
+                        580_000
+                    } else {
+                        (480_000 / rawPhotos.size).coerceIn(55_000, 118_000)
+                    }
+                    val perPhotoMaxChars = if (rawPhotos.size == 1) {
+                        CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS
+                    } else {
+                        CloudMediaStorageService.MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS
+                    }
                     val uploadedUrls = coroutineScope {
                         rawPhotos.mapIndexed { idx, rawPhoto ->
                             async(Dispatchers.IO) {
-                                cloudStorage.ensureRemoteMediaUrl(
-                                    rawDataUrlOrRemoteUrl = rawPhoto,
+                                resolveImageForFirestoreOrCloud(
+                                    rawImage = rawPhoto,
                                     remotePath = "feed_posts/$uid/${postId}_$idx.jpg",
-                                    defaultContentType = "image/jpeg"
-                                ).getOrThrow()
+                                    maxDim = if (rawPhotos.size == 1) 1280 else 860,
+                                    maxRawBytes = perPhotoMaxRawBytes,
+                                    maxDataUrlChars = perPhotoMaxChars
+                                )
                             }
                         }.awaitAll()
                     }
-                    payload["mediaDataUrl"] = uploadedUrls.first()
-                    payload["mediaUrls"] = if (uploadedUrls.size > 1) uploadedUrls else emptyList<String>()
+                    if (uploadedUrls.size == 1) {
+                        payload["mediaDataUrl"] = uploadedUrls.first()
+                        payload["mediaUrls"] = emptyList<String>()
+                    } else {
+                        payload["mediaUrls"] = uploadedUrls
+                    }
                     payload["chunkCount"] = 0L
                 }
                 postRef.set(payload).await()
@@ -1647,7 +1765,6 @@ class SocialAndMediaRepository(
                 "postId" to postId,
                 "userId" to uid,
                 "authorName" to (authorProfile?.displayName ?: fallbackName ?: "Kindred Member").take(40),
-                "authorVerified" to (authorProfile?.isProfileVerified == true),
                 "text" to cleanText,
                 "likedByUids" to emptyList<String>(),
                 "createdAt" to FieldValue.serverTimestamp()
@@ -1824,12 +1941,10 @@ class SocialAndMediaRepository(
             runCatching {
                 val favs = db.collection("users").document(uid).collection("favorites").get().await()
                 val tokens = db.collection("users").document(uid).collection("fcmTokens").get().await()
-                val verifs = db.collection("users").document(uid).collection("verifications").get().await()
                 val vids = db.collection("publicProfiles").document(uid).collection("videos").get().await()
                 val batch = db.batch()
                 favs.documents.forEach { batch.delete(it.reference) }
                 tokens.documents.forEach { batch.delete(it.reference) }
-                verifs.documents.forEach { batch.delete(it.reference) }
                 vids.documents.forEach { batch.delete(it.reference) }
                 batch.commit().await()
             }

@@ -38,8 +38,7 @@ class HomeFeedReelsUiTest {
             userId = "user_2",
             displayName = "Elena Vance",
             cityLabel = "London",
-            country = "United Kingdom",
-            verificationStatus = "VERIFIED"
+            country = "United Kingdom"
         )
 
         val picturePost = FeedPost(

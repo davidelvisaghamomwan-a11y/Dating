@@ -60,7 +60,6 @@ class SocialConversionUiTest {
                 actorUid = follower.userId,
                 actorName = follower.displayName,
                 actorPhoto = null,
-                actorVerified = false,
                 follow = FollowRecord(
                     id = "f1",
                     followerUid = follower.userId,
@@ -74,7 +73,6 @@ class SocialConversionUiTest {
                 actorUid = liker.userId,
                 actorName = liker.displayName,
                 actorPhoto = null,
-                actorVerified = true,
                 post = myPost
             ),
             SocialActivityItem.PostComment(
@@ -83,7 +81,6 @@ class SocialConversionUiTest {
                 actorUid = liker.userId,
                 actorName = liker.displayName,
                 actorPhoto = null,
-                actorVerified = true,
                 post = myPost,
                 comment = FeedComment(id = "c1", userId = liker.userId, authorName = liker.displayName, text = "Great shot!")
             )

@@ -22,10 +22,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -223,7 +223,7 @@ private fun LocationRequirementRow(
             ) {
                 if (satisfied) {
                     Icon(
-                        imageVector = Icons.Filled.VerifiedUser,
+                        imageVector = Icons.Filled.CheckCircle,
                         contentDescription = null,
                         tint = EmeraldMint,
                         modifier = Modifier.size(13.dp)

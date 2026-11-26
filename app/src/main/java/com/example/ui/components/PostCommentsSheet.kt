@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -128,25 +127,11 @@ fun PostCommentsSheet(
                         initialsFontSizeSp = 13
                     )
                     Column {
-                        val isPostAuthorVerified = profilesByUid[post.userId]?.isProfileVerified ?: post.authorVerified
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = post.authorName.ifBlank { "Author" },
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (isPostAuthorVerified) {
-                                Icon(
-                                    imageVector = Icons.Filled.Verified,
-                                    contentDescription = "Verified",
-                                    tint = Color(0xFF0095F6),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-                        }
+                        Text(
+                            text = post.authorName.ifBlank { "Author" },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
                         Text(
                             text = post.caption,
                             style = MaterialTheme.typography.bodySmall
@@ -210,7 +195,6 @@ fun PostCommentsSheet(
                                     initialsFontSizeSp = 12
                                 )
                                 Column {
-                                    val isCommenterVerified = profilesByUid[comment.userId]?.isProfileVerified ?: comment.authorVerified
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -220,14 +204,6 @@ fun PostCommentsSheet(
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        if (isCommenterVerified) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Verified,
-                                                contentDescription = "Verified commenter",
-                                                tint = Color(0xFF0095F6),
-                                                modifier = Modifier.size(13.dp)
-                                            )
-                                        }
                                         Text(
                                             text = timeStr,
                                             style = MaterialTheme.typography.labelSmall,

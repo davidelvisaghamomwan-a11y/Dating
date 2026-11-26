@@ -79,7 +79,7 @@ import com.example.model.StoryHighlight
 import com.example.model.StoryItem
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -200,7 +200,7 @@ fun StoryHighlightsSection(
                             ) {
                                 value = if (highlight.coverUrl.startsWith("data:image", ignoreCase = true)) {
                                     withContext(Dispatchers.Default) {
-                                        VerificationAnalyzer.decodeBase64DataUrl(highlight.coverUrl)
+                                        MediaImageHelper.decodeBase64DataUrl(highlight.coverUrl)
                                     }
                                 } else {
                                     null
@@ -524,7 +524,7 @@ fun CreateHighlightDialog(
                             ) {
                                 value = if (previewSource != null && previewSource.startsWith("data:image", ignoreCase = true)) {
                                     withContext(Dispatchers.Default) {
-                                        VerificationAnalyzer.decodeBase64DataUrl(previewSource)
+                                        MediaImageHelper.decodeBase64DataUrl(previewSource)
                                     }
                                 } else {
                                     null
@@ -667,7 +667,7 @@ fun HighlightViewerDialog(
             ) {
                 value = if (displayImageSource != null && displayImageSource.startsWith("data:image", ignoreCase = true)) {
                     withContext(Dispatchers.Default) {
-                        VerificationAnalyzer.decodeBase64DataUrl(displayImageSource)
+                        MediaImageHelper.decodeBase64DataUrl(displayImageSource)
                     }
                 } else {
                     null

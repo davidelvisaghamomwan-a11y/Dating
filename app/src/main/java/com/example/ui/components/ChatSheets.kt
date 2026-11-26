@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -76,8 +75,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.example.ai.AiIcebreakerService
-import com.example.ai.IcebreakerAiUiState
 import com.example.communication.GifCatalog
 import com.example.communication.KindredGifReaction
 import com.example.model.ChatMessage
@@ -87,157 +84,6 @@ import com.example.ui.theme.CoralRose
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.delay
 import java.io.File
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun IcebreakerCoachSheetContent(
-    myProfile: PublicProfile?,
-    partnerProfile: PublicProfile?,
-    aiState: IcebreakerAiUiState,
-    onGenerateAi: (tone: String) -> Unit,
-    onSendIcebreaker: (String) -> Unit,
-    onInsertIntoDraft: (String) -> Unit
-) {
-    val tones = listOf("Balanced", "Playful", "Curious", "Friendly")
-    var selectedTone by remember { mutableStateOf("Balanced") }
-    val localSuggestions = remember(myProfile, partnerProfile) {
-        AiIcebreakerService.buildProfileBasedOpeners(myProfile, partnerProfile)
-    }
-
-    val displayedSuggestions = when (aiState) {
-        is IcebreakerAiUiState.Success -> aiState.suggestions
-        else -> localSuggestions
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .padding(bottom = 24.dp)
-            .testTag("icebreaker_coach_sheet"),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Icebreakers for ${partnerProfile?.displayName ?: "Member"}",
-                    style = MaterialTheme.typography.titleLarge
-                )
-                Text(
-                    text = "Tailored to shared interests, bio details & city.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Button(
-                onClick = { onGenerateAi(selectedTone) },
-                enabled = aiState !is IcebreakerAiUiState.Loading,
-                colors = ButtonDefaults.buttonColors(containerColor = CoralRose),
-                modifier = Modifier.testTag("generate_ai_openers_button")
-            ) {
-                if (aiState is IcebreakerAiUiState.Loading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
-                } else {
-                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                }
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("AI Refresh")
-            }
-        }
-
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            tones.forEach { tone ->
-                FilterChip(
-                    selected = selectedTone == tone,
-                    onClick = { selectedTone = tone },
-                    label = { Text(tone) }
-                )
-            }
-        }
-
-        if (aiState is IcebreakerAiUiState.Error) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
-            ) {
-                Text(
-                    text = "${aiState.message} Showing profile-matched prompts instead.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(10.dp)
-                )
-            }
-        }
-
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.height(260.dp)
-        ) {
-            itemsIndexed(displayedSuggestions) { index, suggestion ->
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("icebreaker_suggestion_$index")
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(shape = CircleShape, color = ChampagneGold.copy(alpha = 0.18f)) {
-                                Text(
-                                    text = suggestion.tone,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = ChampagneGold,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                            Text(
-                                text = suggestion.reason,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            text = suggestion.prompt,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(onClick = { onInsertIntoDraft(suggestion.prompt) }) {
-                                Text("Edit")
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Button(
-                                onClick = { onSendIcebreaker(suggestion.prompt) },
-                                colors = ButtonDefaults.buttonColors(containerColor = CoralRose)
-                            ) {
-                                Text("Send")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 internal fun GifPickerSheetContent(

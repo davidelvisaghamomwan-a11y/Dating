@@ -146,7 +146,6 @@ class GeoHashMatchingService(
         minAge: Int,
         maxAge: Int,
         interestedIn: String,
-        verifiedOnly: Boolean,
         myInterests: List<String>,
         excludedUserIds: Set<String>,
         blockedUserIds: Set<String> = emptySet()
@@ -194,7 +193,6 @@ class GeoHashMatchingService(
                 minAge = minAge,
                 maxAge = maxAge,
                 interestedIn = interestedIn,
-                verifiedOnly = verifiedOnly,
                 myInterests = myInterests,
                 excludedUserIds = excludedUserIds,
                 blockedUserIds = blockedUserIds
@@ -265,7 +263,6 @@ class GeoHashMatchingService(
         minAge: Int,
         maxAge: Int,
         interestedIn: String,
-        verifiedOnly: Boolean,
         myInterests: List<String>,
         excludedUserIds: Set<String>,
         blockedUserIds: Set<String> = emptySet()
@@ -279,7 +276,6 @@ class GeoHashMatchingService(
         minAge = minAge,
         maxAge = maxAge,
         interestedIn = interestedIn,
-        verifiedOnly = verifiedOnly,
         myInterests = myInterests,
         excludedUserIds = excludedUserIds,
         blockedUserIds = blockedUserIds
@@ -296,7 +292,6 @@ class GeoHashMatchingService(
             minAge: Int,
             maxAge: Int,
             interestedIn: String,
-            verifiedOnly: Boolean,
             myInterests: List<String>,
             excludedUserIds: Set<String>,
             blockedUserIds: Set<String> = emptySet()
@@ -311,7 +306,6 @@ class GeoHashMatchingService(
                 minAge = minAge,
                 maxAge = maxAge,
                 interestedIn = interestedIn,
-                verifiedOnly = verifiedOnly,
                 myInterests = myInterests,
                 excludedUserIds = excludedUserIds,
                 blockedUserIds = blockedUserIds

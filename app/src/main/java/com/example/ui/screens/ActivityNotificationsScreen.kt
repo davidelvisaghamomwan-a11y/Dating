@@ -29,7 +29,6 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.ModeComment
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,8 +68,7 @@ import com.example.model.SocialActivityItem
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
-import com.example.ui.theme.EmeraldMint
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 
 private val InstagramBlue = Color(0xFF0095F6)
 
@@ -349,24 +347,12 @@ private fun ActivityNotificationRow(
                 }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = summaryText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                if (item.actorVerified) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = Icons.Rounded.Verified,
-                        contentDescription = "Verified",
-                        tint = EmeraldMint,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-            }
+            Text(
+                text = summaryText,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
 
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -455,7 +441,7 @@ private fun MediaThumbPreview(
     fallbackText: String
 ) {
     val bmp = remember(thumbUrl) {
-        VerificationAnalyzer.decodeBase64DataUrl(thumbUrl)
+        MediaImageHelper.decodeBase64DataUrl(thumbUrl)
     }
     Box(
         modifier = Modifier

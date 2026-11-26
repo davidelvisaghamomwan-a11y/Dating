@@ -9,20 +9,18 @@ import com.example.model.CallSession
 import com.example.model.CallVideoFrame
 import com.example.model.ChatMessage
 import com.example.model.KindredConstants
-import com.example.model.LivenessAnalysisResult
 import com.example.model.MatchRecord
 import com.example.model.PrivateUser
 import com.example.model.PublicProfile
 import com.example.model.SwipeRecord
 import com.example.model.TypingStatus
 import com.example.model.UserPresence
-import com.example.model.VerificationChallenge
-import com.example.model.VerificationRecord
 import com.example.model.VisibilityLevel
 import com.example.notifications.KindredNotificationHelper
 import com.example.service.GeoHashMatchingService
 import com.example.util.GeoHashUtils
 import com.example.util.LocationAndGeoHelper
+import com.example.util.MediaImageHelper
 import com.example.util.PreparedVideoUpload
 import com.example.util.VideoClipHelper
 import com.google.firebase.Firebase
@@ -71,15 +69,33 @@ class KindredRepository(
             .distinct()
             .take(KindredConstants.MAX_PROFILE_PHOTOS)
 
+        val perPhotoMaxBytes = (420_000 / cleanedInput.size.coerceAtLeast(1)).coerceIn(32_000, 115_000)
         return cleanedInput.mapIndexed { index, photo ->
             if (CloudMediaStorageService.isRemoteHttpUrl(photo)) {
                 photo.take(2048)
             } else {
-                cloudStorage.ensureRemoteMediaUrl(
+                val uploaded = cloudStorage.ensureRemoteMediaUrl(
                     rawDataUrlOrRemoteUrl = photo,
                     remotePath = "profile_photos/$uid/photo_${index}_${abs(photo.hashCode())}.jpg",
                     defaultContentType = "image/jpeg"
-                ).getOrThrow()
+                )
+                uploaded.getOrElse { err ->
+                    if (CloudMediaStorageService.isStorageUnavailableError(err)) {
+                        Log.w(
+                            CloudMediaStorageService.TAG,
+                            "Storage unavailable for profile photo $index; falling back to inline Firestore photo",
+                            err
+                        )
+                        MediaImageHelper.compactImageDataUrl(
+                            rawUrl = photo,
+                            maxDim = 640,
+                            maxRawBytes = perPhotoMaxBytes,
+                            maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS
+                        ) ?: ""
+                    } else {
+                        throw err
+                    }
+                }
             }
         }.filter { it.isNotBlank() && (CloudMediaStorageService.isRemoteHttpUrl(it) || it.length <= 180_000) }
     }
@@ -273,19 +289,6 @@ class KindredRepository(
                     .catch { handleStreamError(it, OperationType.LIST, path, viewerUserId) }
             )
         }
-    }
-
-    fun observeVerifications(userId: String): Flow<List<VerificationRecord>> = flow {
-        val path = "users/$userId/verifications"
-        emitAll(
-            db.collection("users").document(userId).collection("verifications")
-                .snapshots()
-                .map { snap ->
-                    snap.toObjects(VerificationRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                        .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
-                }
-                .catch { handleStreamError(it, OperationType.LIST, path, userId) }
-        )
     }
 
     fun observeUserPresence(targetUserId: String, viewerUserId: String): Flow<UserPresence?> {
@@ -499,7 +502,6 @@ class KindredRepository(
         minAgePref: Int,
         maxAgePref: Int,
         maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean,
         dateOfBirth: String = "",
         profileCompleted: Boolean = true
     ): Result<Unit> {
@@ -545,143 +547,131 @@ class KindredRepository(
                 val batch = db.batch()
                 currentPath = privateRef.path
 
-            if (privateExists) {
-                val updatePrivate = mutableMapOf<String, Any>(
-                    "interestedIn" to interestedIn,
-                    "minAgePref" to safeMinAge.toLong(),
-                    "maxAgePref" to safeMaxAge.toLong(),
-                    "maxDistanceKm" to safeDistance.toLong(),
-                    "verifiedOnlyFilter" to verifiedOnlyFilter,
-                    "exactLatitude" to latitude.coerceIn(-90.0, 90.0),
-                    "exactLongitude" to longitude.coerceIn(-180.0, 180.0),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (!email.isNullOrBlank()) {
-                    updatePrivate["email"] = email.take(200)
+                if (privateExists) {
+                    val updatePrivate = mutableMapOf<String, Any>(
+                        "interestedIn" to interestedIn,
+                        "minAgePref" to safeMinAge.toLong(),
+                        "maxAgePref" to safeMaxAge.toLong(),
+                        "maxDistanceKm" to safeDistance.toLong(),
+                        "exactLatitude" to latitude.coerceIn(-90.0, 90.0),
+                        "exactLongitude" to longitude.coerceIn(-180.0, 180.0),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    if (!email.isNullOrBlank()) {
+                        updatePrivate["email"] = email.take(200)
+                    }
+                    batch.update(privateRef, updatePrivate)
+                } else {
+                    val createPrivate = mutableMapOf<String, Any>(
+                        "userId" to uid,
+                        "interestedIn" to interestedIn,
+                        "minAgePref" to safeMinAge.toLong(),
+                        "maxAgePref" to safeMaxAge.toLong(),
+                        "maxDistanceKm" to safeDistance.toLong(),
+                        "exactLatitude" to latitude.coerceIn(-90.0, 90.0),
+                        "exactLongitude" to longitude.coerceIn(-180.0, 180.0),
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    if (!email.isNullOrBlank()) {
+                        createPrivate["email"] = email.take(200)
+                    }
+                    batch.set(privateRef, createPrivate)
                 }
-                batch.update(privateRef, updatePrivate)
-            } else {
-                val createPrivate = mutableMapOf<String, Any>(
-                    "userId" to uid,
-                    "interestedIn" to interestedIn,
-                    "minAgePref" to safeMinAge.toLong(),
-                    "maxAgePref" to safeMaxAge.toLong(),
-                    "maxDistanceKm" to safeDistance.toLong(),
-                    "verifiedOnlyFilter" to verifiedOnlyFilter,
-                    "exactLatitude" to latitude.coerceIn(-90.0, 90.0),
-                    "exactLongitude" to longitude.coerceIn(-180.0, 180.0),
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                if (!email.isNullOrBlank()) {
-                    createPrivate["email"] = email.take(200)
-                }
-                batch.set(privateRef, createPrivate)
-            }
 
-            val photosChanged = existingPublic != null && existingPublic.allProfilePhotos() != cleanPhotos
-            val keepVerifiedStatus = existingPublic != null && !photosChanged && existingPublic.isProfileVerified
+                val cleanDob = dateOfBirth.trim().take(16)
+                val resolvedDob = if (cleanDob.isNotBlank()) cleanDob else existingPublic?.dateOfBirth.orEmpty()
 
-            val cleanDob = dateOfBirth.trim().take(16)
-            val resolvedDob = if (cleanDob.isNotBlank()) cleanDob else existingPublic?.dateOfBirth.orEmpty()
+                currentPath = publicRef.path
+                if (publicExists) {
+                    val updatePublic = mutableMapOf<String, Any>(
+                        "displayName" to cleanName,
+                        "age" to safeAge.toLong(),
+                        "gender" to gender,
+                        "bio" to cleanBio,
+                        "cityLabel" to cleanCity,
+                        "country" to cleanCountry,
+                        "coarseLatitude" to coarseLat,
+                        "coarseLongitude" to coarseLng,
+                        "geohash" to geohash,
+                        "geohash3" to geohash3,
+                        "geohash4" to geohash4,
+                        "interests" to cleanInterests,
+                        "profilePhotos" to cleanPhotos,
+                        "avatarSeed" to uid.take(40),
+                        "discoverable" to discoverable,
+                        "profileCompleted" to profileCompleted,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    if (resolvedDob.isNotBlank()) {
+                        updatePublic["dateOfBirth"] = resolvedDob
+                    }
+                    if (primaryPhoto != null) {
+                        updatePublic["photoDataUrl"] = primaryPhoto
+                    } else if (existingPublic?.photoDataUrl != null) {
+                        updatePublic["photoDataUrl"] = FieldValue.delete()
+                    }
+                    batch.update(publicRef, updatePublic)
+                } else {
+                    val createPublic = mutableMapOf<String, Any>(
+                        "userId" to uid,
+                        "displayName" to cleanName,
+                        "age" to safeAge.toLong(),
+                        "gender" to gender,
+                        "bio" to cleanBio,
+                        "cityLabel" to cleanCity,
+                        "country" to cleanCountry,
+                        "coarseLatitude" to coarseLat,
+                        "coarseLongitude" to coarseLng,
+                        "geohash" to geohash,
+                        "geohash3" to geohash3,
+                        "geohash4" to geohash4,
+                        "interests" to cleanInterests,
+                        "profilePhotos" to cleanPhotos,
+                        "avatarSeed" to uid.take(40),
+                        "discoverable" to discoverable,
+                        "profileCompleted" to profileCompleted,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    if (resolvedDob.isNotBlank()) {
+                        createPublic["dateOfBirth"] = resolvedDob
+                    }
+                    if (primaryPhoto != null) {
+                        createPublic["photoDataUrl"] = primaryPhoto
+                    }
+                    batch.set(publicRef, createPublic)
+                }
 
-            currentPath = publicRef.path
-            if (publicExists) {
-                val updatePublic = mutableMapOf<String, Any>(
-                    "displayName" to cleanName,
-                    "age" to safeAge.toLong(),
-                    "gender" to gender,
-                    "bio" to cleanBio,
-                    "cityLabel" to cleanCity,
-                    "country" to cleanCountry,
-                    "coarseLatitude" to coarseLat,
-                    "coarseLongitude" to coarseLng,
-                    "geohash" to geohash,
-                    "geohash3" to geohash3,
-                    "geohash4" to geohash4,
-                    "interests" to cleanInterests,
-                    "profilePhotos" to cleanPhotos,
-                    "avatarSeed" to uid.take(40),
-                    "discoverable" to discoverable,
-                    "profileCompleted" to profileCompleted,
-                    "updatedAt" to FieldValue.serverTimestamp()
+                // Sync /geoCells/{cellId}/profiles/{uid} spatial partition atomically
+                val geoProfilePayload = buildGeoCellPayload(
+                    uid = uid,
+                    displayName = cleanName,
+                    age = safeAge.toLong(),
+                    gender = gender,
+                    bio = cleanBio,
+                    cityLabel = cleanCity,
+                    country = cleanCountry,
+                    coarseLat = coarseLat,
+                    coarseLng = coarseLng,
+                    interests = cleanInterests,
+                    photoDataUrl = primaryPhoto,
+                    profilePhotos = cleanPhotos,
+                    discoverable = discoverable,
+                    dateOfBirth = resolvedDob,
+                    profileCompleted = profileCompleted,
+                    existingPublic = existingPublic
                 )
-                if (resolvedDob.isNotBlank()) {
-                    updatePublic["dateOfBirth"] = resolvedDob
-                }
-                if (primaryPhoto != null) {
-                    updatePublic["photoDataUrl"] = primaryPhoto
-                } else if (existingPublic?.photoDataUrl != null) {
-                    updatePublic["photoDataUrl"] = FieldValue.delete()
-                }
-                if (photosChanged && existingPublic?.isProfileVerified == true) {
-                    updatePublic["verificationStatus"] = "UNVERIFIED"
-                    updatePublic["verificationScore"] = 30L
-                }
-                batch.update(publicRef, updatePublic)
-            } else {
-                val createPublic = mutableMapOf<String, Any>(
-                    "userId" to uid,
-                    "displayName" to cleanName,
-                    "age" to safeAge.toLong(),
-                    "gender" to gender,
-                    "bio" to cleanBio,
-                    "cityLabel" to cleanCity,
-                    "country" to cleanCountry,
-                    "coarseLatitude" to coarseLat,
-                    "coarseLongitude" to coarseLng,
-                    "geohash" to geohash,
-                    "geohash3" to geohash3,
-                    "geohash4" to geohash4,
-                    "interests" to cleanInterests,
-                    "profilePhotos" to cleanPhotos,
-                    "avatarSeed" to uid.take(40),
-                    "discoverable" to discoverable,
-                    "profileCompleted" to profileCompleted,
-                    "verificationStatus" to "UNVERIFIED",
-                    "verificationScore" to 30L,
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
+                geoService.stageGeoCellIndexMutations(
+                    batch = batch,
+                    userId = uid,
+                    geohash = geohash,
+                    discoverable = discoverable,
+                    previousGeoHash3 = existingPublic?.geohash3,
+                    previousGeoHash4 = existingPublic?.geohash4,
+                    baseProfileFields = geoProfilePayload,
+                    createMissingCells = true
                 )
-                if (resolvedDob.isNotBlank()) {
-                    createPublic["dateOfBirth"] = resolvedDob
-                }
-                if (primaryPhoto != null) {
-                    createPublic["photoDataUrl"] = primaryPhoto
-                }
-                batch.set(publicRef, createPublic)
-            }
-
-            // Sync /geoCells/{cellId}/profiles/{uid} spatial partition atomically
-            val geoProfilePayload = buildGeoCellPayload(
-                uid = uid,
-                displayName = cleanName,
-                age = safeAge.toLong(),
-                gender = gender,
-                bio = cleanBio,
-                cityLabel = cleanCity,
-                country = cleanCountry,
-                coarseLat = coarseLat,
-                coarseLng = coarseLng,
-                interests = cleanInterests,
-                photoDataUrl = primaryPhoto,
-                profilePhotos = cleanPhotos,
-                discoverable = discoverable,
-                dateOfBirth = resolvedDob,
-                profileCompleted = profileCompleted,
-                existingPublic = existingPublic,
-                forceUnverified = photosChanged && existingPublic?.isProfileVerified == true
-            )
-            geoService.stageGeoCellIndexMutations(
-                batch = batch,
-                userId = uid,
-                geohash = geohash,
-                discoverable = discoverable,
-                previousGeoHash3 = existingPublic?.geohash3,
-                previousGeoHash4 = existingPublic?.geohash4,
-                baseProfileFields = geoProfilePayload,
-                createMissingCells = true
-            )
 
                 batch.commit().await()
                 Result.success(Unit)
@@ -702,8 +692,7 @@ class KindredRepository(
 
     /**
      * Focused update for the Edit Profile flow (bio, interests, and profile photos).
-     * Atomically updates /publicProfiles/{uid} and /geoCells/{cellId}/profiles/{uid},
-     * resetting verification status if a verified member modifies their photos.
+     * Atomically updates /publicProfiles/{uid} and /geoCells/{cellId}/profiles/{uid}.
      * Falls back to creating a baseline profile if the user has not saved a profile yet.
      */
     suspend fun updateProfileContent(
@@ -769,7 +758,6 @@ class KindredRepository(
                     minAgePref = 18,
                     maxAgePref = 45,
                     maxDistanceKm = 100,
-                    verifiedOnlyFilter = false,
                     dateOfBirth = dateOfBirth.orEmpty(),
                     profileCompleted = hasExplicitAge && !dateOfBirth.isNullOrBlank()
                 )
@@ -779,80 +767,73 @@ class KindredRepository(
                 val cleanPhotos = uploadProfilePhotosToCloud(uid, candidatePhotos)
                 val primaryPhoto = cleanPhotos.firstOrNull()
 
-            val nextName = displayName?.trim()?.take(40)?.takeIf { it.length >= 2 } ?: existingPublic.displayName
-            val nextGender = gender?.takeIf { it in KindredConstants.GENDER_OPTIONS } ?: existingPublic.gender
-            val nextAge = computedAge?.coerceIn(18, 99)?.toLong() ?: existingPublic.age
-            val nextDob = dateOfBirth?.trim()?.take(16)?.takeIf { it.isNotBlank() } ?: existingPublic.dateOfBirth
-            val nextCity = cityLabel?.trim()?.take(80)?.ifBlank { existingPublic.cityLabel } ?: existingPublic.cityLabel
-            val nextCountry = country?.trim()?.take(80) ?: existingPublic.country
-            val photosChanged = existingPublic.allProfilePhotos() != cleanPhotos
-            val resetVerification = photosChanged && existingPublic.isProfileVerified
+                val nextName = displayName?.trim()?.take(40)?.takeIf { it.length >= 2 } ?: existingPublic.displayName
+                val nextGender = gender?.takeIf { it in KindredConstants.GENDER_OPTIONS } ?: existingPublic.gender
+                val nextAge = computedAge?.coerceIn(18, 99)?.toLong() ?: existingPublic.age
+                val nextDob = dateOfBirth?.trim()?.take(16)?.takeIf { it.isNotBlank() } ?: existingPublic.dateOfBirth
+                val nextCity = cityLabel?.trim()?.take(80)?.ifBlank { existingPublic.cityLabel } ?: existingPublic.cityLabel
+                val nextCountry = country?.trim()?.take(80) ?: existingPublic.country
 
-            val updatePublic = mutableMapOf<String, Any>(
-                "displayName" to nextName,
-                "age" to nextAge,
-                "gender" to nextGender,
-                "bio" to cleanBio,
-                "cityLabel" to nextCity,
-                "country" to nextCountry,
-                "interests" to cleanInterests,
-                "profilePhotos" to cleanPhotos,
-                "profileCompleted" to true,
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            if (nextDob.isNotBlank()) {
-                updatePublic["dateOfBirth"] = nextDob
-            }
-            if (primaryPhoto != null) {
-                updatePublic["photoDataUrl"] = primaryPhoto
-            } else if (existingPublic.photoDataUrl != null) {
-                updatePublic["photoDataUrl"] = FieldValue.delete()
-            }
-            if (resetVerification) {
-                updatePublic["verificationStatus"] = "UNVERIFIED"
-                updatePublic["verificationScore"] = 30L
-            }
-
-            val geohash = existingPublic.geohash.ifBlank {
-                GeoHashUtils.encode(
-                    existingPublic.coarseLatitude,
-                    existingPublic.coarseLongitude,
-                    precision = 7
+                val updatePublic = mutableMapOf<String, Any>(
+                    "displayName" to nextName,
+                    "age" to nextAge,
+                    "gender" to nextGender,
+                    "bio" to cleanBio,
+                    "cityLabel" to nextCity,
+                    "country" to nextCountry,
+                    "interests" to cleanInterests,
+                    "profilePhotos" to cleanPhotos,
+                    "profileCompleted" to true,
+                    "updatedAt" to FieldValue.serverTimestamp()
                 )
-            }
+                if (nextDob.isNotBlank()) {
+                    updatePublic["dateOfBirth"] = nextDob
+                }
+                if (primaryPhoto != null) {
+                    updatePublic["photoDataUrl"] = primaryPhoto
+                } else if (existingPublic.photoDataUrl != null) {
+                    updatePublic["photoDataUrl"] = FieldValue.delete()
+                }
 
-            val batch = db.batch()
-            batch.update(publicRef, updatePublic)
+                val geohash = existingPublic.geohash.ifBlank {
+                    GeoHashUtils.encode(
+                        existingPublic.coarseLatitude,
+                        existingPublic.coarseLongitude,
+                        precision = 7
+                    )
+                }
 
-            val geoProfilePayload = buildGeoCellPayload(
-                uid = uid,
-                displayName = nextName,
-                age = nextAge,
-                gender = nextGender,
-                bio = cleanBio,
-                cityLabel = nextCity,
-                country = nextCountry,
-                coarseLat = existingPublic.coarseLatitude,
-                coarseLng = existingPublic.coarseLongitude,
-                interests = cleanInterests,
-                photoDataUrl = primaryPhoto,
-                profilePhotos = cleanPhotos,
-                discoverable = existingPublic.discoverable,
-                dateOfBirth = nextDob,
-                profileCompleted = true,
-                existingPublic = existingPublic,
-                forceUnverified = resetVerification
-            )
-            geoService.stageGeoCellIndexMutations(
-                batch = batch,
-                userId = uid,
-                geohash = geohash,
-                discoverable = existingPublic.discoverable,
-                previousGeoHash3 = existingPublic.geohash3,
-                previousGeoHash4 = existingPublic.geohash4,
-                baseProfileFields = geoProfilePayload,
-                createMissingCells = true
-            )
+                val batch = db.batch()
+                batch.update(publicRef, updatePublic)
+
+                val geoProfilePayload = buildGeoCellPayload(
+                    uid = uid,
+                    displayName = nextName,
+                    age = nextAge,
+                    gender = nextGender,
+                    bio = cleanBio,
+                    cityLabel = nextCity,
+                    country = nextCountry,
+                    coarseLat = existingPublic.coarseLatitude,
+                    coarseLng = existingPublic.coarseLongitude,
+                    interests = cleanInterests,
+                    photoDataUrl = primaryPhoto,
+                    profilePhotos = cleanPhotos,
+                    discoverable = existingPublic.discoverable,
+                    dateOfBirth = nextDob,
+                    profileCompleted = true,
+                    existingPublic = existingPublic
+                )
+                geoService.stageGeoCellIndexMutations(
+                    batch = batch,
+                    userId = uid,
+                    geohash = geohash,
+                    discoverable = existingPublic.discoverable,
+                    previousGeoHash3 = existingPublic.geohash3,
+                    previousGeoHash4 = existingPublic.geohash4,
+                    baseProfileFields = geoProfilePayload,
+                    createMissingCells = true
+                )
 
                 batch.commit().await()
                 Result.success(Unit)
@@ -875,8 +856,7 @@ class KindredRepository(
         interestedIn: String,
         minAgePref: Int,
         maxAgePref: Int,
-        maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean
+        maxDistanceKm: Int
     ): Result<Unit> {
         var docPath = "users"
         return try {
@@ -892,7 +872,6 @@ class KindredRepository(
                     "minAgePref" to safeMin.toLong(),
                     "maxAgePref" to safeMax.toLong(),
                     "maxDistanceKm" to safeDist.toLong(),
-                    "verifiedOnlyFilter" to verifiedOnlyFilter,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -906,7 +885,7 @@ class KindredRepository(
     }
 
     /**
-     * Persists dating preferences (interestedIn, age range, radius, verified-only) in /users/{uid}
+     * Persists dating preferences (interestedIn, age range, radius) in /users/{uid}
      * (creating the private user document if needed) and optionally updates gender & discoverable
      * visibility atomically across /publicProfiles/{uid} and /geoCells/{cellId}/profiles/{uid}.
      */
@@ -916,7 +895,6 @@ class KindredRepository(
         minAgePref: Int,
         maxAgePref: Int,
         maxDistanceKm: Int,
-        verifiedOnlyFilter: Boolean,
         myGender: String? = null,
         discoverable: Boolean? = null
     ): Result<Unit> {
@@ -946,7 +924,6 @@ class KindredRepository(
                     "minAgePref" to safeMin.toLong(),
                     "maxAgePref" to safeMax.toLong(),
                     "maxDistanceKm" to safeDist.toLong(),
-                    "verifiedOnlyFilter" to verifiedOnlyFilter,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
                 if (!email.isNullOrBlank()) {
@@ -960,7 +937,6 @@ class KindredRepository(
                     "minAgePref" to safeMin.toLong(),
                     "maxAgePref" to safeMax.toLong(),
                     "maxDistanceKm" to safeDist.toLong(),
-                    "verifiedOnlyFilter" to verifiedOnlyFilter,
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
@@ -1004,8 +980,7 @@ class KindredRepository(
                         photoDataUrl = existingPublic.photoDataUrl,
                         profilePhotos = existingPublic.profilePhotos,
                         discoverable = nextDiscoverable,
-                        existingPublic = existingPublic,
-                        forceUnverified = false
+                        existingPublic = existingPublic
                     )
                     geoService.stageGeoCellIndexMutations(
                         batch = batch,
@@ -1069,8 +1044,7 @@ class KindredRepository(
                 photoDataUrl = existingPublic.photoDataUrl,
                 profilePhotos = existingPublic.profilePhotos,
                 discoverable = discoverable,
-                existingPublic = existingPublic,
-                forceUnverified = false
+                existingPublic = existingPublic
             )
             geoService.stageGeoCellIndexMutations(
                 batch = batch,
@@ -1139,7 +1113,6 @@ class KindredRepository(
                     "minAgePref" to 20L,
                     "maxAgePref" to 45L,
                     "maxDistanceKm" to 100L,
-                    "verifiedOnlyFilter" to false,
                     "exactLatitude" to safeLat,
                     "exactLongitude" to safeLng,
                     "createdAt" to FieldValue.serverTimestamp(),
@@ -1180,8 +1153,7 @@ class KindredRepository(
                     photoDataUrl = existingPublic.photoDataUrl,
                     profilePhotos = existingPublic.profilePhotos,
                     discoverable = existingPublic.discoverable,
-                    existingPublic = existingPublic,
-                    forceUnverified = false
+                    existingPublic = existingPublic
                 )
                 geoService.stageGeoCellIndexMutations(
                     batch = batch,
@@ -1456,7 +1428,7 @@ class KindredRepository(
         replyToType: String? = null
     ): Result<Unit> {
         val allowedType = when (messageType) {
-            "ICEBREAKER", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL" -> messageType
+            "PHOTO", "VIDEO", "VOICE", "GIF", "CALL" -> messageType
             else -> "TEXT"
         }
         val cleanText = text.trim().take(1000)
@@ -1512,12 +1484,51 @@ class KindredRepository(
                     "createdAt" to FieldValue.serverTimestamp()
                 )
                 if (preparedVideo != null) {
-                    val videoUrl = cloudStorage.uploadFile(
+                    val uploadResult = cloudStorage.uploadFile(
                         file = preparedVideo.localCachedFile,
                         remotePath = "chat_media/$matchId/${msgRef.id}.mp4",
                         contentType = preparedVideo.mimeType
-                    ).getOrThrow()
-                    payload["mediaDataUrl"] = videoUrl
+                    )
+                    var videoChunkCount = 0L
+                    uploadResult.fold(
+                        onSuccess = { videoUrl ->
+                            payload["mediaDataUrl"] = videoUrl
+                        },
+                        onFailure = { err ->
+                            if (!CloudMediaStorageService.isStorageUnavailableError(err)) {
+                                throw err
+                            }
+                            Log.w(
+                                CloudMediaStorageService.TAG,
+                                "Storage unavailable for chat video $matchId/${msgRef.id}; using Firestore fallback",
+                                err
+                            )
+                            val inline = CloudMediaStorageService.readLocalFileAsDataUrl(
+                                file = preparedVideo.localCachedFile,
+                                mimeType = preparedVideo.mimeType
+                            )?.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
+                            if (inline != null) {
+                                payload["mediaDataUrl"] = inline
+                            } else {
+                                val chunks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    VideoClipHelper.streamFileIntoBase64Chunks(preparedVideo.localCachedFile)
+                                }
+                                if (chunks.isEmpty() || chunks.size > VideoClipHelper.MAX_CHUNKS) {
+                                    throw IllegalStateException(
+                                        "Video is too large for chat fallback (${chunks.size} chunks).",
+                                        err
+                                    )
+                                }
+                                socialRepo.uploadChunksToSubcollection(
+                                    parentCollection = socialRepo.messageMediaChunksRef(matchId, msgRef.id),
+                                    ownerUid = uid,
+                                    participantUids = sortedParticipants,
+                                    chunks = chunks
+                                )
+                                videoChunkCount = chunks.size.toLong()
+                            }
+                        }
+                    )
 
                     val rawThumb = preparedVideo.thumbnailDataUrl?.trim().orEmpty()
                     if (rawThumb.isNotBlank()) {
@@ -1529,7 +1540,7 @@ class KindredRepository(
                                 remotePath = "chat_media/$matchId/${msgRef.id}_thumb.jpg",
                                 defaultContentType = "image/jpeg"
                             ).getOrElse {
-                                rawThumb.takeIf { it.length <= 180_000 }.orEmpty()
+                                MediaImageHelper.compactImageDataUrl(rawThumb, maxDim = 480, maxRawBytes = 40_000).orEmpty()
                             }
                         }
                         if (thumbUrl.isNotBlank() && thumbUrl.length <= 180_000) {
@@ -1537,20 +1548,56 @@ class KindredRepository(
                         }
                     }
                     payload["mediaMimeType"] = preparedVideo.mimeType.take(80)
-                    payload["mediaChunkCount"] = 0L
+                    payload["mediaChunkCount"] = videoChunkCount
                     payload["mediaByteSize"] = preparedVideo.sizeBytes.coerceAtLeast(0L)
                 } else if (cleanMedia != null) {
                     val resolvedMedia = when (allowedType) {
-                        "VOICE" -> cloudStorage.ensureRemoteMediaUrl(
-                            rawDataUrlOrRemoteUrl = cleanMedia,
-                            remotePath = "chat_media/$matchId/${msgRef.id}.m4a",
-                            defaultContentType = "audio/mp4"
-                        ).getOrThrow()
-                        "PHOTO" -> cloudStorage.ensureRemoteMediaUrl(
-                            rawDataUrlOrRemoteUrl = cleanMedia,
-                            remotePath = "chat_media/$matchId/${msgRef.id}.jpg",
-                            defaultContentType = "image/jpeg"
-                        ).getOrThrow()
+                        "VOICE" -> {
+                            val uploaded = cloudStorage.ensureRemoteMediaUrl(
+                                rawDataUrlOrRemoteUrl = cleanMedia,
+                                remotePath = "chat_media/$matchId/${msgRef.id}.m4a",
+                                defaultContentType = "audio/mp4"
+                            )
+                            uploaded.getOrElse { err ->
+                                if (!CloudMediaStorageService.isStorageUnavailableError(err)) throw err
+                                Log.w(
+                                    CloudMediaStorageService.TAG,
+                                    "Storage unavailable for voice note; falling back to inline audio",
+                                    err
+                                )
+                                if (cleanMedia.startsWith("file://")) {
+                                    CloudMediaStorageService.readLocalFileAsDataUrl(
+                                        file = File(cleanMedia.removePrefix("file://")),
+                                        mimeType = "audio/mp4"
+                                    )?.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
+                                        ?: throw IllegalStateException("Voice recording exceeds Firestore fallback size limit.", err)
+                                } else {
+                                    cleanMedia.takeIf { it.length <= CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS }
+                                        ?: throw IllegalStateException("Voice recording exceeds Firestore fallback size limit.", err)
+                                }
+                            }
+                        }
+                        "PHOTO" -> {
+                            val uploaded = cloudStorage.ensureRemoteMediaUrl(
+                                rawDataUrlOrRemoteUrl = cleanMedia,
+                                remotePath = "chat_media/$matchId/${msgRef.id}.jpg",
+                                defaultContentType = "image/jpeg"
+                            )
+                            uploaded.getOrElse { err ->
+                                if (!CloudMediaStorageService.isStorageUnavailableError(err)) throw err
+                                Log.w(
+                                    CloudMediaStorageService.TAG,
+                                    "Storage unavailable for chat photo; falling back to inline image",
+                                    err
+                                )
+                                MediaImageHelper.compactImageDataUrl(
+                                    rawUrl = cleanMedia,
+                                    maxDim = 1080,
+                                    maxRawBytes = 580_000,
+                                    maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_MEDIA_CHARS
+                                ) ?: throw IllegalStateException("Photo exceeds Firestore fallback limit.", err)
+                            }
+                        }
                         else -> cleanMedia
                     }
                     payload["mediaDataUrl"] = resolvedMedia
@@ -2154,105 +2201,6 @@ class KindredRepository(
         }
     }
 
-    suspend fun submitVerification(
-        challenge: VerificationChallenge,
-        analysis: LivenessAnalysisResult,
-        locationVerified: Boolean,
-        googleVerified: Boolean
-    ): Result<Long> {
-        if (!analysis.passed || !analysis.livenessPassed || !analysis.faceMatchPassed) {
-            return Result.failure(IllegalArgumentException(analysis.summary))
-        }
-        if (analysis.comparedPhotoCount < 1 || analysis.bestSimilarityScore < 0.65f) {
-            return Result.failure(
-                IllegalArgumentException("Selfie must match your uploaded profile photos before verifying.")
-            )
-        }
-        var docPath = "users"
-        return try {
-            val uid = requireUserId()
-            val publicRef = db.collection("publicProfiles").document(uid)
-            val publicSnap = publicRef.get().await()
-            if (!publicSnap.exists()) {
-                return Result.failure(
-                    IllegalStateException("Save your profile in the Profile tab before completing verification.")
-                )
-            }
-            val existingPublic = publicSnap.toObject(
-                PublicProfile::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            )
-
-            val verRef = db.collection("users").document(uid).collection("verifications").document()
-            val verId = verRef.id
-            docPath = verRef.path
-
-            val score = (
-                70 +
-                    (if (locationVerified) 12 else 0) +
-                    (if (googleVerified) 8 else 0) +
-                    (if (analysis.confidence >= 0.75f) 5 else 0) +
-                    (if (analysis.bestSimilarityScore >= 0.80f) 5 else 0)
-                ).coerceIn(70, 100).toLong()
-
-            val batch = db.batch()
-            batch.set(
-                verRef,
-                mapOf(
-                    "userId" to uid,
-                    "challengeCode" to challenge.code,
-                    "challengePrompt" to challenge.prompt,
-                    "faceCount" to analysis.faceCount.toLong(),
-                    "faceConfidence" to analysis.confidence.toDouble(),
-                    "eyesDistancePx" to analysis.eyesDistancePx.toDouble(),
-                    "photoSha256" to analysis.photoSha256,
-                    "locationVerified" to locationVerified,
-                    "googleVerified" to googleVerified,
-                    "comparedPhotoCount" to analysis.comparedPhotoCount.toLong(),
-                    "photoSimilarityScore" to analysis.bestSimilarityScore.toDouble().coerceIn(0.65, 1.0),
-                    "livenessPassed" to true,
-                    "faceMatchPassed" to true,
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-            )
-            val verificationUpdate = mapOf(
-                "verificationStatus" to "VERIFIED",
-                "verificationId" to verId,
-                "verificationScore" to score,
-                "verificationHash" to analysis.photoSha256,
-                "verifiedAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            batch.update(publicRef, verificationUpdate)
-
-            // Propagate verified status to active GeoCells
-            if (existingPublic != null && existingPublic.discoverable) {
-                val c3 = existingPublic.geohash3
-                val c4 = existingPublic.geohash4
-                if (c3.length == 3) {
-                    val ref3 = db.collection("geoCells").document(c3).collection("profiles").document(uid)
-                    if (ref3.get().await().exists()) {
-                        batch.update(ref3, verificationUpdate)
-                    }
-                }
-                if (c4.length == 4) {
-                    val ref4 = db.collection("geoCells").document(c4).collection("profiles").document(uid)
-                    if (ref4.get().await().exists()) {
-                        batch.update(ref4, verificationUpdate)
-                    }
-                }
-            }
-
-            batch.commit().await()
-            Result.success(score)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, docPath)
-            Result.failure(e)
-        }
-    }
-
     private fun buildGeoCellPayload(
         uid: String,
         displayName: String,
@@ -2269,15 +2217,8 @@ class KindredRepository(
         discoverable: Boolean,
         dateOfBirth: String = "",
         profileCompleted: Boolean = true,
-        existingPublic: PublicProfile?,
-        forceUnverified: Boolean
+        existingPublic: PublicProfile?
     ): Map<String, Any> {
-        val effectiveVerified = !forceUnverified &&
-            existingPublic?.verificationStatus == "VERIFIED" &&
-            !existingPublic.verificationId.isNullOrBlank() &&
-            !existingPublic.verificationHash.isNullOrBlank() &&
-            existingPublic.verifiedAt != null
-
         val map = mutableMapOf<String, Any>(
             "userId" to uid,
             "displayName" to displayName,
@@ -2297,8 +2238,6 @@ class KindredRepository(
             "photosVisibility" to (existingPublic?.photosVisibility ?: VisibilityLevel.EVERYONE),
             "videosVisibility" to (existingPublic?.videosVisibility ?: VisibilityLevel.EVERYONE),
             "infoVisibility" to (existingPublic?.infoVisibility ?: VisibilityLevel.EVERYONE),
-            "verificationStatus" to if (effectiveVerified) "VERIFIED" else "UNVERIFIED",
-            "verificationScore" to if (effectiveVerified) (existingPublic?.verificationScore ?: 70L) else 30L,
             "createdAt" to (existingPublic?.createdAt ?: FieldValue.serverTimestamp()),
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -2307,11 +2246,6 @@ class KindredRepository(
         }
         if (!photoDataUrl.isNullOrBlank() && photoDataUrl.length <= 180_000) {
             map["photoDataUrl"] = photoDataUrl
-        }
-        if (effectiveVerified && existingPublic != null) {
-            map["verificationId"] = existingPublic.verificationId!!
-            map["verificationHash"] = existingPublic.verificationHash!!
-            map["verifiedAt"] = existingPublic.verifiedAt!!
         }
         return map
     }

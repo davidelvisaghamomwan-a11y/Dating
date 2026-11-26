@@ -98,7 +98,7 @@ import com.example.util.DobUtils
 import com.example.util.DobValidationResult
 import com.example.util.PreparedVideoUpload
 import com.example.util.ResolvedDeviceLocation
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.launch
 
@@ -209,7 +209,7 @@ fun EditProfileScreen(
         if (uris.isNotEmpty()) {
             scope.launch {
                 val newlyCompressed = uris.mapNotNull { uri ->
-                    VerificationAnalyzer.compressUriToDataUrl(context, uri)
+                    MediaImageHelper.compressUriToDataUrl(context, uri)
                 }
                 if (newlyCompressed.isNotEmpty()) {
                     profilePhotos = (profilePhotos + newlyCompressed)
@@ -467,23 +467,6 @@ fun EditProfileScreen(
                                 }
                             }
                         }
-
-                        val photosChangedWhileVerified = myProfile?.isProfileVerified == true &&
-                            profilePhotos != initialPhotos
-                        if (photosChangedWhileVerified) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = ChampagneGold.copy(alpha = 0.16f),
-                                border = BorderStroke(1.dp, ChampagneGold.copy(alpha = 0.45f))
-                            ) {
-                                Text(
-                                    text = "Updating your profile photos will reset your Verified badge until you complete a quick selfie check.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = ChampagneGold,
-                                    modifier = Modifier.padding(10.dp)
-                                )
-                            }
-                        }
                     }
                 }
 
@@ -547,7 +530,7 @@ fun EditProfileScreen(
                             ) {
                                 itemsIndexed(videos, key = { _, v -> v.id }) { idx, video ->
                                     val thumb = remember(video.thumbnailDataUrl) {
-                                        video.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                                        video.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                                     }
                                     Box(
                                         modifier = Modifier

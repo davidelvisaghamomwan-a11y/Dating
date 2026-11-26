@@ -18,8 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.VerifiedUser
-import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -42,10 +40,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.ui.theme.ChampagneGold
-import com.example.ui.theme.EmeraldMint
 import com.example.ui.theme.PlayfairDisplayFamily
 import com.example.util.LocationAndGeoHelper
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import kotlin.math.abs
 
 @Composable
@@ -58,7 +55,7 @@ fun ProfileAvatarImage(
     initialsFontSizeSp: Int = 28
 ) {
     val imageBitmap = remember(photoDataUrl) {
-        VerificationAnalyzer.decodeBase64DataUrl(photoDataUrl)
+        MediaImageHelper.decodeBase64DataUrl(photoDataUrl)
     }
 
     val palette = remember(seed) {
@@ -121,59 +118,6 @@ fun ProfileAvatarImage(
                 fontWeight = FontWeight.Bold,
                 fontSize = initialsFontSizeSp.sp,
                 color = Color.White
-            )
-        }
-    }
-}
-
-@Composable
-fun VerifiedShieldBadge(
-    isVerified: Boolean,
-    score: Int? = null,
-    compact: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    val containerColor = if (isVerified) {
-        MaterialTheme.colorScheme.tertiaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceContainerHigh
-    }
-    val contentColor = if (isVerified) {
-        MaterialTheme.colorScheme.onTertiaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = containerColor,
-        border = if (isVerified) BorderStroke(1.dp, EmeraldMint.copy(alpha = 0.45f)) else null
-    ) {
-        Row(
-            modifier = Modifier.padding(
-                horizontal = if (compact) 8.dp else 10.dp,
-                vertical = if (compact) 4.dp else 5.dp
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(
-                imageVector = if (isVerified) Icons.Filled.VerifiedUser else Icons.Outlined.Shield,
-                contentDescription = stringResource(R.string.cd_verified_badge),
-                tint = if (isVerified) EmeraldMint else contentColor,
-                modifier = Modifier.size(if (compact) 14.dp else 16.dp)
-            )
-            Text(
-                text = when {
-                    isVerified && score != null && !compact -> "Verified • $score%"
-                    isVerified -> "Verified"
-                    else -> "Unverified"
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = contentColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
             )
         }
     }

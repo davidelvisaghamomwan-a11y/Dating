@@ -46,7 +46,6 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
@@ -92,7 +91,7 @@ import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.util.CountryFlagHelper
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -127,7 +126,6 @@ fun InstagramFeedPostCard(
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
         ?: post.authorName.ifBlank { "Kindred Member" }
     val displayAuthorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull() ?: post.authorPhoto
-    val isAuthorVerified = authorProfile?.isProfileVerified ?: post.authorVerified
     val displayCountry = authorProfile?.country?.takeIf { it.isNotBlank() } ?: post.authorCountry.orEmpty()
     val displayCity = post.authorCity?.takeIf { it.isNotBlank() } ?: authorProfile?.cityLabel.orEmpty()
     val flag = CountryFlagHelper.flagEmojiForCountry(displayCountry)
@@ -237,16 +235,6 @@ fun InstagramFeedPostCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (isAuthorVerified) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = "Verified creator",
-                                tint = InstagramBlue,
-                                modifier = Modifier
-                                    .size(15.dp)
-                                    .testTag("post_verified_badge_${post.id}")
-                            )
-                        }
                         if (flag.isNotBlank()) {
                             Text(text = flag, fontSize = 12.sp)
                         }
@@ -357,7 +345,7 @@ fun InstagramFeedPostCard(
         val photoUrls = remember(post.id, post.mediaDataUrl, post.mediaUrls) { post.allPhotoUrls() }
         val decodedBitmaps = remember(post.id, photoUrls) {
             photoUrls.associateWith { url ->
-                if (url.startsWith("data:image")) VerificationAnalyzer.decodeBase64DataUrl(url) else null
+                if (url.startsWith("data:image")) MediaImageHelper.decodeBase64DataUrl(url) else null
             }
         }
         val firstBitmap: ImageBitmap? = photoUrls.firstOrNull()?.let { decodedBitmaps[it] }
@@ -438,7 +426,7 @@ fun InstagramFeedPostCard(
 
                     if (file == null || (!playVideo && !loadingVideo)) {
                         val thumb = remember(post.thumbnailDataUrl) {
-                            post.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                            post.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                         }
                         val isRemoteThumb = post.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
                             post.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true

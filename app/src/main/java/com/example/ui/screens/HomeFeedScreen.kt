@@ -61,7 +61,6 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Badge
@@ -138,7 +137,7 @@ import com.example.util.CountryFlagHelper
 import com.example.util.LocationAndGeoHelper
 import com.example.util.PreparedVideoUpload
 import com.example.util.ResolvedDeviceLocation
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -324,7 +323,7 @@ fun HomeFeedScreen(
                 story.mediaDataUrl?.let { add(it) }
             }
         }
-        VerificationAnalyzer.prefetchDataUrls(urlsToWarm)
+        MediaImageHelper.prefetchDataUrls(urlsToWarm)
     }
 
     val pullRefreshState = rememberPullToRefreshState()
@@ -857,7 +856,6 @@ fun HomeFeedScreen(
                 authorName = vidPost.authorName,
                 authorPhoto = vidPost.authorPhoto,
                 authorCountry = vidPost.authorCountry,
-                authorVerified = vidPost.authorVerified,
                 caption = vidPost.caption,
                 mediaType = "VIDEO",
                 mediaDataUrl = vidPost.mediaDataUrl,
@@ -948,30 +946,16 @@ private fun SuggestedPeopleStrip(
                             shape = CircleShape,
                             initialsFontSizeSp = 20
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = buildString {
-                                    append("${person.displayName}, ${person.age}")
-                                    if (flag.isNotBlank()) append(" $flag")
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            if (person.isProfileVerified) {
-                                Icon(
-                                    imageVector = Icons.Filled.Verified,
-                                    contentDescription = "Verified",
-                                    tint = Color(0xFF0095F6),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
+                        Text(
+                            text = buildString {
+                                append("${person.displayName}, ${person.age}")
+                                if (flag.isNotBlank()) append(" $flag")
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Text(
                             text = person.bio.ifBlank { person.formattedLocation() },
                             style = MaterialTheme.typography.labelSmall,
@@ -1063,10 +1047,9 @@ private fun SuggestedReelsShelf(
                 val authorName = author?.displayName?.takeIf { it.isNotBlank() }
                     ?: reel.authorName.ifBlank { "Member" }
                 val authorPhoto = author?.allProfilePhotos()?.firstOrNull() ?: reel.authorPhoto
-                val isVerified = author?.isProfileVerified ?: reel.authorVerified
                 val thumbBitmap = remember(reel.thumbnailDataUrl) {
                     reel.thumbnailDataUrl?.takeIf { it.startsWith("data:image") }
-                        ?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                        ?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                 }
 
                 Box(
@@ -1179,14 +1162,6 @@ private fun SuggestedReelsShelf(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
-                            if (isVerified) {
-                                Icon(
-                                    imageVector = Icons.Filled.Verified,
-                                    contentDescription = "Verified",
-                                    tint = Color(0xFF0095F6),
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
                         }
                         if (reel.caption.isNotBlank()) {
                             Text(
@@ -1233,7 +1208,6 @@ private fun HomeReelPostCard(
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
         ?: reel.authorName.ifBlank { "Kindred Member" }
     val displayAuthorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull() ?: reel.authorPhoto
-    val isAuthorVerified = authorProfile?.isProfileVerified ?: reel.authorVerified
     val displayCountry = authorProfile?.country?.takeIf { it.isNotBlank() } ?: reel.authorCountry.orEmpty()
     val flag = CountryFlagHelper.flagEmojiForCountry(displayCountry)
 
@@ -1340,14 +1314,6 @@ private fun HomeReelPostCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (isAuthorVerified) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = "Verified creator",
-                                tint = Color(0xFF0095F6),
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
                         if (flag.isNotBlank()) {
                             Text(text = flag, fontSize = 12.sp)
                         }
@@ -1530,7 +1496,7 @@ private fun HomeReelPostCard(
 
             if (file == null || (!playVideo && !loadingVideo)) {
                 val thumb = remember(reel.thumbnailDataUrl) {
-                    reel.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                    reel.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                 }
                 if (file == null && thumb != null) {
                     Image(

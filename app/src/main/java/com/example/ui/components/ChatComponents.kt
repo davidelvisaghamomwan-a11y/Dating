@@ -43,7 +43,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -458,27 +457,6 @@ internal fun ChatBubble(
                                     )
                                 }
                             }
-                        }
-                    }
-
-                    if (message.messageType == "ICEBREAKER") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = null,
-                                tint = if (isMine) Color.White.copy(alpha = 0.9f) else ChampagneGold,
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Text(
-                                text = "Icebreaker",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (isMine) Color.White.copy(alpha = 0.9f) else ChampagneGold
-                            )
                         }
                     }
 
@@ -1066,20 +1044,6 @@ internal fun PartnerProfileQuickSheet(
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    VerifiedShieldBadge(isVerified = partner.isProfileVerified, compact = true)
-                    if (partner.isProfileVerified) {
-                        Text(
-                            text = "Trust ${partner.verificationScore}/100",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = EmeraldMint
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
@@ -1482,7 +1446,7 @@ internal fun PartnerPhotoGalleryDialog(
                         ) {
                             val activePhoto = entry.dataUrl
                             val decodedBitmap = remember(activePhoto) {
-                                com.example.util.VerificationAnalyzer.decodeBase64DataUrl(activePhoto)
+                                com.example.util.MediaImageHelper.decodeBase64DataUrl(activePhoto)
                             }
                             if (decodedBitmap != null) {
                                 Image(
@@ -1559,7 +1523,7 @@ internal fun PartnerPhotoGalleryDialog(
                                 )
                             } else {
                                 val thumb = remember(videoItem.thumbnailDataUrl) {
-                                    com.example.util.VerificationAnalyzer.decodeBase64DataUrl(videoItem.thumbnailDataUrl)
+                                    com.example.util.MediaImageHelper.decodeBase64DataUrl(videoItem.thumbnailDataUrl)
                                 }
                                 val isRemoteVideoThumb = videoItem.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
                                     videoItem.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true

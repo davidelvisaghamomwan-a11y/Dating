@@ -45,7 +45,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
@@ -117,8 +116,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.R
-import com.example.ai.AiIcebreakerService
-import com.example.ai.IcebreakerAiUiState
 import com.example.communication.VoiceNotePlayer
 import com.example.communication.VoiceNoteRecorder
 import com.example.communication.VoicePermissionHelper
@@ -138,7 +135,6 @@ import com.example.ui.components.DayDividerPill
 import com.example.ui.components.DisappearingTimerSheetContent
 import com.example.ui.components.FullscreenIncomingCallDialog
 import com.example.ui.components.GifPickerSheetContent
-import com.example.ui.components.IcebreakerCoachSheetContent
 import com.example.ui.components.InAppCallOverlay
 import com.example.ui.components.MediaViewerDialog
 import com.example.ui.components.PartnerProfileQuickSheet
@@ -146,16 +142,15 @@ import com.example.ui.components.PartnerTypingBubble
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.ReportUserDialog
 import com.example.ui.components.UnmatchOrBlockDialog
-import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.components.dayBucketLabel
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
 import com.example.util.MediaDownloadHelper
+import com.example.util.MediaImageHelper
 import com.example.util.PreparedVideoUpload
 import com.example.util.PresenceUtils
-import com.example.util.VerificationAnalyzer
 import com.example.util.VideoClipHelper
 import com.example.viewmodel.ChatViewModel
 import kotlinx.coroutines.delay
@@ -213,7 +208,6 @@ fun ChatScreen(
     val activeCallSession by chatViewModel.activeCallSession.collectAsStateWithLifecycle()
     val activeCallAudioChunks by chatViewModel.activeCallAudioChunks.collectAsStateWithLifecycle()
     val activeCallVideoFrames by chatViewModel.activeCallVideoFrames.collectAsStateWithLifecycle()
-    val icebreakerAiState by chatViewModel.icebreakerAiState.collectAsStateWithLifecycle()
     val statusError by chatViewModel.statusError.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -252,7 +246,6 @@ fun ChatScreen(
             activeCallSession = activeCallSession,
             activeCallAudioChunks = activeCallAudioChunks,
             activeCallVideoFrames = activeCallVideoFrames,
-            icebreakerAiState = icebreakerAiState,
             showBackButton = showBackButton,
             onBack = onBack,
             onSendMessage = { _, participants, text, messageType ->
@@ -295,7 +288,6 @@ fun ChatScreen(
             onResolveVideoFile = { msg -> chatViewModel.resolveMessageVideoFile(context, msg) },
             onTypingChanged = { _, isTyping -> chatViewModel.setTypingStatus(isTyping) },
             onUpdateDisappearingTimer = { _, ttl -> chatViewModel.updateDisappearingTimer(ttl) },
-            onGenerateAiIcebreakers = { tone -> chatViewModel.generateAiIcebreakers(partnerProfile, tone) },
             onStartCall = { _, calleeUid, participants, callType ->
                 chatViewModel.startCall(calleeUid, participants, callType)
             },
@@ -334,7 +326,6 @@ fun ChatScreen(
     activeCallSession: CallSession? = null,
     activeCallAudioChunks: List<CallAudioChunk> = emptyList(),
     activeCallVideoFrames: List<CallVideoFrame> = emptyList(),
-    icebreakerAiState: IcebreakerAiUiState = IcebreakerAiUiState.Idle,
     showBackButton: Boolean = true,
     onBack: () -> Unit,
     onSendMessage: (matchId: String, participantUids: List<String>, text: String, messageType: String) -> Unit,
@@ -374,7 +365,6 @@ fun ChatScreen(
     onResolveVideoFile: (suspend (ChatMessage) -> Result<File>)? = null,
     onTypingChanged: (matchId: String, isTyping: Boolean) -> Unit = { _, _ -> },
     onUpdateDisappearingTimer: (matchId: String, ttlSeconds: Long) -> Unit = { _, _ -> },
-    onGenerateAiIcebreakers: (tone: String) -> Unit = {},
     onStartCall: (matchId: String, calleeUid: String, participantUids: List<String>, callType: String) -> Unit = { _, _, _, _ -> },
     onAnswerCall: (CallSession) -> Unit = {},
     onDeclineCall: (CallSession) -> Unit = {},
@@ -409,7 +399,6 @@ fun ChatScreen(
     var showBlockConfirm by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
     var showPartnerSheet by remember { mutableStateOf(false) }
-    var showIcebreakerSheet by remember { mutableStateOf(false) }
     var showGifSheet by remember { mutableStateOf(false) }
     var showTimerSheet by remember { mutableStateOf(false) }
     var showVideoOptionsSheet by remember { mutableStateOf(false) }
@@ -608,7 +597,7 @@ fun ChatScreen(
     ) { uri ->
         if (uri != null && participants.size == 2) {
             scope.launch {
-                val dataUrl = VerificationAnalyzer.compressUriToDataUrl(context, uri)
+                val dataUrl = MediaImageHelper.compressUriToDataUrl(context, uri)
                 if (dataUrl != null) {
                     val caption = messageDraft.trim()
                     sendOrDispatch(
@@ -799,10 +788,6 @@ fun ChatScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                VerifiedShieldBadge(
-                                    isVerified = partner?.isProfileVerified == true,
-                                    compact = true
-                                )
                             }
                             Spacer(modifier = Modifier.height(2.dp))
                             Row(
@@ -909,7 +894,7 @@ fun ChatScreen(
                     }
                 }
 
-                // Compact utility strip for profile/photos, disappearing timer, icebreaker coach, and quick block
+                // Compact utility strip for profile/photos, disappearing timer, message search, and quick block
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -962,20 +947,6 @@ fun ChatScreen(
                                 MaterialTheme.colorScheme.surfaceContainerHigh
                             }
                         )
-                    )
-
-                    AssistChip(
-                        onClick = { showIcebreakerSheet = true },
-                        modifier = Modifier.testTag("chat_header_icebreakers_chip"),
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = stringResource(R.string.chat_icebreakers_cd),
-                                tint = ChampagneGold,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        label = { Text("Icebreakers", style = MaterialTheme.typography.labelSmall) }
                     )
 
                     AssistChip(
@@ -1195,49 +1166,11 @@ fun ChatScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Start a conversation with ${partner?.displayName ?: "this member"}. Send a tailored opener, GIF, photo, or voice note.",
+                                    text = "Start a conversation with ${partner?.displayName ?: "this member"}. Send a message, GIF, photo, or voice note.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
-                                Spacer(modifier = Modifier.height(18.dp))
-
-                                val tailoredOpeners = remember(myProfile, partner) {
-                                    AiIcebreakerService.buildProfileBasedOpeners(myProfile, partner).take(3)
-                                }
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    tailoredOpeners.forEachIndexed { index, suggestion ->
-                                        AssistChip(
-                                            onClick = {
-                                                if (participants.size == 2) {
-                                                    sendOrDispatch(
-                                                        type = "ICEBREAKER",
-                                                        text = suggestion.prompt
-                                                    )
-                                                }
-                                            },
-                                            modifier = Modifier.testTag("icebreaker_chip_$index"),
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Filled.AutoAwesome,
-                                                    contentDescription = null,
-                                                    tint = ChampagneGold,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            },
-                                            label = {
-                                                Text(
-                                                    text = suggestion.prompt,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
                             }
                         }
                     } else {
@@ -1406,19 +1339,6 @@ fun ChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        IconButton(
-                            onClick = { showIcebreakerSheet = true },
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("chat_icebreaker_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = stringResource(R.string.chat_icebreakers_cd),
-                                tint = ChampagneGold
-                            )
-                        }
-
                         IconButton(
                             onClick = {
                                 photoPickerLauncher.launch(
@@ -1677,34 +1597,6 @@ fun ChatScreen(
                 onBlockClick = {
                     showPartnerSheet = false
                     showBlockConfirm = true
-                }
-            )
-        }
-    }
-
-    if (showIcebreakerSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showIcebreakerSheet = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
-        ) {
-            IcebreakerCoachSheetContent(
-                myProfile = myProfile,
-                partnerProfile = partner,
-                aiState = icebreakerAiState,
-                onGenerateAi = { tone -> onGenerateAiIcebreakers(tone) },
-                onSendIcebreaker = { prompt ->
-                    showIcebreakerSheet = false
-                    if (participants.size == 2) {
-                        sendOrDispatch(
-                            type = "ICEBREAKER",
-                            text = prompt
-                        )
-                    }
-                },
-                onInsertIntoDraft = { prompt ->
-                    messageDraft = prompt.take(MAX_CHAT_MESSAGE_LENGTH)
-                    showIcebreakerSheet = false
                 }
             )
         }

@@ -15,14 +15,14 @@ object ProfileCompletionUtils {
         if (profile == null) {
             return ProfileCompletionSummary(
                 percentage = 0,
-                missingSteps = listOf("Save basic details", "Add a bio", "Upload profile photos", "Verify selfie")
+                missingSteps = listOf("Save basic details", "Add a bio", "Upload profile photos", "Pick interests")
             )
         }
         var score = 0
         val missing = mutableListOf<String>()
 
         if (profile.displayName.trim().length >= 2 && profile.age in 18..99 && profile.gender.isNotBlank()) {
-            score += 15
+            score += 20
         } else {
             missing += "Complete basic info"
         }
@@ -51,9 +51,9 @@ object ProfileCompletionUtils {
 
         val photoCount = profile.allProfilePhotos().size
         when {
-            photoCount >= 2 -> score += 20
+            photoCount >= 2 -> score += 25
             photoCount == 1 -> {
-                score += 10
+                score += 12
                 missing += "Add a second profile photo"
             }
             else -> missing += "Upload at least 2 photos"
@@ -63,12 +63,6 @@ object ProfileCompletionUtils {
             score += 10
         } else {
             missing += "Add a showcase video clip"
-        }
-
-        if (profile.isProfileVerified) {
-            score += 10
-        } else {
-            missing += "Complete live selfie check"
         }
 
         return ProfileCompletionSummary(

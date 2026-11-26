@@ -172,11 +172,49 @@ class CloudMediaStorageService(
         const val TAG = "KindredMediaUpload"
         const val UPLOAD_TIMEOUT_MS = 45_000L
         const val DOWNLOAD_TIMEOUT_MS = 30_000L
+        const val MAX_INLINE_FIRESTORE_BYTES = 640_000
+        const val MAX_INLINE_FIRESTORE_MEDIA_CHARS = 900_000
+        const val MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS = 175_000
 
         fun isRemoteHttpUrl(url: String?): Boolean {
             val clean = url?.trim().orEmpty()
             return clean.startsWith("https://", ignoreCase = true) ||
                 clean.startsWith("http://", ignoreCase = true)
+        }
+
+        fun isStorageUnavailableError(error: Throwable): Boolean {
+            val storageEx = generateSequence(error) { it.cause }
+                .filterIsInstance<StorageException>()
+                .firstOrNull()
+            if (storageEx != null) {
+                when (storageEx.errorCode) {
+                    StorageException.ERROR_OBJECT_NOT_FOUND,
+                    StorageException.ERROR_BUCKET_NOT_FOUND,
+                    StorageException.ERROR_PROJECT_NOT_FOUND -> return true
+                }
+                if (storageEx.httpResultCode == 404) return true
+            }
+            val msgChain = generateSequence(error) { it.cause }
+                .mapNotNull { it.localizedMessage ?: it.message }
+                .joinToString(" | ")
+            return msgChain.contains("Object does not exist", ignoreCase = true) ||
+                msgChain.contains("bucket", ignoreCase = true) ||
+                msgChain.contains("404", ignoreCase = true)
+        }
+
+        suspend fun readLocalFileAsDataUrl(
+            file: File,
+            mimeType: String,
+            maxBytes: Int = MAX_INLINE_FIRESTORE_BYTES
+        ): String? = withContext(Dispatchers.IO) {
+            if (!file.exists() || file.length() <= 0L || file.length() > maxBytes) return@withContext null
+            runCatching {
+                val bytes = file.readBytes()
+                if (bytes.isEmpty() || bytes.size > maxBytes) return@runCatching null
+                val cleanMime = mimeType.trim().ifBlank { "application/octet-stream" }
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                "data:$cleanMime;base64,$encoded"
+            }.getOrNull()
         }
 
         fun formatUploadError(error: Throwable): String {
@@ -192,9 +230,10 @@ class CloudMediaStorageService(
                         "Upload blocked: please sign in again to authenticate with cloud storage."
                     StorageException.ERROR_NOT_AUTHORIZED ->
                         "Storage permission denied (403). Check Firebase Storage security rules for your account."
+                    StorageException.ERROR_OBJECT_NOT_FOUND,
                     StorageException.ERROR_BUCKET_NOT_FOUND,
                     StorageException.ERROR_PROJECT_NOT_FOUND ->
-                        "Cloud storage bucket is not configured or cannot be found (404)."
+                        "Cloud storage location is not configured on this project (404)."
                     StorageException.ERROR_QUOTA_EXCEEDED ->
                         "Cloud storage quota exceeded. Please try again later."
                     StorageException.ERROR_RETRY_LIMIT_EXCEEDED ->
@@ -207,6 +246,8 @@ class CloudMediaStorageService(
                             "Storage permission denied (HTTP 403)."
                         } else if (httpStatus == 401) {
                             "Authentication expired (HTTP 401). Please sign in again."
+                        } else if (httpStatus == 404) {
+                            "Cloud storage location is not configured on this project (HTTP 404)."
                         } else {
                             storageEx.localizedMessage ?: "Cloud storage upload failed (code ${storageEx.errorCode})."
                         }
@@ -217,8 +258,9 @@ class CloudMediaStorageService(
             return when {
                 rawMsg.contains("403") || rawMsg.contains("permission", ignoreCase = true) ->
                     "Storage permission denied: $rawMsg"
-                rawMsg.contains("bucket", ignoreCase = true) ->
-                    "Storage bucket configuration error: $rawMsg"
+                rawMsg.contains("bucket", ignoreCase = true) ||
+                    rawMsg.contains("Object does not exist", ignoreCase = true) ->
+                    "Cloud storage location is not configured: $rawMsg"
                 rawMsg.contains("auth", ignoreCase = true) || rawMsg.contains("sign in", ignoreCase = true) ->
                     rawMsg
                 error is IOException ->

@@ -77,7 +77,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.model.PublicProfile
 import com.example.ui.theme.CoralRose
 import com.example.util.PreparedVideoUpload
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.launch
 
@@ -211,7 +211,7 @@ fun CreatePostComposerSheet(
                 val perPhotoMaxDim = if (totalTargetCount == 1) 1280 else 1080
                 uris.forEach { uri ->
                     if (photoUrls.size < 6) {
-                        val dataUrl = VerificationAnalyzer.compressUriForFeedPostDataUrl(
+                        val dataUrl = MediaImageHelper.compressUriForFeedPostDataUrl(
                             context = context,
                             uri = uri,
                             maxDim = perPhotoMaxDim,
@@ -427,7 +427,7 @@ fun CreatePostComposerSheet(
                     ) {
                         itemsIndexed(photoUrls) { idx, url ->
                             val bmp = remember(url) {
-                                if (url.startsWith("data:image")) VerificationAnalyzer.decodeBase64DataUrl(url) else null
+                                if (url.startsWith("data:image")) MediaImageHelper.decodeBase64DataUrl(url) else null
                             }
                             Box(
                                 modifier = Modifier
@@ -460,7 +460,7 @@ fun CreatePostComposerSheet(
                         fontWeight = FontWeight.SemiBold
                     )
                     val thumb = remember(clip.thumbnailDataUrl) {
-                        clip.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                        clip.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                     }
                     Box(
                         modifier = Modifier

@@ -44,7 +44,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.ChatBubble
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
@@ -100,7 +99,7 @@ import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
 import com.example.util.CountryFlagHelper
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import java.io.File
@@ -263,7 +262,7 @@ fun ExploreSearchScreen(
     LaunchedEffect(displayedExplorePosts) {
         val urls = displayedExplorePosts.take(24).mapNotNull { it.imageUrl }
         if (urls.isNotEmpty()) {
-            VerificationAnalyzer.prefetchDataUrls(urls)
+            MediaImageHelper.prefetchDataUrls(urls)
         }
     }
 
@@ -741,7 +740,6 @@ fun ExploreSearchScreen(
                                                     authorName = liveReel.authorName,
                                                     authorPhoto = liveReel.authorPhoto,
                                                     authorCountry = liveReel.authorCountry,
-                                                    authorVerified = liveReel.authorVerified,
                                                     caption = liveReel.caption,
                                                     mediaType = "VIDEO",
                                                     mediaDataUrl = liveReel.mediaDataUrl,
@@ -808,25 +806,12 @@ private fun ExploreSearchUserRow(
             initialsFontSizeSp = 18
         )
         Column(modifier = Modifier.weight(1f)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = profile.displayName.ifBlank { "Kindred Member" },
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (profile.isProfileVerified) {
-                    Icon(
-                        imageVector = Icons.Filled.Verified,
-                        contentDescription = "Verified",
-                        tint = ExploreInstagramBlue,
-                        modifier = Modifier.size(15.dp)
-                    )
-                }
-            }
+            Text(
+                text = profile.displayName.ifBlank { "Kindred Member" },
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             val locationLine = listOfNotNull(
                 profile.cityLabel.takeIf { it.isNotBlank() },
                 profile.country.takeIf { it.isNotBlank() }?.let { c ->
@@ -865,7 +850,7 @@ private fun ExplorePostGridTile(
     val url = item.imageUrl
     val bitmap = remember(url) {
         if (!url.isNullOrBlank() && url.startsWith("data:image")) {
-            VerificationAnalyzer.decodeBase64DataUrl(url)
+            MediaImageHelper.decodeBase64DataUrl(url)
         } else null
     }
 
@@ -934,7 +919,6 @@ private fun ExploreReelFeedCard(
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
         ?: videoPost.authorName.ifBlank { "Kindred Member" }
     val displayAuthorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull() ?: videoPost.authorPhoto
-    val isVerified = authorProfile?.isProfileVerified ?: videoPost.authorVerified
     val isLiked = currentUserId in videoPost.likedByUids
     val isOwner = videoPost.userId == currentUserId
 
@@ -989,26 +973,13 @@ private fun ExploreReelFeedCard(
                     initialsFontSizeSp = 14
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = displayAuthorName,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (isVerified) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = "Verified",
-                                tint = ExploreInstagramBlue,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = displayAuthorName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         text = "Original audio • Reel",
                         style = MaterialTheme.typography.labelSmall,
@@ -1063,7 +1034,7 @@ private fun ExploreReelFeedCard(
                 )
             } else {
                 val thumb = remember(videoPost.thumbnailDataUrl) {
-                    videoPost.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                    videoPost.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                 }
                 val isRemoteThumb = videoPost.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
                     videoPost.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true

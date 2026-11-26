@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.ChatBubble
@@ -96,7 +95,7 @@ import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
 import com.example.util.CountryFlagHelper
 import com.example.util.PreparedVideoUpload
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.launch
 import java.io.File
@@ -431,7 +430,6 @@ fun VideoFeedScreen(
                 authorName = vidPost.authorName,
                 authorPhoto = vidPost.authorPhoto,
                 authorCountry = vidPost.authorCountry,
-                authorVerified = vidPost.authorVerified,
                 caption = vidPost.caption,
                 mediaType = "VIDEO",
                 mediaDataUrl = vidPost.mediaDataUrl,
@@ -505,7 +503,6 @@ private fun ReelPageItem(
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
         ?: post.authorName.ifBlank { "Member" }
     val displayAuthorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull() ?: post.authorPhoto
-    val isAuthorVerified = authorProfile?.isProfileVerified ?: post.authorVerified
     val flag = CountryFlagHelper.flagEmojiForCountry(
         authorProfile?.country?.takeIf { it.isNotBlank() } ?: post.authorCountry.orEmpty()
     )
@@ -559,7 +556,7 @@ private fun ReelPageItem(
             )
         } else {
             val thumb = remember(post.thumbnailDataUrl) {
-                post.thumbnailDataUrl?.let { VerificationAnalyzer.decodeBase64DataUrl(it) }
+                post.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
             }
             if (thumb != null) {
                 Image(
@@ -648,14 +645,6 @@ private fun ReelPageItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (isAuthorVerified) {
-                        Icon(
-                            imageVector = Icons.Filled.Verified,
-                            contentDescription = "Verified creator",
-                            tint = Color(0xFF0095F6),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
                 }
 
                 if (!isOwner) {

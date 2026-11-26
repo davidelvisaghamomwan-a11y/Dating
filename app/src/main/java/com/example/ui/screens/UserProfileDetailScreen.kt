@@ -48,7 +48,6 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.AccountBox
 import androidx.compose.material.icons.outlined.GridOn
@@ -113,11 +112,11 @@ import com.example.ui.theme.CoralRose
 import com.example.util.CountryFlagHelper
 import com.example.util.PresenceUtils
 import com.example.util.ProfileCompletionUtils
-import com.example.util.VerificationAnalyzer
+import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import java.io.File
 
-private val InstagramVerifiedBlue = Color(0xFF0095F6)
+private val KindredActionBlue = Color(0xFF0095F6)
 private val StoryRingColors = listOf(
     Color(0xFFFBAA47),
     Color(0xFFD91A46),
@@ -301,14 +300,6 @@ fun UserProfileDetailScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (profile.isProfileVerified) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = "Verified",
-                                tint = InstagramVerifiedBlue,
-                                modifier = Modifier.size(17.dp)
-                            )
-                        }
                     }
                 },
                 navigationIcon = {
@@ -450,14 +441,14 @@ fun UserProfileDetailScreen(
                             Icon(
                                 imageVector = Icons.Filled.Link,
                                 contentDescription = null,
-                                tint = InstagramVerifiedBlue,
+                                tint = KindredActionBlue,
                                 modifier = Modifier.size(14.dp)
                             )
                             Text(
                                 text = "kindred.app/$cleanHandle",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = InstagramVerifiedBlue
+                                color = KindredActionBlue
                             )
                         }
 
@@ -507,7 +498,7 @@ fun UserProfileDetailScreen(
                             val followBtnColor = if (isFollowing) {
                                 MaterialTheme.colorScheme.surfaceContainerHigh
                             } else {
-                                InstagramVerifiedBlue
+                                KindredActionBlue
                             }
                             val followTextColor = if (isFollowing) {
                                 MaterialTheme.colorScheme.onSurface
@@ -614,7 +605,7 @@ fun UserProfileDetailScreen(
                                 ) {
                                     val bmp = remember(hl.coverUrl) {
                                         if (hl.coverUrl.startsWith("data:image", ignoreCase = true)) {
-                                            VerificationAnalyzer.decodeBase64DataUrl(hl.coverUrl)
+                                            MediaImageHelper.decodeBase64DataUrl(hl.coverUrl)
                                         } else null
                                     }
                                     val isRemoteHttpCover = hl.coverUrl.startsWith("http://", ignoreCase = true) ||
@@ -805,7 +796,7 @@ fun UserProfileDetailScreen(
                                         .testTag("user_detail_grid_item_${item.id}")
                                 ) {
                                     val thumb = remember(item.thumbnailUrl) {
-                                        VerificationAnalyzer.decodeBase64DataUrl(item.thumbnailUrl)
+                                        MediaImageHelper.decodeBase64DataUrl(item.thumbnailUrl)
                                     }
                                     if (thumb != null) {
                                         Image(
@@ -1013,15 +1004,10 @@ fun UserProfileDetailScreen(
                     value = "0",
                     icon = Icons.Filled.ContentCopy
                 )
-                AboutAccountDetailRow(
-                    label = "Verified",
-                    value = if (profile.isProfileVerified) "Verified ✓" else "Not verified",
-                    icon = Icons.Filled.Verified
-                )
 
                 Button(
                     onClick = { showAboutAccountSheet = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = InstagramVerifiedBlue),
+                    colors = ButtonDefaults.buttonColors(containerColor = KindredActionBlue),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 10.dp)
@@ -1109,7 +1095,7 @@ fun UserProfileDetailScreen(
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "Share QR Nametag"))
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = InstagramVerifiedBlue),
+                        colors = ButtonDefaults.buttonColors(containerColor = KindredActionBlue),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Share Profile")

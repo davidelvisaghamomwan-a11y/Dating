@@ -28,7 +28,6 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -63,7 +62,6 @@ import com.example.R
 import com.example.model.DiscoveryCandidate
 import com.example.model.PublicProfile
 import com.example.ui.theme.CoralRose
-import com.example.ui.theme.EmeraldMint
 import com.example.util.LocationAndGeoHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -350,27 +348,14 @@ fun ProfileSearchContent(
                                 )
 
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        val flag = profile.flagEmoji()
-                                        Text(
-                                            text = if (flag.isNotBlank()) "${profile.displayName}, ${profile.age} $flag" else "${profile.displayName}, ${profile.age}",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        if (profile.isProfileVerified) {
-                                            Icon(
-                                                imageVector = Icons.Filled.VerifiedUser,
-                                                contentDescription = stringResource(R.string.cd_verified_badge),
-                                                tint = EmeraldMint,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
+                                    val flag = profile.flagEmoji()
+                                    Text(
+                                        text = if (flag.isNotBlank()) "${profile.displayName}, ${profile.age} $flag" else "${profile.displayName}, ${profile.age}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,

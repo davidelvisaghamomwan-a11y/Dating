@@ -48,7 +48,6 @@ import androidx.compose.ui.unit.dp
 import com.example.model.ActiveMemberPresenceItem
 import com.example.model.PublicProfile
 import com.example.ui.components.ProfileAvatarImage
-import com.example.ui.components.VerifiedShieldBadge
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
 import com.example.ui.theme.EmeraldMint
@@ -224,22 +223,16 @@ private fun ActiveMemberRowCard(
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Text(
-                        text = buildString {
-                            append("${profile.displayName}, ${profile.age}")
-                            if (flag.isNotBlank()) append(" $flag")
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    VerifiedShieldBadge(isVerified = profile.isProfileVerified, compact = true)
-                }
+                Text(
+                    text = buildString {
+                        append("${profile.displayName}, ${profile.age}")
+                        if (flag.isNotBlank()) append(" $flag")
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     text = "${item.statusLabel} • ${profile.formattedLocation()}",
                     style = MaterialTheme.typography.labelSmall,
