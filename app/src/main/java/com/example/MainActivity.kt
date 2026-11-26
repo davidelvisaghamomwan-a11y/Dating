@@ -70,6 +70,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -660,7 +661,13 @@ private fun MainKindredApp(
     val unreadInboxCount = successData?.matches
         ?.count { it.match.isUnreadFor(viewModel.currentUserId) } ?: 0
     val activeOnlineCount = activeMembersState.count { it.isOnline }
-    val activityBadgeCount = socialActivityState.size
+    var lastSeenActivityCount by rememberSaveable(user.uid) { mutableStateOf(0) }
+    LaunchedEffect(currentRoute, socialActivityState.size) {
+        if (currentRoute == ROUTE_ACTIVITY) {
+            lastSeenActivityCount = socialActivityState.size
+        }
+    }
+    val activityBadgeCount = maxOf(0, socialActivityState.size - lastSeenActivityCount)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
