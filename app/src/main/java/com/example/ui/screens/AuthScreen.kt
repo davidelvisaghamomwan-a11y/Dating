@@ -56,7 +56,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.Image
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -220,14 +223,30 @@ fun AuthScreen(
 
     val fieldsReady = emailOrIdentifier.isNotBlank() && password.length >= 6
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
             .statusBarsPadding()
             .navigationBarsPadding()
             .imePadding()
     ) {
+        Image(
+            painter = painterResource(com.example.R.drawable.app_startup_wallpaper),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        // Dark translucent overlay for enhanced readability of inputs and buttons
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.35f))
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+        ) {
         // Main Centered Form Area
         Box(
             modifier = Modifier
@@ -248,7 +267,7 @@ fun AuthScreen(
                     text = stringResource(R.string.app_name),
                     fontFamily = GrandHotelFamily,
                     fontSize = 52.sp,
-                    color = IgTextPrimary,
+                    color = Color.White,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.testTag("auth_brand_wordmark")
                 )
@@ -592,6 +611,7 @@ fun AuthScreen(
             )
         }
     }
+}
 }
 
 @Composable

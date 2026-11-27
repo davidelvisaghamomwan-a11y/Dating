@@ -435,7 +435,7 @@ fun InstagramFeedPostCard(
         val firstBitmap: ImageBitmap? = photoUrls.firstOrNull()?.let { decodedBitmaps[it] }
         val primaryAspectRatio = remember(post.id, firstBitmap, post.mediaType) {
             when {
-                post.mediaType == "VIDEO" -> 0.8f
+                post.mediaType == "VIDEO" -> 0.5625f
                 firstBitmap != null && firstBitmap.height > 0 -> {
                     (firstBitmap.width.toFloat() / firstBitmap.height.toFloat()).coerceIn(0.75f, 1.91f)
                 }
