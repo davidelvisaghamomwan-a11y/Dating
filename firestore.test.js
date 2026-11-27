@@ -1142,4 +1142,75 @@ test("Verified Firebase Storage path fields are allowed on profiles, feed posts,
   );
 });
 
+test("Moderator can delete violating user posts and send moderation notices to the author", async () => {
+  const adminUid = "admin_mod_1";
+  const created = pastDate(5000);
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await db.collection("feedPosts").doc("violating_post_1").set({
+      userId: ALICE_UID,
+      authorName: "Alice",
+      caption: "Offensive post caption",
+      mediaType: "TEXT",
+      likedByUids: [],
+      savedByUids: [],
+      commentCount: 0,
+      createdAt: created,
+    });
+  });
+
+  const modDb = testEnv.authenticatedContext(adminUid, {
+    email: "davidelvisaghamomwan@gmail.com",
+  }).firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  // Non-admin Bob cannot delete Alice's post or send a moderation notice
+  await assertFails(bobDb.collection("feedPosts").doc("violating_post_1").delete());
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("moderationNotices").doc("notice_unauth").set({
+      targetUid: ALICE_UID,
+      moderatorUid: BOB_UID,
+      contentType: "POST",
+      contentId: "violating_post_1",
+      reason: "Spam, scam, or fraud",
+      read: false,
+      createdAt: pastDate(1000),
+    })
+  );
+
+  // Moderator deletes Alice's post and sends a notice to Alice
+  await assertSucceeds(modDb.collection("feedPosts").doc("violating_post_1").delete());
+  await assertSucceeds(
+    modDb.collection("users").doc(ALICE_UID).collection("moderationNotices").doc("notice_1").set({
+      targetUid: ALICE_UID,
+      moderatorUid: adminUid,
+      contentType: "POST",
+      contentId: "violating_post_1",
+      contentPreview: "Offensive post caption",
+      reason: "Harassment or bullying",
+      details: "Removed for violating community guidelines.",
+      read: false,
+      createdAt: pastDate(1000),
+    })
+  );
+
+  // Target user Alice can read and mark read=true; Bob cannot read Alice's notice
+  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).collection("moderationNotices").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("moderationNotices").get());
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("moderationNotices").doc("notice_1").update({
+      read: true,
+    })
+  );
+  // Alice cannot alter the reason field
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("moderationNotices").doc("notice_1").update({
+      reason: "Tampered",
+    })
+  );
+});
+
+
 

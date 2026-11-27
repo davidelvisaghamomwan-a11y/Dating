@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.ChatBubble
@@ -89,6 +90,7 @@ import coil.compose.AsyncImage
 import com.example.model.PublicProfile
 import com.example.model.VideoPost
 import com.example.ui.components.LoopingVideoPlayer
+import com.example.ui.components.ModeratorDeletePostDialog
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
 import com.example.util.CountryFlagHelper
@@ -119,6 +121,8 @@ fun VideoFeedScreen(
     observeComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
     onAddComment: (String, String) -> Unit = { _, _ -> },
     onDeleteComment: (String, String) -> Unit = { _, _ -> },
+    isModerator: Boolean = false,
+    onModeratorDeletePost: ((post: VideoPost, reason: String, details: String) -> Unit)? = null,
     initialPostId: String? = null,
     uploadProgress: Float? = null
 ) {
@@ -255,7 +259,11 @@ fun VideoFeedScreen(
                         onDelete = { onDeletePost(post.id) },
                         onOpenAuthor = { onOpenAuthorProfile(post.userId) },
                         onToggleFollow = { onToggleFollow(post.userId) },
-                        onOpenComments = { activeCommentsVideoPost = post }
+                        onOpenComments = { activeCommentsVideoPost = post },
+                        isModerator = isModerator,
+                        onModeratorDelete = onModeratorDeletePost?.let { cb ->
+                            { reason, details -> cb(post, reason, details) }
+                        }
                     )
                 }
             }
@@ -494,16 +502,19 @@ private fun ReelPageItem(
     onDelete: () -> Unit,
     onOpenAuthor: () -> Unit,
     onToggleFollow: () -> Unit,
-    onOpenComments: () -> Unit
+    onOpenComments: () -> Unit,
+    isModerator: Boolean = false,
+    onModeratorDelete: ((reason: String, details: String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     var resolvedFile by remember(post.id) { mutableStateOf<File?>(null) }
     var isLoading by remember(post.id) { mutableStateOf(false) }
     var userPaused by remember(post.id) { mutableStateOf(false) }
     var showDeleteConfirm by remember(post.id) { mutableStateOf(false) }
+    var showModeratorDeleteDialog by remember(post.id) { mutableStateOf(false) }
     var isFirstFrameRendered by remember(post.id) { mutableStateOf(false) }
 
-    val shouldPlay = isActive && !userPaused && !showDeleteConfirm
+    val shouldPlay = isActive && !userPaused && !showDeleteConfirm && !showModeratorDeleteDialog
 
     LaunchedEffect(post.id, shouldPreload) {
         if (shouldPreload && resolvedFile == null && !isLoading) {
@@ -801,6 +812,21 @@ private fun ReelPageItem(
                         modifier = Modifier.size(24.dp)
                     )
                 }
+            } else if (isModerator && onModeratorDelete != null) {
+                IconButton(
+                    onClick = { showModeratorDeleteDialog = true },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                        .testTag("moderator_delete_video_reel_button_${post.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Shield,
+                        contentDescription = "Remove reel (Moderator)",
+                        tint = Color(0xFFFF6B6B),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
@@ -828,6 +854,19 @@ private fun ReelPageItem(
                     ) {
                         Text("Cancel")
                     }
+                }
+            )
+        }
+
+        if (showModeratorDeleteDialog && onModeratorDelete != null) {
+            ModeratorDeletePostDialog(
+                targetAuthorName = displayAuthorName,
+                contentTypeLabel = "reel",
+                contentPreview = post.caption,
+                onDismiss = { showModeratorDeleteDialog = false },
+                onConfirmDelete = { reason, details ->
+                    showModeratorDeleteDialog = false
+                    onModeratorDelete(reason, details)
                 }
             )
         }

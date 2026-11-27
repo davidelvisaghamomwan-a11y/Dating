@@ -484,12 +484,30 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "authorName", "caption", "mediaDurationSec", "chunkCount", "createdAt"]
+    },
+    "ModerationNoticeRecord": {
+      "title": "ModerationNoticeRecord",
+      "description": "Notice delivered to a user when a moderator deletes content for violating community guidelines.",
+      "type": "object",
+      "properties": {
+        "targetUid": { "type": "string" },
+        "moderatorUid": { "type": "string" },
+        "contentType": { "type": "string", "enum": ["POST", "REEL", "STORY", "PROFILE_VIDEO"] },
+        "contentId": { "type": "string" },
+        "contentPreview": { "type": "string" },
+        "reason": { "type": "string" },
+        "details": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["targetUid", "moderatorUid", "contentType", "contentId", "reason", "read", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": { "schema": { "$ref": "#/entities/PrivateUser" } },
     "/users/{userId}/fcmTokens/{tokenId}": { "schema": { "$ref": "#/entities/FcmToken" } },
     "/users/{userId}/favorites/{targetUid}": { "schema": { "$ref": "#/entities/FavoriteRecord" } },
+    "/users/{userId}/moderationNotices/{noticeId}": { "schema": { "$ref": "#/entities/ModerationNoticeRecord" } },
     "/publicProfiles/{userId}": { "schema": { "$ref": "#/entities/PublicProfile" } },
     "/publicProfiles/{userId}/videos/{videoId}": { "schema": { "$ref": "#/entities/ProfileVideoItem" } },
     "/publicProfiles/{userId}/videos/{videoId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },

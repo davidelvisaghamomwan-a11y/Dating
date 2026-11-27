@@ -47,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -338,6 +339,8 @@ fun StoryViewerDialog(
     onDeleteStory: (String) -> Unit,
     onOpenAuthorProfile: (String) -> Unit,
     onReplyToStory: ((authorUid: String, replyText: String) -> Unit)? = null,
+    isModerator: Boolean = false,
+    onModeratorDeleteStory: ((story: StoryItem, reason: String, details: String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     LaunchedEffect(stories.isEmpty()) {
@@ -360,8 +363,9 @@ fun StoryViewerDialog(
 
     var isHeldPaused by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember(story.id) { mutableStateOf(false) }
+    var showModeratorDeleteDialog by remember(story.id) { mutableStateOf(false) }
     var showViewerListSheet by remember { mutableStateOf(false) }
-    val isStoryPaused = isHeldPaused || showDeleteConfirm || showViewerListSheet
+    val isStoryPaused = isHeldPaused || showDeleteConfirm || showModeratorDeleteDialog || showViewerListSheet
     var replyDraft by remember { mutableStateOf("") }
     var isSendingReply by remember { mutableStateOf(false) }
 
@@ -674,6 +678,19 @@ fun StoryViewerDialog(
                             ) {
                                 Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete story", tint = Color.White)
                             }
+                        } else if (isModerator && onModeratorDeleteStory != null) {
+                            IconButton(
+                                onClick = { showModeratorDeleteDialog = true },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("moderator_delete_story_button_${story.id}")
+                            ) {
+                                Icon(
+                                    Icons.Filled.Shield,
+                                    contentDescription = "Remove story (Moderator)",
+                                    tint = Color(0xFFFF6B6B)
+                                )
+                            }
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Filled.Close, contentDescription = "Close story", tint = Color.White)
@@ -904,6 +921,20 @@ fun StoryViewerDialog(
                 TextButton(onClick = { showDeleteConfirm = false }) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    if (showModeratorDeleteDialog && onModeratorDeleteStory != null) {
+        ModeratorDeletePostDialog(
+            targetAuthorName = story.authorName.ifBlank { "Member" },
+            contentTypeLabel = "story",
+            contentPreview = story.caption,
+            onDismiss = { showModeratorDeleteDialog = false },
+            onConfirmDelete = { reason, details ->
+                showModeratorDeleteDialog = false
+                onModeratorDeleteStory(story, reason, details)
+                onDismiss()
             }
         )
     }

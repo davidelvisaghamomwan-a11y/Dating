@@ -25,10 +25,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.ModeComment
 import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,7 +41,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -63,6 +67,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.model.FeedPost
+import com.example.model.ModerationNoticeRecord
 import com.example.model.PublicProfile
 import com.example.model.SocialActivityItem
 import com.example.ui.components.ProfileAvatarImage
@@ -74,6 +79,7 @@ private val InstagramBlue = Color(0xFF0095F6)
 
 private enum class ActivityFilter(val label: String) {
     ALL("All"),
+    NOTICES("Notices"),
     FOLLOWS("Follows"),
     LIKES("Likes"),
     COMMENTS("Comments")
@@ -90,6 +96,7 @@ fun ActivityNotificationsScreen(
     onOpenProfile: (String) -> Unit,
     onOpenReels: (String) -> Unit,
     onOpenExplore: () -> Unit,
+    onMarkModerationNoticeRead: (String) -> Unit = {},
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -98,10 +105,12 @@ fun ActivityNotificationsScreen(
     }
 
     var selectedFilter by rememberSaveable { mutableStateOf(ActivityFilter.ALL) }
+    var selectedModerationNotice by remember { mutableStateOf<ModerationNoticeRecord?>(null) }
 
     val filteredActivities = remember(activities, selectedFilter) {
         when (selectedFilter) {
             ActivityFilter.ALL -> activities
+            ActivityFilter.NOTICES -> activities.filterIsInstance<SocialActivityItem.ModerationRemoval>()
             ActivityFilter.FOLLOWS -> activities.filterIsInstance<SocialActivityItem.NewFollower>()
             ActivityFilter.LIKES -> activities.filter {
                 it is SocialActivityItem.PostLike || it is SocialActivityItem.ReelLike
@@ -164,6 +173,7 @@ fun ActivityNotificationsScreen(
                 items(ActivityFilter.entries) { filter ->
                     val count = when (filter) {
                         ActivityFilter.ALL -> activities.size
+                        ActivityFilter.NOTICES -> activities.count { it is SocialActivityItem.ModerationRemoval }
                         ActivityFilter.FOLLOWS -> activities.count { it is SocialActivityItem.NewFollower }
                         ActivityFilter.LIKES -> activities.count {
                             it is SocialActivityItem.PostLike || it is SocialActivityItem.ReelLike
@@ -211,6 +221,7 @@ fun ActivityNotificationsScreen(
                         ) {
                             Icon(
                                 imageVector = when (selectedFilter) {
+                                    ActivityFilter.NOTICES -> Icons.Filled.Shield
                                     ActivityFilter.COMMENTS -> Icons.Outlined.ModeComment
                                     ActivityFilter.LIKES -> Icons.Outlined.FavoriteBorder
                                     else -> Icons.Outlined.NotificationsNone
@@ -222,6 +233,7 @@ fun ActivityNotificationsScreen(
                         }
                         Text(
                             text = when (selectedFilter) {
+                                ActivityFilter.NOTICES -> "No guideline notices"
                                 ActivityFilter.FOLLOWS -> "No new followers yet"
                                 ActivityFilter.LIKES -> "No likes yet"
                                 ActivityFilter.COMMENTS -> "No comments yet"
@@ -261,12 +273,82 @@ fun ActivityNotificationsScreen(
                             onToggleFollow = { onToggleFollow(item.actorUid) },
                             onOpenProfile = { onOpenProfile(item.actorUid) },
                             onOpenReel = { reelId -> onOpenReels(reelId) },
-                            onOpenPostOwner = { post -> onOpenProfile(post.userId) }
+                            onOpenPostOwner = { post -> onOpenProfile(post.userId) },
+                            onOpenModerationNotice = { notice ->
+                                selectedModerationNotice = notice
+                                if (!notice.read) {
+                                    onMarkModerationNoticeRead(notice.id)
+                                }
+                            }
                         )
                     }
                 }
             }
         }
+    }
+
+    selectedModerationNotice?.let { notice ->
+        AlertDialog(
+            onDismissRequest = { selectedModerationNotice = null },
+            modifier = Modifier.testTag("moderation_notice_detail_dialog"),
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.Shield,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "${notice.contentTypeLabel().replaceFirstChar { it.uppercase() }} Removed",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Your ${notice.contentTypeLabel()} was removed by a moderator for violating Community Guidelines.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Reason: ${notice.reason}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    val cleanDetails = notice.details?.trim().orEmpty()
+                    if (cleanDetails.isNotBlank()) {
+                        Text(
+                            text = cleanDetails,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val cleanPreview = notice.contentPreview?.trim().orEmpty()
+                    if (cleanPreview.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "\"$cleanPreview\"",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { selectedModerationNotice = null }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 }
 
@@ -278,7 +360,8 @@ private fun ActivityNotificationRow(
     onToggleFollow: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenReel: (String) -> Unit,
-    onOpenPostOwner: (FeedPost) -> Unit
+    onOpenPostOwner: (FeedPost) -> Unit,
+    onOpenModerationNotice: (ModerationNoticeRecord) -> Unit
 ) {
     val avatarPhoto = actorProfile?.allProfilePhotos()?.firstOrNull() ?: item.actorPhoto
     val timeAgo = remember(item.timestampMs) {
@@ -294,31 +377,55 @@ private fun ActivityNotificationRow(
         }
     }
 
+    val isUnreadModNotice = (item as? SocialActivityItem.ModerationRemoval)?.notice?.read == false
     val onRowClick: () -> Unit = when (item) {
         is SocialActivityItem.NewFollower -> onOpenProfile
         is SocialActivityItem.PostLike -> { { onOpenPostOwner(item.post) } }
         is SocialActivityItem.PostComment -> { { onOpenPostOwner(item.post) } }
         is SocialActivityItem.ReelLike -> { { onOpenReel(item.reel.id) } }
         is SocialActivityItem.ReelComment -> { { onOpenReel(item.reel.id) } }
+        is SocialActivityItem.ModerationRemoval -> { { onOpenModerationNotice(item.notice) } }
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(
+                if (isUnreadModNotice) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                else Color.Transparent
+            )
             .clickable(onClick = onRowClick)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .testTag("activity_item_${item.id}"),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ProfileAvatarImage(
-            photoDataUrl = avatarPhoto,
-            displayName = item.actorName,
-            seed = item.actorUid,
-            modifier = Modifier
-                .size(46.dp)
-                .clickable(onClick = onOpenProfile),
-            initialsFontSizeSp = 18
-        )
+        if (item is SocialActivityItem.ModerationRemoval) {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(23.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .testTag("activity_mod_notice_${item.notice.id}"),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Shield,
+                    contentDescription = "Guideline notice",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        } else {
+            ProfileAvatarImage(
+                photoDataUrl = avatarPhoto,
+                displayName = item.actorName,
+                seed = item.actorUid,
+                modifier = Modifier
+                    .size(46.dp)
+                    .clickable(onClick = onOpenProfile),
+                initialsFontSizeSp = 18
+            )
+        }
 
         Spacer(modifier = Modifier.width(12.dp))
 
@@ -342,6 +449,21 @@ private fun ActivityNotificationRow(
                         append("commented on your reel: ")
                         withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurface)) {
                             append("\"${item.comment.text}\"")
+                        }
+                    }
+                    is SocialActivityItem.ModerationRemoval -> {
+                        append("removed your ${item.notice.contentTypeLabel()} for violating guidelines: ")
+                        withStyle(
+                            SpanStyle(
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        ) {
+                            append(item.notice.reason)
+                        }
+                        val cleanNoticeDetails = item.notice.details?.trim().orEmpty()
+                        if (cleanNoticeDetails.isNotBlank()) {
+                            append(" — $cleanNoticeDetails")
                         }
                     }
                 }
@@ -429,6 +551,21 @@ private fun ActivityNotificationRow(
                     isVideo = true,
                     fallbackText = item.reel.caption
                 )
+            }
+
+            is SocialActivityItem.ModerationRemoval -> {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (!item.notice.read) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Text(
+                        text = if (!item.notice.read) "New" else "Details",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (!item.notice.read) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     }

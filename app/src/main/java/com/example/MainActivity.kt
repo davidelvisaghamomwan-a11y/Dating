@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.AddBox
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Home
@@ -105,6 +106,7 @@ import com.example.auth.GoogleAuthHelper
 import com.example.auth.PendingRegistrationPrefs
 import com.example.communication.CallRingtoneController
 import com.example.data.KindredRepository
+import com.example.model.ModerationNoticeRecord
 import com.example.model.PublicProfile
 import com.example.model.UiState
 import com.example.notifications.KindredBackgroundService
@@ -397,6 +399,8 @@ private fun MainKindredApp(
     val isAdminUser by viewModel.isAdminUser.collectAsStateWithLifecycle()
     val adminReportsState by viewModel.adminReportsState.collectAsStateWithLifecycle()
     val adminAllProfilesState by viewModel.adminAllProfilesState.collectAsStateWithLifecycle()
+    val moderationNoticesState by viewModel.moderationNoticesState.collectAsStateWithLifecycle()
+    var activeModerationAlertNotice by remember { mutableStateOf<ModerationNoticeRecord?>(null) }
     val statusMessage by viewModel.actionStatusMessage.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
     val isUploadingMedia by viewModel.isUploadingMedia.collectAsStateWithLifecycle()
@@ -582,7 +586,27 @@ private fun MainKindredApp(
                         tagKey = "follow_${alert.fromUid}"
                     )
                 }
+
+                is KindredPushAlert.ModerationNoticeAlert -> {
+                    KindredNotificationHelper.showModerationNoticeNotification(
+                        context = context,
+                        noticeId = alert.notice.id,
+                        contentTypeLabel = alert.notice.contentTypeLabel(),
+                        reason = alert.notice.reason,
+                        details = alert.notice.details
+                    )
+                    if (!alert.notice.read && activeModerationAlertNotice == null) {
+                        activeModerationAlertNotice = alert.notice
+                    }
+                }
             }
+        }
+    }
+
+    val firstUnreadModNotice = moderationNoticesState.firstOrNull { !it.read }
+    LaunchedEffect(firstUnreadModNotice?.id) {
+        if (firstUnreadModNotice != null && activeModerationAlertNotice == null) {
+            activeModerationAlertNotice = firstUnreadModNotice
         }
     }
 
@@ -667,7 +691,8 @@ private fun MainKindredApp(
             lastSeenActivityCount = socialActivityState.size
         }
     }
-    val activityBadgeCount = maxOf(0, socialActivityState.size - lastSeenActivityCount)
+    val unreadModNoticesCount = moderationNoticesState.count { !it.read }
+    val activityBadgeCount = maxOf(unreadModNoticesCount, socialActivityState.size - lastSeenActivityCount)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val useRail = maxWidth >= 840.dp
@@ -955,6 +980,16 @@ private fun MainKindredApp(
                                         unreadMessageCount = unreadInboxCount,
                                         incomingNotificationCount = activityBadgeCount,
                                         profilesByUid = profilesByUid,
+                                        isModerator = isAdminUser,
+                                        onModeratorDeleteFeedPost = { post, reason, details ->
+                                            viewModel.moderatorDeleteFeedPost(post, reason, details)
+                                        },
+                                        onModeratorDeleteVideoPost = { reel, reason, details ->
+                                            viewModel.moderatorDeleteVideoPost(reel, reason, details)
+                                        },
+                                        onModeratorDeleteStory = { story, reason, details ->
+                                            viewModel.moderatorDeleteStory(story, reason, details)
+                                        },
                                         onReplyToStory = { authorUid, replyText ->
                                             viewModel.replyToStory(authorUid, replyText)
                                         },
@@ -1021,6 +1056,13 @@ private fun MainKindredApp(
                                         onDeleteVideoPost = { postId ->
                                             viewModel.deleteVideoPost(postId)
                                         },
+                                        isModerator = isAdminUser,
+                                        onModeratorDeleteFeedPost = { post, reason, details ->
+                                            viewModel.moderatorDeleteFeedPost(post, reason, details)
+                                        },
+                                        onModeratorDeleteVideoPost = { reel, reason, details ->
+                                            viewModel.moderatorDeleteVideoPost(reel, reason, details)
+                                        },
                                         resolveFeedPostVideoFile = { post ->
                                             viewModel.resolveFeedPostVideoFile(context, post)
                                         },
@@ -1053,6 +1095,9 @@ private fun MainKindredApp(
                                         },
                                         onOpenExplore = {
                                             navigateToTab(ROUTE_SEARCH)
+                                        },
+                                        onMarkModerationNoticeRead = { noticeId ->
+                                            viewModel.markModerationNoticeRead(noticeId)
                                         },
                                         onBack = {
                                             if (!navController.popBackStack()) {
@@ -1642,6 +1687,10 @@ private fun MainKindredApp(
                                         onDeleteComment = { postId, commentId ->
                                             viewModel.deleteVideoPostComment(postId, commentId)
                                         },
+                                        isModerator = isAdminUser,
+                                        onModeratorDeletePost = { post, reason, details ->
+                                            viewModel.moderatorDeleteVideoPost(post, reason, details)
+                                        },
                                         initialPostId = initialReelIdForVideoFeed,
                                         uploadProgress = uploadProgress
                                     )
@@ -1699,6 +1748,14 @@ private fun MainKindredApp(
                                             },
                                             onOpenProfile = { target ->
                                                 openUserProfileRoute(target.userId)
+                                            },
+                                            feedPosts = feedPostsState,
+                                            videoPosts = videoFeedState,
+                                            onModeratorDeleteFeedPost = { post, reason, details, relatedReportId ->
+                                                viewModel.moderatorDeleteFeedPost(post, reason, details, relatedReportId)
+                                            },
+                                            onModeratorDeleteVideoPost = { reel, reason, details, relatedReportId ->
+                                                viewModel.moderatorDeleteVideoPost(reel, reason, details, relatedReportId)
                                             }
                                         )
                                     } else {
@@ -1970,6 +2027,81 @@ private fun MainKindredApp(
                     modifier = Modifier.testTag("dismiss_update_button")
                 ) {
                     Text("Later")
+                }
+            }
+        )
+    }
+
+    activeModerationAlertNotice?.let { notice ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                viewModel.markModerationNoticeRead(notice.id)
+                activeModerationAlertNotice = null
+            },
+            modifier = Modifier.testTag("in_app_moderation_notice_dialog"),
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.Shield,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "${notice.contentTypeLabel().replaceFirstChar { it.uppercase() }} Removed",
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Your ${notice.contentTypeLabel()} was removed by a moderator for violating Community Guidelines."
+                    )
+                    Text(
+                        text = "Reason: ${notice.reason}",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                    )
+                    val cleanDetails = notice.details?.trim().orEmpty()
+                    if (cleanDetails.isNotBlank()) {
+                        Text(
+                            text = cleanDetails,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val cleanPreview = notice.contentPreview?.trim().orEmpty()
+                    if (cleanPreview.isNotBlank()) {
+                        Text(
+                            text = "Post: \"$cleanPreview\"",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.Button(
+                    onClick = {
+                        viewModel.markModerationNoticeRead(notice.id)
+                        activeModerationAlertNotice = null
+                    },
+                    modifier = Modifier.testTag("moderation_notice_ack_button")
+                ) {
+                    Text("I Understand")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        viewModel.markModerationNoticeRead(notice.id)
+                        activeModerationAlertNotice = null
+                        navigateToTab(ROUTE_ACTIVITY)
+                    },
+                    modifier = Modifier.testTag("moderation_notice_view_activity_button")
+                ) {
+                    Text("View in Activity")
                 }
             }
         )

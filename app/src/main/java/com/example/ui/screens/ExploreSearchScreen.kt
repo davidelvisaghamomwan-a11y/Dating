@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.VolumeOff
@@ -98,6 +99,7 @@ import com.example.model.FeedPost
 import com.example.model.PublicProfile
 import com.example.model.VideoPost
 import com.example.ui.components.InstagramFeedPostCard
+import com.example.ui.components.ModeratorDeletePostDialog
 import com.example.ui.components.PostCommentsSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
@@ -176,6 +178,9 @@ fun ExploreSearchScreen(
     onDeleteVideoComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
     onDeleteVideoPost: (postId: String) -> Unit = {},
+    isModerator: Boolean = false,
+    onModeratorDeleteFeedPost: (post: FeedPost, reason: String, details: String) -> Unit = { _, _, _ -> },
+    onModeratorDeleteVideoPost: (reel: VideoPost, reason: String, details: String) -> Unit = { _, _, _ -> },
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File>,
     resolveVideoPostFile: suspend (VideoPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
     onRefreshExplore: () -> Unit = {}
@@ -708,6 +713,10 @@ fun ExploreSearchScreen(
                                                 selectedExploreIndex = null
                                                 onOpenUserProfile(livePost.userId)
                                             },
+                                            isModerator = isModerator,
+                                            onModeratorDeletePost = { reason, details ->
+                                                onModeratorDeleteFeedPost(livePost, reason, details)
+                                            },
                                             isVisibleForAutoPlay = autoPlayKey == exploreItem.key
                                         )
                                     }
@@ -743,6 +752,10 @@ fun ExploreSearchScreen(
                                             },
                                             onDeleteReel = {
                                                 onDeleteVideoPost(liveReel.id)
+                                            },
+                                            isModerator = isModerator,
+                                            onModeratorDeleteReel = { reason, details ->
+                                                onModeratorDeleteVideoPost(liveReel, reason, details)
                                             },
                                             onOpenComments = {
                                                 activeCommentsPost = FeedPost(
@@ -926,6 +939,8 @@ private fun ExploreReelFeedCard(
     onToggleFollow: () -> Unit,
     onOpenAuthor: () -> Unit,
     onDeleteReel: () -> Unit = {},
+    isModerator: Boolean = false,
+    onModeratorDeleteReel: ((reason: String, details: String) -> Unit)? = null,
     onOpenComments: () -> Unit
 ) {
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
@@ -935,6 +950,7 @@ private fun ExploreReelFeedCard(
     val isOwner = videoPost.userId == currentUserId
 
     var confirmDelete by remember(videoPost.id) { mutableStateOf(false) }
+    var showModeratorDeleteDialog by remember(videoPost.id) { mutableStateOf(false) }
     var resolvedFile by remember(videoPost.id) { mutableStateOf<File?>(null) }
     var isMuted by remember(videoPost.id) { mutableStateOf(false) }
     var userPaused by remember(videoPost.id) { mutableStateOf(false) }
@@ -945,9 +961,9 @@ private fun ExploreReelFeedCard(
         resolveVideoFile(videoPost).onSuccess { resolvedFile = it }
     }
 
-    LaunchedEffect(isVisibleForAutoPlay, resolvedFile, userPaused) {
+    LaunchedEffect(isVisibleForAutoPlay, resolvedFile, userPaused, showModeratorDeleteDialog) {
         val vv = videoViewRef ?: return@LaunchedEffect
-        if (isVisibleForAutoPlay && resolvedFile != null && !userPaused) {
+        if (isVisibleForAutoPlay && resolvedFile != null && !userPaused && !showModeratorDeleteDialog) {
             if (!vv.isPlaying) vv.start()
         } else {
             if (vv.isPlaying) vv.pause()
@@ -1011,12 +1027,26 @@ private fun ExploreReelFeedCard(
                     )
                 }
             } else {
-                TextButton(onClick = onToggleFollow) {
-                    Text(
-                        text = if (isFollowing) "Following" else "Follow",
-                        color = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else ExploreInstagramBlue,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onToggleFollow) {
+                        Text(
+                            text = if (isFollowing) "Following" else "Follow",
+                            color = if (isFollowing) MaterialTheme.colorScheme.onSurfaceVariant else ExploreInstagramBlue,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (isModerator && onModeratorDeleteReel != null) {
+                        IconButton(
+                            onClick = { showModeratorDeleteDialog = true },
+                            modifier = Modifier.testTag("moderator_delete_explore_reel_${videoPost.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Shield,
+                                contentDescription = "Remove reel (Moderator)",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1197,6 +1227,19 @@ private fun ExploreReelFeedCard(
                 TextButton(onClick = { confirmDelete = false }) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    if (showModeratorDeleteDialog && onModeratorDeleteReel != null) {
+        ModeratorDeletePostDialog(
+            targetAuthorName = displayAuthorName,
+            contentTypeLabel = "reel",
+            contentPreview = videoPost.caption,
+            onDismiss = { showModeratorDeleteDialog = false },
+            onConfirmDelete = { reason, details ->
+                showModeratorDeleteDialog = false
+                onModeratorDeleteReel(reason, details)
             }
         )
     }

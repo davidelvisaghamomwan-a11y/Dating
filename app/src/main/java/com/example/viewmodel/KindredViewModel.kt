@@ -23,6 +23,7 @@ import com.example.model.FollowRecord
 import com.example.model.KindredConstants
 import com.example.model.MatchRecord
 import com.example.model.MatchThreadItem
+import com.example.model.ModerationNoticeRecord
 import com.example.model.PrivateUser
 import com.example.model.ProfileLikeRecord
 import com.example.model.ProfileVideoItem
@@ -87,6 +88,7 @@ sealed interface KindredPushAlert {
         val callType: String
     ) : KindredPushAlert
     data class NewFollowerAlert(val fromUid: String, val fromName: String) : KindredPushAlert
+    data class ModerationNoticeAlert(val notice: ModerationNoticeRecord) : KindredPushAlert
 }
 
 data class IncomingCallAlert(
@@ -883,6 +885,17 @@ class KindredViewModel(
             }
         }
 
+    val moderationNoticesState: StateFlow<List<ModerationNoticeRecord>> = socialRepo.observeModerationNotices(currentUserId)
+        .catch { error ->
+            if (error is CancellationException) throw error
+            emit(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
     val socialActivityState: StateFlow<List<SocialActivityItem>> = combine(
         allFollowsState,
         feedPostsState,
@@ -890,7 +903,8 @@ class KindredViewModel(
         myPostCommentsActivityFlow,
         myReelCommentsActivityFlow,
         allProfilesFlow,
-        blockingStateFlow
+        blockingStateFlow,
+        moderationNoticesState
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         val follows = values[0] as List<FollowRecord>
@@ -905,6 +919,8 @@ class KindredViewModel(
         @Suppress("UNCHECKED_CAST")
         val profiles = values[5] as List<PublicProfile>
         val blocking = values[6] as BlockingSnapshot
+        @Suppress("UNCHECKED_CAST")
+        val modNotices = values[7] as List<ModerationNoticeRecord>
 
         val blocked = blocking.allBlockedIds
         val profileMap = profiles.associateBy { it.userId }
@@ -992,6 +1008,18 @@ class KindredViewModel(
                         comment = comment
                     )
                 }
+        }
+
+        // Moderator content removal notices
+        modNotices.forEach { notice ->
+            items += SocialActivityItem.ModerationRemoval(
+                id = "modnotice_${notice.id}",
+                timestampMs = notice.createdAt?.toDate()?.time ?: System.currentTimeMillis(),
+                actorUid = notice.moderatorUid,
+                actorName = "Kindred Moderation",
+                actorPhoto = null,
+                notice = notice
+            )
         }
 
         items.sortedByDescending { it.timestampMs }
@@ -1206,6 +1234,24 @@ class KindredViewModel(
                     }
                 }
             }
+        }
+
+        // Real-time moderation removal notice alert emitter
+        viewModelScope.launch {
+            val notifiedNoticeIds = mutableSetOf<String>()
+            moderationNoticesState
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    Log.w(TAG, "Moderation notice watcher paused", error)
+                }
+                .collect { notices ->
+                    notices.filter { !it.read && it.id.isNotBlank() }
+                        .forEach { notice ->
+                            if (notifiedNoticeIds.add(notice.id)) {
+                                _pushAlerts.tryEmit(KindredPushAlert.ModerationNoticeAlert(notice))
+                            }
+                        }
+                }
         }
     }
 
@@ -2635,6 +2681,86 @@ class KindredViewModel(
                     _actionStatusMessage.value = if (suspended) "User suspended" else "User reinstated"
                 }
                 .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Action failed" }
+        }
+    }
+
+    fun moderatorDeleteFeedPost(
+        post: FeedPost,
+        reason: String,
+        details: String = "",
+        relatedReportId: String? = null
+    ) {
+        val cleanPostId = post.id.ifBlank { post.postId }.trim()
+        if (cleanPostId.isBlank()) return
+        _pendingDeletedFeedPostIds.update { it + cleanPostId }
+        viewModelScope.launch {
+            socialRepo.moderatorDeleteFeedPost(post, reason, details, relatedReportId)
+                .onSuccess {
+                    _actionStatusMessage.value = "Post removed and user notified"
+                    autoRefreshFeed()
+                }
+                .onFailure { err ->
+                    _pendingDeletedFeedPostIds.update { it - cleanPostId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Moderation delete failed"
+                }
+        }
+    }
+
+    fun moderatorDeleteVideoPost(
+        reel: VideoPost,
+        reason: String,
+        details: String = "",
+        relatedReportId: String? = null
+    ) {
+        val cleanPostId = reel.id.trim()
+        if (cleanPostId.isBlank()) return
+        _pendingDeletedVideoPostIds.update { it + cleanPostId }
+        viewModelScope.launch {
+            socialRepo.moderatorDeleteVideoPost(reel, reason, details, relatedReportId)
+                .onSuccess {
+                    _actionStatusMessage.value = "Reel removed and user notified"
+                    autoRefreshFeed()
+                }
+                .onFailure { err ->
+                    _pendingDeletedVideoPostIds.update { it - cleanPostId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Moderation delete failed"
+                }
+        }
+    }
+
+    fun moderatorDeleteStory(
+        story: StoryItem,
+        reason: String,
+        details: String = ""
+    ) {
+        val cleanStoryId = story.id.trim()
+        if (cleanStoryId.isBlank()) return
+        _pendingDeletedStoryIds.update { it + cleanStoryId }
+        viewModelScope.launch {
+            socialRepo.moderatorDeleteStory(story, reason, details)
+                .onSuccess {
+                    _actionStatusMessage.value = "Story removed and user notified"
+                    autoRefreshFeed()
+                }
+                .onFailure { err ->
+                    _pendingDeletedStoryIds.update { it - cleanStoryId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Moderation delete failed"
+                }
+        }
+    }
+
+    fun markModerationNoticeRead(noticeId: String) {
+        if (noticeId.isBlank()) return
+        viewModelScope.launch {
+            socialRepo.markModerationNoticeRead(currentUserId, noticeId)
+        }
+    }
+
+    fun markAllModerationNoticesRead() {
+        val unreadIds = moderationNoticesState.value.filter { !it.read && it.id.isNotBlank() }.map { it.id }
+        if (unreadIds.isEmpty()) return
+        viewModelScope.launch {
+            socialRepo.markAllModerationNoticesRead(currentUserId, unreadIds)
         }
     }
 

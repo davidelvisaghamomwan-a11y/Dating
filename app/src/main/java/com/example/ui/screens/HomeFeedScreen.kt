@@ -64,6 +64,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -132,6 +133,7 @@ import com.example.model.StoryItem
 import com.example.model.VideoPost
 import com.example.ui.components.CreatePostComposerSheet
 import com.example.ui.components.InstagramFeedPostCard
+import com.example.ui.components.ModeratorDeletePostDialog
 import com.example.ui.components.PostCommentsSheet
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.components.StoriesTrayRow
@@ -236,6 +238,10 @@ fun HomeFeedScreen(
     unreadMessageCount: Int = 0,
     incomingNotificationCount: Int = 0,
     profilesByUid: Map<String, PublicProfile> = emptyMap(),
+    isModerator: Boolean = false,
+    onModeratorDeleteFeedPost: (post: FeedPost, reason: String, details: String) -> Unit = { _, _, _ -> },
+    onModeratorDeleteVideoPost: (reel: VideoPost, reason: String, details: String) -> Unit = { _, _, _ -> },
+    onModeratorDeleteStory: (story: StoryItem, reason: String, details: String) -> Unit = { _, _, _ -> },
     onOpenActivity: () -> Unit = {},
     onNavigateToInbox: () -> Unit = {}
 ) {
@@ -702,6 +708,10 @@ fun HomeFeedScreen(
                                                 onReportUser(candidate, "Inappropriate Content", "Post ${post.id}", false)
                                             }
                                         },
+                                        isModerator = isModerator,
+                                        onModeratorDeletePost = { reason, details ->
+                                            onModeratorDeleteFeedPost(post, reason, details)
+                                        },
                                         isVisibleForAutoPlay = (item.key == autoPlayVideoKey)
                                     )
                                 }
@@ -738,6 +748,10 @@ fun HomeFeedScreen(
                                             if (candidate != null) {
                                                 onReportUser(candidate, "Inappropriate Content", "Reel ${reel.id}", false)
                                             }
+                                        },
+                                        isModerator = isModerator,
+                                        onModeratorDeleteReel = { reason, details ->
+                                            onModeratorDeleteVideoPost(reel, reason, details)
                                         },
                                         isVisibleForAutoPlay = (item.key == autoPlayVideoKey)
                                     )
@@ -825,6 +839,8 @@ fun HomeFeedScreen(
             onDeleteStory = onDeleteStory,
             onOpenAuthorProfile = onOpenUserProfileById,
             onReplyToStory = onReplyToStory,
+            isModerator = isModerator,
+            onModeratorDeleteStory = onModeratorDeleteStory,
             onDismiss = { activeStoryIndex = null }
         )
     }
@@ -1208,6 +1224,8 @@ private fun HomeReelPostCard(
     onOpenAuthor: () -> Unit,
     onOpenFullScreenReel: () -> Unit,
     onReportReel: () -> Unit = {},
+    isModerator: Boolean = false,
+    onModeratorDeleteReel: ((reason: String, details: String) -> Unit)? = null,
     isVisibleForAutoPlay: Boolean = false
 ) {
     val context = LocalContext.current
@@ -1239,6 +1257,7 @@ private fun HomeReelPostCard(
 
     var showMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember(reel.id) { mutableStateOf(false) }
+    var showModeratorDeleteDialog by remember(reel.id) { mutableStateOf(false) }
     var showHeartPop by remember { mutableStateOf(false) }
     val heartScale = remember { Animatable(0.2f) }
     val heartAlpha = remember { Animatable(1f) }
@@ -1491,6 +1510,28 @@ private fun HomeReelPostCard(
                                     onReportReel()
                                 }
                             )
+                            if (isModerator && onModeratorDeleteReel != null) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Remove Reel (Moderator)",
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Filled.Shield,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        showModeratorDeleteDialog = true
+                                    },
+                                    modifier = Modifier.testTag("moderator_delete_reel_menu_${reel.id}")
+                                )
+                            }
                         }
                         DropdownMenuItem(
                             text = { Text("Share Reel") },
@@ -1814,6 +1855,19 @@ private fun HomeReelPostCard(
                 ) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    if (showModeratorDeleteDialog && onModeratorDeleteReel != null) {
+        ModeratorDeletePostDialog(
+            targetAuthorName = displayAuthorName,
+            contentTypeLabel = "reel",
+            contentPreview = reel.caption,
+            onDismiss = { showModeratorDeleteDialog = false },
+            onConfirmDelete = { reason, details ->
+                showModeratorDeleteDialog = false
+                onModeratorDeleteReel(reason, details)
             }
         )
     }

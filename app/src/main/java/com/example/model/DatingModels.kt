@@ -355,6 +355,15 @@ sealed interface SocialActivityItem {
         val reel: VideoPost,
         val comment: FeedComment
     ) : SocialActivityItem
+
+    data class ModerationRemoval(
+        override val id: String,
+        override val timestampMs: Long,
+        override val actorUid: String,
+        override val actorName: String,
+        override val actorPhoto: String?,
+        val notice: ModerationNoticeRecord
+    ) : SocialActivityItem
 }
 
 @Keep
@@ -572,6 +581,27 @@ data class ReportRecord(
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+@Keep
+@IgnoreExtraProperties
+data class ModerationNoticeRecord(
+    @DocumentId val id: String = "",
+    val targetUid: String = "",
+    val moderatorUid: String = "",
+    val contentType: String = "POST",
+    val contentId: String = "",
+    val contentPreview: String? = null,
+    val reason: String = "",
+    val details: String? = null,
+    val read: Boolean = false,
+    @ServerTimestamp val createdAt: Timestamp? = null
+) {
+    fun contentTypeLabel(): String = when (contentType.uppercase()) {
+        "REEL", "VIDEO" -> "reel"
+        "STORY" -> "story"
+        else -> "post"
+    }
+}
+
 sealed interface UiState<out T> {
     data object Loading : UiState<Nothing>
     data class Success<T>(val data: T) : UiState<T>
@@ -643,6 +673,16 @@ data class MatchThreadItem(
 object KindredConstants {
     const val MAX_PROFILE_PHOTOS = 12
     const val ADMIN_EMAIL = "davidelvisaghamomwan@gmail.com"
+
+    val MODERATION_VIOLATION_REASONS = listOf(
+        "Harassment or bullying",
+        "Hate speech or discrimination",
+        "Nudity or explicit content",
+        "Spam, scam, or fraud",
+        "Violence or dangerous behavior",
+        "Misinformation or impersonation",
+        "Other guideline violation"
+    )
 
     val INTEREST_OPTIONS = listOf(
         "Coffee", "Hiking", "Architecture", "Live Music",

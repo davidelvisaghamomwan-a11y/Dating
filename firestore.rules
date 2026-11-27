@@ -210,11 +210,23 @@ service cloud.firestore {
              data.reporterUid != data.reportedUid &&
              data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 100 &&
              (!('details' in data) || (data.details is string && data.details.size() <= 500)) &&
-             data.sourceSurface in ['DISCOVER', 'HOME_FEED', 'SEARCH', 'CHAT', 'PROFILE', 'VIDEO_FEED', 'STORY', 'FEED_POST'] &&
+             data.sourceSurface in ['DISCOVER', 'HOME_FEED', 'SEARCH', 'CHAT', 'PROFILE', 'USER_PROFILE', 'VIDEO_FEED', 'STORY', 'FEED_POST'] &&
              (!('matchId' in data) || isValidId(data.matchId)) &&
              (!('status' in data) || data.status in ['OPEN', 'RESOLVED', 'DISMISSED']) &&
              (!('resolvedBy' in data) || isValidId(data.resolvedBy)) &&
              (!('resolvedAt' in data) || isValidTimestamp(data.resolvedAt)) &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidModerationNotice(data) {
+      return data.targetUid is string && isValidId(data.targetUid) &&
+             data.moderatorUid is string && isValidId(data.moderatorUid) &&
+             data.contentType in ['POST', 'REEL', 'STORY', 'PROFILE_VIDEO'] &&
+             data.contentId is string && isValidId(data.contentId) &&
+             (!('contentPreview' in data) || (data.contentPreview is string && data.contentPreview.size() <= 200)) &&
+             data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 120 &&
+             (!('details' in data) || (data.details is string && data.details.size() <= 500)) &&
+             data.read is bool &&
              isValidTimestamp(data.createdAt);
     }
 
@@ -287,6 +299,35 @@ service cloud.firestore {
                                  isValidTimestamp(incoming().createdAt);
 
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(targetUid);
+      }
+
+      // 2d. Moderator Content-Removal Notices (/users/{userId}/moderationNotices/{noticeId})
+      match /moderationNotices/{noticeId} {
+        allow get, list: if isOwner(userId) || isAdmin();
+
+        allow create: if isAdmin() &&
+                         isValidId(userId) &&
+                         isValidId(noticeId) &&
+                         incoming().targetUid == userId &&
+                         incoming().moderatorUid == request.auth.uid &&
+                         incoming().read == false &&
+                         incoming().keys().hasAll(['targetUid', 'moderatorUid', 'contentType', 'contentId', 'reason', 'read', 'createdAt']) &&
+                         incoming().keys().hasOnly(['targetUid', 'moderatorUid', 'contentType', 'contentId', 'contentPreview', 'reason', 'details', 'read', 'createdAt']) &&
+                         isValidModerationNotice(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(userId) &&
+                         isValidId(noticeId) &&
+                         incoming().targetUid == existing().targetUid &&
+                         incoming().moderatorUid == existing().moderatorUid &&
+                         incoming().contentType == existing().contentType &&
+                         incoming().contentId == existing().contentId &&
+                         incoming().reason == existing().reason &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidModerationNotice(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+
+        allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(noticeId);
       }
     }
 

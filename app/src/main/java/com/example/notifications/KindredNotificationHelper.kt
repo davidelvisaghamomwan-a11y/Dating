@@ -34,6 +34,7 @@ object KindredNotificationHelper {
     const val TYPE_NEW_FOLLOWER = "NEW_FOLLOWER"
     const val TYPE_POST_LIKE = "POST_LIKE"
     const val TYPE_POST_COMMENT = "POST_COMMENT"
+    const val TYPE_MODERATION_NOTICE = "MODERATION_NOTICE"
 
     const val EXTRA_MATCH_ID = "extra_match_id"
     const val EXTRA_CALL_ID = "extra_call_id"
@@ -305,6 +306,28 @@ object KindredNotificationHelper {
             notificationType = TYPE_POST_COMMENT,
             tagKey = "pcomment_${postId ?: "p"}_${commenterName}_${cleanComment.hashCode()}",
             postId = postId
+        )
+    }
+
+    fun showModerationNoticeNotification(
+        context: Context,
+        noticeId: String,
+        contentTypeLabel: String,
+        reason: String,
+        details: String? = null
+    ) {
+        val cleanDetails = details?.trim().orEmpty()
+        val body = if (cleanDetails.isNotBlank()) {
+            "Your $contentTypeLabel was removed: $reason — $cleanDetails"
+        } else {
+            "Your $contentTypeLabel was removed for violating community guidelines: $reason"
+        }
+        showSocialNotification(
+            context = context,
+            title = "Content Removed by Moderator",
+            body = body,
+            notificationType = TYPE_MODERATION_NOTICE,
+            tagKey = "mod_$noticeId"
         )
     }
 

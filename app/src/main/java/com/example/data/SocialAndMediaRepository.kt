@@ -10,6 +10,7 @@ import com.example.model.FriendRequestRecord
 import com.example.model.FriendshipRecord
 import com.example.model.KindredConstants
 import com.example.model.MediaChunkRecord
+import com.example.model.ModerationNoticeRecord
 import com.example.model.ProfileLikeRecord
 import com.example.model.ProfileVideoItem
 import com.example.model.ProfileViewRecord
@@ -2168,6 +2169,285 @@ class SocialAndMediaRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    fun observeModerationNotices(userId: String): Flow<List<ModerationNoticeRecord>> {
+        if (userId.isBlank()) return flowOf(emptyList())
+        val path = "users/$userId/moderationNotices"
+        return flow {
+            emitAll(
+                db.collection("users")
+                    .document(userId)
+                    .collection("moderationNotices")
+                    .snapshots()
+                    .map { snap ->
+                        snap.toObjects(
+                            ModerationNoticeRecord::class.java,
+                            DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                        ).sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+                    }
+                    .catch { handleStreamError(it, OperationType.LIST, path, userId) }
+            )
+        }
+    }
+
+    suspend fun markModerationNoticeRead(userId: String, noticeId: String): Result<Unit> {
+        val cleanUid = userId.trim()
+        val cleanNoticeId = noticeId.trim()
+        if (cleanUid.isBlank() || cleanNoticeId.isBlank()) {
+            return Result.success(Unit)
+        }
+        var docPath = "users/$cleanUid/moderationNotices/$cleanNoticeId"
+        return try {
+            val uid = requireUserId()
+            if (uid != cleanUid) {
+                return Result.failure(SecurityException("Cannot mark another user's notice read."))
+            }
+            val ref = db.collection("users").document(cleanUid).collection("moderationNotices").document(cleanNoticeId)
+            docPath = ref.path
+            ref.update("read", true).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun markAllModerationNoticesRead(userId: String, noticeIds: List<String>): Result<Unit> {
+        val cleanUid = userId.trim()
+        val ids = noticeIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (cleanUid.isBlank() || ids.isEmpty()) return Result.success(Unit)
+        var docPath = "users/$cleanUid/moderationNotices"
+        return try {
+            val uid = requireUserId()
+            if (uid != cleanUid) {
+                return Result.failure(SecurityException("Cannot update another user's notices."))
+            }
+            ids.chunked(400).forEach { chunk ->
+                val batch = db.batch()
+                chunk.forEach { noticeId ->
+                    val ref = db.collection("users").document(cleanUid).collection("moderationNotices").document(noticeId)
+                    batch.update(ref, "read", true)
+                }
+                batch.commit().await()
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun sendModerationNotice(
+        targetUid: String,
+        moderatorUid: String,
+        contentType: String,
+        contentId: String,
+        contentPreview: String,
+        reason: String,
+        details: String
+    ) {
+        if (targetUid.isBlank() || contentId.isBlank()) return
+        val cleanReason = reason.trim().ifBlank { "Community guideline violation" }.let {
+            if (it.length < 2) "Guideline violation" else it.take(120)
+        }
+        val cleanDetails = details.trim().take(500)
+        val cleanPreview = contentPreview.trim().take(200)
+
+        val noticeRef = db.collection("users")
+            .document(targetUid)
+            .collection("moderationNotices")
+            .document()
+
+        val payload = mutableMapOf<String, Any>(
+            "targetUid" to targetUid,
+            "moderatorUid" to moderatorUid,
+            "contentType" to contentType,
+            "contentId" to contentId,
+            "reason" to cleanReason,
+            "read" to false,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        if (cleanPreview.isNotBlank()) {
+            payload["contentPreview"] = cleanPreview
+        }
+        if (cleanDetails.isNotBlank()) {
+            payload["details"] = cleanDetails
+        }
+        noticeRef.set(payload).await()
+    }
+
+    suspend fun moderatorDeleteFeedPost(
+        post: FeedPost,
+        reason: String,
+        details: String = "",
+        relatedReportId: String? = null
+    ): Result<Unit> {
+        val cleanPostId = post.id.ifBlank { post.postId }.trim()
+        if (cleanPostId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Post ID is missing."))
+        }
+        val cleanReason = reason.trim()
+        if (cleanReason.length < 2) {
+            return Result.failure(IllegalArgumentException("Please provide a guideline violation reason."))
+        }
+        var docPath = "feedPosts/$cleanPostId"
+        deletedFeedPostIdsFlow.update { it + cleanPostId }
+        return try {
+            val modUid = requireUserId()
+            if (!checkIsAdmin(auth.currentUser?.email)) {
+                deletedFeedPostIdsFlow.update { it - cleanPostId }
+                return Result.failure(SecurityException("Moderator privileges are required."))
+            }
+            val ref = db.collection("feedPosts").document(cleanPostId)
+            docPath = ref.path
+            val snap = runCatching { withTimeoutOrNull(2_000L) { ref.get(Source.DEFAULT).await() } }.getOrNull()
+            val targetUid = post.userId.ifBlank { post.authorId }.ifBlank { snap?.getString("userId").orEmpty() }.trim()
+            val preview = post.caption.ifBlank { snap?.getString("caption").orEmpty() }.trim()
+
+            deleteSubcollectionDocsBestEffort(ref.collection("comments"))
+            ref.delete().await()
+            deleteSubcollectionDocsBestEffort(feedPostChunksRef(cleanPostId))
+
+            if (targetUid.isNotBlank()) {
+                docPath = "users/$targetUid/moderationNotices"
+                sendModerationNotice(
+                    targetUid = targetUid,
+                    moderatorUid = modUid,
+                    contentType = "POST",
+                    contentId = cleanPostId,
+                    contentPreview = preview,
+                    reason = cleanReason,
+                    details = details
+                )
+            }
+            if (!relatedReportId.isNullOrBlank()) {
+                runCatching { updateReportStatus(relatedReportId, "RESOLVED") }
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            deletedFeedPostIdsFlow.update { it - cleanPostId }
+            throw e
+        } catch (e: Exception) {
+            deletedFeedPostIdsFlow.update { it - cleanPostId }
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun moderatorDeleteVideoPost(
+        reel: VideoPost,
+        reason: String,
+        details: String = "",
+        relatedReportId: String? = null
+    ): Result<Unit> {
+        val cleanPostId = reel.id.trim()
+        if (cleanPostId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Reel ID is missing."))
+        }
+        val cleanReason = reason.trim()
+        if (cleanReason.length < 2) {
+            return Result.failure(IllegalArgumentException("Please provide a guideline violation reason."))
+        }
+        var docPath = "videoPosts/$cleanPostId"
+        deletedVideoPostIdsFlow.update { it + cleanPostId }
+        return try {
+            val modUid = requireUserId()
+            if (!checkIsAdmin(auth.currentUser?.email)) {
+                deletedVideoPostIdsFlow.update { it - cleanPostId }
+                return Result.failure(SecurityException("Moderator privileges are required."))
+            }
+            val ref = db.collection("videoPosts").document(cleanPostId)
+            docPath = ref.path
+            val snap = runCatching { withTimeoutOrNull(2_000L) { ref.get(Source.DEFAULT).await() } }.getOrNull()
+            val targetUid = reel.userId.ifBlank { snap?.getString("userId").orEmpty() }.trim()
+            val preview = reel.caption.ifBlank { snap?.getString("caption").orEmpty() }.trim()
+
+            deleteSubcollectionDocsBestEffort(ref.collection("comments"))
+            ref.delete().await()
+            deleteSubcollectionDocsBestEffort(videoPostChunksRef(cleanPostId))
+
+            if (targetUid.isNotBlank()) {
+                docPath = "users/$targetUid/moderationNotices"
+                sendModerationNotice(
+                    targetUid = targetUid,
+                    moderatorUid = modUid,
+                    contentType = "REEL",
+                    contentId = cleanPostId,
+                    contentPreview = preview,
+                    reason = cleanReason,
+                    details = details
+                )
+            }
+            if (!relatedReportId.isNullOrBlank()) {
+                runCatching { updateReportStatus(relatedReportId, "RESOLVED") }
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            deletedVideoPostIdsFlow.update { it - cleanPostId }
+            throw e
+        } catch (e: Exception) {
+            deletedVideoPostIdsFlow.update { it - cleanPostId }
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun moderatorDeleteStory(
+        story: StoryItem,
+        reason: String,
+        details: String = ""
+    ): Result<Unit> {
+        val cleanStoryId = story.id.trim()
+        if (cleanStoryId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Story ID is missing."))
+        }
+        val cleanReason = reason.trim()
+        if (cleanReason.length < 2) {
+            return Result.failure(IllegalArgumentException("Please provide a guideline violation reason."))
+        }
+        var docPath = "stories/$cleanStoryId"
+        deletedStoryIdsFlow.update { it + cleanStoryId }
+        return try {
+            val modUid = requireUserId()
+            if (!checkIsAdmin(auth.currentUser?.email)) {
+                deletedStoryIdsFlow.update { it - cleanStoryId }
+                return Result.failure(SecurityException("Moderator privileges are required."))
+            }
+            val ref = db.collection("stories").document(cleanStoryId)
+            docPath = ref.path
+            val snap = runCatching { withTimeoutOrNull(2_000L) { ref.get(Source.DEFAULT).await() } }.getOrNull()
+            val targetUid = story.userId.ifBlank { snap?.getString("userId").orEmpty() }.trim()
+            val preview = story.caption.orEmpty().ifBlank { snap?.getString("caption").orEmpty() }.trim()
+
+            ref.delete().await()
+            deleteSubcollectionDocsBestEffort(storyChunksRef(cleanStoryId))
+
+            if (targetUid.isNotBlank()) {
+                docPath = "users/$targetUid/moderationNotices"
+                sendModerationNotice(
+                    targetUid = targetUid,
+                    moderatorUid = modUid,
+                    contentType = "STORY",
+                    contentId = cleanStoryId,
+                    contentPreview = preview,
+                    reason = cleanReason,
+                    details = details
+                )
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            deletedStoryIdsFlow.update { it - cleanStoryId }
+            throw e
+        } catch (e: Exception) {
+            deletedStoryIdsFlow.update { it - cleanStoryId }
+            handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
     }

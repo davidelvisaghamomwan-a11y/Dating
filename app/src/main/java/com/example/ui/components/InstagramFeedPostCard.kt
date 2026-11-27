@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -122,6 +123,8 @@ fun InstagramFeedPostCard(
     onDeletePost: () -> Unit,
     onOpenAuthor: () -> Unit,
     onReportPost: () -> Unit = {},
+    isModerator: Boolean = false,
+    onModeratorDeletePost: ((reason: String, details: String) -> Unit)? = null,
     isVisibleForAutoPlay: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -156,6 +159,7 @@ fun InstagramFeedPostCard(
 
     var showMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember(post.id) { mutableStateOf(false) }
+    var showModeratorDeleteDialog by remember(post.id) { mutableStateOf(false) }
     var showHeartPop by remember { mutableStateOf(false) }
     val heartScale = remember { Animatable(0.2f) }
     val heartAlpha = remember { Animatable(1f) }
@@ -401,6 +405,28 @@ fun InstagramFeedPostCard(
                                     onReportPost()
                                 }
                             )
+                            if (isModerator && onModeratorDeletePost != null) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "Remove Post (Moderator)",
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Filled.Shield,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    },
+                                    onClick = {
+                                        showMenu = false
+                                        showModeratorDeleteDialog = true
+                                    },
+                                    modifier = Modifier.testTag("moderator_delete_post_menu_${post.id}")
+                                )
+                            }
                         }
                         DropdownMenuItem(
                             text = { Text("Share Post") },
@@ -874,6 +900,24 @@ fun InstagramFeedPostCard(
                 ) {
                     Text("Cancel")
                 }
+            }
+        )
+    }
+
+    if (showModeratorDeleteDialog && onModeratorDeletePost != null) {
+        val contentLabel = when {
+            post.mediaType == "VIDEO" -> "video"
+            post.allPhotoUrls().isNotEmpty() -> "photo post"
+            else -> "post"
+        }
+        ModeratorDeletePostDialog(
+            targetAuthorName = displayAuthorName,
+            contentTypeLabel = contentLabel,
+            contentPreview = post.caption,
+            onDismiss = { showModeratorDeleteDialog = false },
+            onConfirmDelete = { reason, details ->
+                showModeratorDeleteDialog = false
+                onModeratorDeletePost(reason, details)
             }
         )
     }
