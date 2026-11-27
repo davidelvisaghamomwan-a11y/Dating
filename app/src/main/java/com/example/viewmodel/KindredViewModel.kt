@@ -1903,6 +1903,11 @@ class KindredViewModel(
         gender: String? = null,
         dateOfBirth: String? = null,
         computedAge: Int? = null,
+        username: String? = null,
+        pronouns: String? = null,
+        profileLink: String? = null,
+        pageInfo: String? = null,
+        category: String? = null,
         onComplete: () -> Unit = {},
         onCompleteResult: ((Boolean, String?) -> Unit)? = null
     ) {
@@ -1926,6 +1931,11 @@ class KindredViewModel(
                         gender = gender,
                         dateOfBirth = dateOfBirth,
                         computedAge = computedAge,
+                        username = username,
+                        pronouns = pronouns,
+                        profileLink = profileLink,
+                        pageInfo = pageInfo,
+                        category = category,
                         onProgress = { _uploadProgress.value = it }
                     )
                     result.onSuccess {
@@ -1955,6 +1965,60 @@ class KindredViewModel(
                 _uploadProgress.value = null
                 _isUploadingMedia.value = false
                 _isBusy.value = false
+            }
+        }
+    }
+
+    fun uploadProfilePicture(
+        photoDataUrl: String,
+        onComplete: (Boolean, String?) -> Unit
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            _isUploadingMedia.value = true
+            _uploadProgress.value = 0.05f
+            val uid = currentUserId
+            if (uid.isBlank()) {
+                _isBusy.value = false
+                _isUploadingMedia.value = false
+                _actionStatusMessage.value = "Please sign in before uploading profile picture."
+                onComplete(false, "User is not signed in.")
+                return@launch
+            }
+            try {
+                withTimeout(CloudMediaStorageService.UPLOAD_TIMEOUT_MS + 5_000L) {
+                    val result = repository.uploadSingleProfilePicture(
+                        uid = uid,
+                        photoDataUrl = photoDataUrl,
+                        onProgress = { fraction ->
+                            _uploadProgress.value = fraction
+                        }
+                    )
+                    result.onSuccess {
+                        _uploadProgress.value = 1f
+                        _actionStatusMessage.value = "Profile picture updated!"
+                        onComplete(true, null)
+                    }.onFailure { err ->
+                        val msg = CloudMediaStorageService.formatUploadError(err)
+                        Log.e(CloudMediaStorageService.TAG, "uploadProfilePicture error: $msg", err)
+                        _actionStatusMessage.value = msg
+                        onComplete(false, msg)
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                val msg = "Upload timed out. Please check your internet connection."
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = CloudMediaStorageService.formatUploadError(e)
+                _actionStatusMessage.value = msg
+                onComplete(false, msg)
+            } finally {
+                _isUploadingMedia.value = false
+                _isBusy.value = false
+                _uploadProgress.value = null
             }
         }
     }

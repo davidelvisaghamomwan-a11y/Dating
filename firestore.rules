@@ -51,7 +51,7 @@ service cloud.firestore {
     }
 
     function isValidStoragePath(path) {
-      return path is string && path.size() <= 512 && (path == '' || path.matches('^users/.*'));
+      return path is string && path.size() <= 512 && (path == '' || path.matches('^(users|profile_pictures)/.*'));
     }
 
     function isValidStoragePathList(paths, maxLen) {
@@ -95,7 +95,12 @@ service cloud.firestore {
              (!('videosVisibility' in data) || isValidVisibility(data.videosVisibility)) &&
              (!('infoVisibility' in data) || isValidVisibility(data.infoVisibility)) &&
              (!('dateOfBirth' in data) || (data.dateOfBirth is string && data.dateOfBirth.size() <= 16)) &&
-             (!('profileCompleted' in data) || data.profileCompleted is bool);
+             (!('profileCompleted' in data) || data.profileCompleted is bool) &&
+             (!('username' in data) || (data.username is string && data.username.size() <= 40)) &&
+             (!('pronouns' in data) || (data.pronouns is string && data.pronouns.size() <= 30)) &&
+             (!('profileLink' in data) || (data.profileLink is string && data.profileLink.size() <= 200)) &&
+             (!('pageInfo' in data) || (data.pageInfo is string && data.pageInfo.size() <= 100)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 60));
     }
 
     function isValidPublicProfile(data) {
@@ -340,7 +345,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'displayName', 'age', 'gender', 'bio', 'cityLabel', 'coarseLatitude', 'coarseLongitude', 'interests', 'avatarSeed', 'discoverable', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'suspended', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'username', 'pronouns', 'profileLink', 'pageInfo', 'category', 'createdAt', 'updatedAt']) &&
                        isValidPublicProfile(incoming()) &&
                        !incoming().get('suspended', false) &&
                        isValidTimestamp(incoming().createdAt) &&
@@ -354,7 +359,7 @@ service cloud.firestore {
                        incoming().createdAt == existing().createdAt &&
                        incoming().get('suspended', false) == existing().get('suspended', false) &&
                        isValidTimestamp(incoming().updatedAt) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'updatedAt'])
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'age', 'dateOfBirth', 'gender', 'bio', 'cityLabel', 'country', 'coarseLatitude', 'coarseLongitude', 'geohash', 'geohash3', 'geohash4', 'interests', 'photoDataUrl', 'photoStoragePath', 'profilePhotos', 'photoStoragePaths', 'avatarSeed', 'discoverable', 'profileCompleted', 'hideOnlineStatus', 'photosVisibility', 'videosVisibility', 'infoVisibility', 'username', 'pronouns', 'profileLink', 'pageInfo', 'category', 'updatedAt'])
                      ) || (
                        isAdmin() &&
                        isValidId(userId) &&

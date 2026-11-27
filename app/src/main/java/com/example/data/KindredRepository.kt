@@ -86,13 +86,13 @@ class KindredRepository(
         val existingUrlToPath = buildMap<String, String> {
             val primaryUrl = existingPublic?.photoDataUrl?.trim().orEmpty()
             val primaryPath = existingPublic?.photoStoragePath?.trim().orEmpty()
-            if (primaryUrl.isNotBlank() && primaryPath.startsWith("users/")) {
+            if (primaryUrl.isNotBlank() && (primaryPath.startsWith("users/") || primaryPath.startsWith("profile_pictures/"))) {
                 put(primaryUrl, primaryPath)
             }
             existingPublic?.profilePhotos?.forEachIndexed { idx, existingUrl ->
                 val cleanUrl = existingUrl.trim()
                 val existingPath = existingPublic.photoStoragePaths.getOrNull(idx)?.trim().orEmpty()
-                if (cleanUrl.isNotBlank() && existingPath.startsWith("users/")) {
+                if (cleanUrl.isNotBlank() && (existingPath.startsWith("users/") || existingPath.startsWith("profile_pictures/"))) {
                     put(cleanUrl, existingPath)
                 }
             }
@@ -109,9 +109,8 @@ class KindredRepository(
                 resolvedPaths += existingUrlToPath[photo].orEmpty()
                 onProgress(((index + 1f) / total).coerceIn(0f, 1f))
             } else {
-                val remotePath = CloudMediaStorageService.buildUserPath(
+                val remotePath = CloudMediaStorageService.buildProfilePicturePath(
                     uid = uid,
-                    category = "profile_photos",
                     fileName = "photo_${index}_${abs(photo.hashCode())}.jpg"
                 )
                 val uploaded = cloudStorage.ensureRemoteMediaUrlWithMeta(
@@ -128,15 +127,12 @@ class KindredRepository(
                             throw IllegalStateException("Profile photo ${index + 1} upload returned an invalid URL.")
                         }
                         resolvedUrls += meta.downloadUrl.take(2048)
-                        resolvedPaths += meta.storagePath.takeIf { it.startsWith("users/") }.orEmpty()
+                        resolvedPaths += meta.storagePath.takeIf { it.startsWith("users/") || it.startsWith("profile_pictures/") }.orEmpty()
                     },
                     onFailure = { err ->
-                        if (!CloudMediaStorageService.isStorageUnavailableError(err)) {
-                            throw err
-                        }
                         Log.w(
                             CloudMediaStorageService.TAG,
-                            "Storage unavailable for profile photo $index ($remotePath); falling back to inline Firestore photo",
+                            "Storage upload failed for profile photo $index ($remotePath); falling back to inline Firestore photo: ${err.message}",
                             err
                         )
                         val compacted = MediaImageHelper.compactImageDataUrl(
@@ -160,6 +156,126 @@ class KindredRepository(
             urls = resolvedUrls,
             storagePaths = if (resolvedPaths.any { it.isNotBlank() }) resolvedPaths else emptyList()
         )
+    }
+
+    suspend fun uploadSingleProfilePicture(
+        uid: String,
+        photoDataUrl: String,
+        onProgress: (Float) -> Unit = {}
+    ): Result<CloudUploadResult> {
+        return try {
+            val currentUid = requireUserId()
+            if (currentUid != uid) {
+                return Result.failure(IllegalStateException("User is not authenticated as $uid"))
+            }
+
+            val remotePath = CloudMediaStorageService.buildProfilePicturePath(
+                uid = uid,
+                fileName = "profile_${System.currentTimeMillis()}.jpg"
+            )
+
+            val uploadRes = cloudStorage.ensureRemoteMediaUrlWithMeta(
+                rawDataUrlOrRemoteUrl = photoDataUrl,
+                remotePath = remotePath,
+                defaultContentType = "image/jpeg",
+                onProgress = onProgress
+            )
+
+            val meta = uploadRes.getOrElse { err ->
+                Log.w(
+                    CloudMediaStorageService.TAG,
+                    "Cloud storage upload failed for $remotePath; falling back to compact dataUrl: ${err.message}",
+                    err
+                )
+                val compacted = MediaImageHelper.compactImageDataUrl(
+                    rawUrl = photoDataUrl,
+                    maxDim = 640,
+                    maxRawBytes = 90_000,
+                    maxDataUrlChars = CloudMediaStorageService.MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS
+                )?.takeIf { it.isNotBlank() && it.length <= 180_000 }
+                    ?: throw err
+                CloudUploadResult(downloadUrl = compacted, storagePath = "", bucketName = "")
+            }
+
+            val downloadUrl = meta.downloadUrl
+            val storagePath = meta.storagePath
+
+            val publicRef = db.collection("publicProfiles").document(uid)
+            val publicSnap = publicRef.get().await()
+            val existingPublic = if (publicSnap.exists()) {
+                publicSnap.toObject(PublicProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            } else null
+
+            val updatedPhotos = buildList {
+                add(downloadUrl)
+                existingPublic?.profilePhotos?.filter { it != downloadUrl }?.take(11)?.let { addAll(it) }
+            }.distinct().take(12)
+
+            val updatedPaths = buildList {
+                if (storagePath.isNotBlank()) add(storagePath)
+                existingPublic?.photoStoragePaths?.filter { it != storagePath }?.take(11)?.let { addAll(it) }
+            }.take(12)
+
+            val updates = mutableMapOf<String, Any>(
+                "photoDataUrl" to downloadUrl,
+                "profilePhotos" to updatedPhotos,
+                "photoStoragePaths" to updatedPaths,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            if (storagePath.isNotBlank()) {
+                updates["photoStoragePath"] = storagePath
+            }
+
+            val batch = db.batch()
+            batch.update(publicRef, updates)
+
+            if (existingPublic != null) {
+                val geohash = existingPublic.geohash.ifBlank {
+                    GeoHashUtils.encode(
+                        existingPublic.coarseLatitude,
+                        existingPublic.coarseLongitude,
+                        precision = 7
+                    )
+                }
+                val geoProfilePayload = buildGeoCellPayload(
+                    uid = uid,
+                    displayName = existingPublic.displayName,
+                    age = existingPublic.age,
+                    gender = existingPublic.gender,
+                    bio = existingPublic.bio,
+                    cityLabel = existingPublic.cityLabel,
+                    country = existingPublic.country,
+                    coarseLat = existingPublic.coarseLatitude,
+                    coarseLng = existingPublic.coarseLongitude,
+                    interests = existingPublic.interests,
+                    photoDataUrl = downloadUrl,
+                    photoStoragePath = storagePath.takeIf { it.isNotBlank() },
+                    profilePhotos = updatedPhotos,
+                    photoStoragePaths = updatedPaths,
+                    discoverable = existingPublic.discoverable,
+                    dateOfBirth = existingPublic.dateOfBirth,
+                    profileCompleted = existingPublic.profileCompleted,
+                    existingPublic = existingPublic
+                )
+                geoService.stageGeoCellIndexMutations(
+                    batch = batch,
+                    userId = uid,
+                    geohash = geohash,
+                    discoverable = existingPublic.discoverable,
+                    previousGeoHash3 = existingPublic.geohash3,
+                    previousGeoHash4 = existingPublic.geohash4,
+                    baseProfileFields = geoProfilePayload,
+                    createMissingCells = true
+                )
+            }
+
+            batch.commit().await()
+            Result.success(meta)
+        } catch (e: Exception) {
+            val msg = CloudMediaStorageService.formatUploadError(e)
+            Log.e(CloudMediaStorageService.TAG, "uploadSingleProfilePicture failed: $msg", e)
+            Result.failure(IllegalStateException(msg, e))
+        }
     }
 
     private fun requireUserId(): String {
@@ -791,6 +907,11 @@ class KindredRepository(
         gender: String? = null,
         dateOfBirth: String? = null,
         computedAge: Int? = null,
+        username: String? = null,
+        pronouns: String? = null,
+        profileLink: String? = null,
+        pageInfo: String? = null,
+        category: String? = null,
         onProgress: (Float) -> Unit = {}
     ): Result<Unit> {
         val cleanBio = bio.trim().take(400)
@@ -868,8 +989,19 @@ class KindredRepository(
                 val nextCity = cityLabel?.trim()?.take(80)?.ifBlank { existingPublic.cityLabel } ?: existingPublic.cityLabel
                 val nextCountry = country?.trim()?.take(80) ?: existingPublic.country
 
+                val nextUsername = username?.trim()?.take(40) ?: existingPublic.username
+                val nextPronouns = pronouns?.trim()?.take(30) ?: existingPublic.pronouns
+                val nextProfileLink = profileLink?.trim()?.take(200) ?: existingPublic.profileLink
+                val nextPageInfo = pageInfo?.trim()?.take(100) ?: existingPublic.pageInfo
+                val nextCategory = category?.trim()?.take(60) ?: existingPublic.category
+
                 val updatePublic = mutableMapOf<String, Any>(
                     "displayName" to nextName,
+                    "username" to nextUsername,
+                    "pronouns" to nextPronouns,
+                    "profileLink" to nextProfileLink,
+                    "pageInfo" to nextPageInfo,
+                    "category" to nextCategory,
                     "age" to nextAge,
                     "gender" to nextGender,
                     "bio" to cleanBio,

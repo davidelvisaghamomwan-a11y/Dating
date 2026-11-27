@@ -5,535 +5,1573 @@
       "description": "Private user account preferences, PII, and exact device GPS coordinates.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string", "description": "Authenticated Firebase UID owning this private profile." },
-        "email": { "type": "string", "description": "Account email address (PII, owner-only)." },
-        "interestedIn": { "type": "string", "enum": ["Everyone", "Women", "Men", "Non-binary"] },
-        "minAgePref": { "type": "integer" },
-        "maxAgePref": { "type": "integer" },
-        "maxDistanceKm": { "type": "integer" },
-        "hideOnlineStatus": { "type": "boolean" },
-        "exactLatitude": { "type": "number" },
-        "exactLongitude": { "type": "number" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID owning this private profile."
+        },
+        "email": {
+          "type": "string",
+          "description": "Account email address (PII, owner-only)."
+        },
+        "interestedIn": {
+          "type": "string",
+          "enum": [
+            "Everyone",
+            "Women",
+            "Men",
+            "Non-binary"
+          ]
+        },
+        "minAgePref": {
+          "type": "integer"
+        },
+        "maxAgePref": {
+          "type": "integer"
+        },
+        "maxDistanceKm": {
+          "type": "integer"
+        },
+        "hideOnlineStatus": {
+          "type": "boolean"
+        },
+        "exactLatitude": {
+          "type": "number"
+        },
+        "exactLongitude": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "interestedIn", "minAgePref", "maxAgePref", "maxDistanceKm", "createdAt", "updatedAt"]
+      "required": [
+        "userId",
+        "interestedIn",
+        "minAgePref",
+        "maxAgePref",
+        "maxDistanceKm",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "PublicProfile": {
       "title": "PublicProfile",
       "description": "Discoverable social profile with up to 12 photos, GeoHash index, and privacy settings.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "displayName": { "type": "string" },
-        "age": { "type": "integer" },
-        "gender": { "type": "string", "enum": ["Woman", "Man", "Non-binary"] },
-        "bio": { "type": "string" },
-        "cityLabel": { "type": "string" },
-        "country": { "type": "string" },
-        "coarseLatitude": { "type": "number" },
-        "coarseLongitude": { "type": "number" },
-        "geohash": { "type": "string" },
-        "geohash3": { "type": "string" },
-        "geohash4": { "type": "string" },
-        "interests": { "type": "array" },
-        "photoDataUrl": { "type": "string" },
-        "photoStoragePath": { "type": "string" },
-        "profilePhotos": { "type": "array", "description": "Up to 12 compressed profile photo URLs." },
-        "photoStoragePaths": { "type": "array", "description": "Firebase Storage paths corresponding to uploaded profile photos." },
-        "avatarSeed": { "type": "string" },
-        "discoverable": { "type": "boolean" },
-        "suspended": { "type": "boolean" },
-        "hideOnlineStatus": { "type": "boolean" },
-        "photosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
-        "videosVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
-        "infoVisibility": { "type": "string", "enum": ["EVERYONE", "MATCHES_AND_FRIENDS", "FRIENDS_ONLY", "FOLLOWERS_ONLY"] },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "age": {
+          "type": "integer"
+        },
+        "gender": {
+          "type": "string",
+          "enum": [
+            "Woman",
+            "Man",
+            "Non-binary"
+          ]
+        },
+        "bio": {
+          "type": "string"
+        },
+        "cityLabel": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "coarseLatitude": {
+          "type": "number"
+        },
+        "coarseLongitude": {
+          "type": "number"
+        },
+        "geohash": {
+          "type": "string"
+        },
+        "geohash3": {
+          "type": "string"
+        },
+        "geohash4": {
+          "type": "string"
+        },
+        "interests": {
+          "type": "array"
+        },
+        "photoDataUrl": {
+          "type": "string"
+        },
+        "photoStoragePath": {
+          "type": "string"
+        },
+        "profilePhotos": {
+          "type": "array",
+          "description": "Up to 12 compressed profile photo URLs."
+        },
+        "photoStoragePaths": {
+          "type": "array",
+          "description": "Firebase Storage paths corresponding to uploaded profile photos."
+        },
+        "avatarSeed": {
+          "type": "string"
+        },
+        "discoverable": {
+          "type": "boolean"
+        },
+        "suspended": {
+          "type": "boolean"
+        },
+        "hideOnlineStatus": {
+          "type": "boolean"
+        },
+        "photosVisibility": {
+          "type": "string",
+          "enum": [
+            "EVERYONE",
+            "MATCHES_AND_FRIENDS",
+            "FRIENDS_ONLY",
+            "FOLLOWERS_ONLY"
+          ]
+        },
+        "videosVisibility": {
+          "type": "string",
+          "enum": [
+            "EVERYONE",
+            "MATCHES_AND_FRIENDS",
+            "FRIENDS_ONLY",
+            "FOLLOWERS_ONLY"
+          ]
+        },
+        "infoVisibility": {
+          "type": "string",
+          "enum": [
+            "EVERYONE",
+            "MATCHES_AND_FRIENDS",
+            "FRIENDS_ONLY",
+            "FOLLOWERS_ONLY"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "username": {
+          "type": "string"
+        },
+        "pronouns": {
+          "type": "string"
+        },
+        "profileLink": {
+          "type": "string"
+        },
+        "pageInfo": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        }
       },
-      "required": ["userId", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "createdAt", "updatedAt"]
+      "required": [
+        "userId",
+        "displayName",
+        "age",
+        "gender",
+        "bio",
+        "cityLabel",
+        "coarseLatitude",
+        "coarseLongitude",
+        "interests",
+        "avatarSeed",
+        "discoverable",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "GeoCellProfile": {
       "title": "GeoCellProfile",
       "description": "GeoHash-partitioned discoverable profile projection for proximity matching.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "geohash": { "type": "string" },
-        "cellPrecision": { "type": "integer" },
-        "displayName": { "type": "string" },
-        "age": { "type": "integer" },
-        "gender": { "type": "string", "enum": ["Woman", "Man", "Non-binary"] },
-        "bio": { "type": "string" },
-        "cityLabel": { "type": "string" },
-        "country": { "type": "string" },
-        "coarseLatitude": { "type": "number" },
-        "coarseLongitude": { "type": "number" },
-        "interests": { "type": "array" },
-        "photoDataUrl": { "type": "string" },
-        "photoStoragePath": { "type": "string" },
-        "profilePhotos": { "type": "array" },
-        "photoStoragePaths": { "type": "array" },
-        "avatarSeed": { "type": "string" },
-        "discoverable": { "type": "boolean" },
-        "suspended": { "type": "boolean" },
-        "hideOnlineStatus": { "type": "boolean" },
-        "photosVisibility": { "type": "string" },
-        "videosVisibility": { "type": "string" },
-        "infoVisibility": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "geohash": {
+          "type": "string"
+        },
+        "cellPrecision": {
+          "type": "integer"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "age": {
+          "type": "integer"
+        },
+        "gender": {
+          "type": "string",
+          "enum": [
+            "Woman",
+            "Man",
+            "Non-binary"
+          ]
+        },
+        "bio": {
+          "type": "string"
+        },
+        "cityLabel": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "coarseLatitude": {
+          "type": "number"
+        },
+        "coarseLongitude": {
+          "type": "number"
+        },
+        "interests": {
+          "type": "array"
+        },
+        "photoDataUrl": {
+          "type": "string"
+        },
+        "photoStoragePath": {
+          "type": "string"
+        },
+        "profilePhotos": {
+          "type": "array"
+        },
+        "photoStoragePaths": {
+          "type": "array"
+        },
+        "avatarSeed": {
+          "type": "string"
+        },
+        "discoverable": {
+          "type": "boolean"
+        },
+        "suspended": {
+          "type": "boolean"
+        },
+        "hideOnlineStatus": {
+          "type": "boolean"
+        },
+        "photosVisibility": {
+          "type": "string"
+        },
+        "videosVisibility": {
+          "type": "string"
+        },
+        "infoVisibility": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "username": {
+          "type": "string"
+        },
+        "pronouns": {
+          "type": "string"
+        },
+        "profileLink": {
+          "type": "string"
+        },
+        "pageInfo": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        }
       },
-      "required": ["userId", "geohash", "cellPrecision", "displayName", "age", "gender", "bio", "cityLabel", "coarseLatitude", "coarseLongitude", "interests", "avatarSeed", "discoverable", "createdAt", "updatedAt"]
+      "required": [
+        "userId",
+        "geohash",
+        "cellPrecision",
+        "displayName",
+        "age",
+        "gender",
+        "bio",
+        "cityLabel",
+        "coarseLatitude",
+        "coarseLongitude",
+        "interests",
+        "avatarSeed",
+        "discoverable",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "ProfileVideoItem": {
       "title": "ProfileVideoItem",
       "description": "User profile video showcase item with unlimited chunked storage support.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "caption": { "type": "string" },
-        "mediaDataUrl": { "type": "string" },
-        "mediaStoragePath": { "type": "string" },
-        "thumbnailDataUrl": { "type": "string" },
-        "thumbnailStoragePath": { "type": "string" },
-        "mediaMimeType": { "type": "string" },
-        "mediaDurationSec": { "type": "integer" },
-        "mediaByteSize": { "type": "integer" },
-        "chunkCount": { "type": "integer" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "mediaDataUrl": {
+          "type": "string"
+        },
+        "mediaStoragePath": {
+          "type": "string"
+        },
+        "thumbnailDataUrl": {
+          "type": "string"
+        },
+        "thumbnailStoragePath": {
+          "type": "string"
+        },
+        "mediaMimeType": {
+          "type": "string"
+        },
+        "mediaDurationSec": {
+          "type": "integer"
+        },
+        "mediaByteSize": {
+          "type": "integer"
+        },
+        "chunkCount": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "caption", "mediaDurationSec", "chunkCount", "createdAt"]
+      "required": [
+        "userId",
+        "caption",
+        "mediaDurationSec",
+        "chunkCount",
+        "createdAt"
+      ]
     },
     "MediaChunk": {
       "title": "MediaChunk",
       "description": "Ordered raw-byte Base64 chunk enabling unlimited video resolution and length.",
       "type": "object",
       "properties": {
-        "ownerUid": { "type": "string" },
-        "participantUids": { "type": "array" },
-        "seq": { "type": "integer" },
-        "dataBase64": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "ownerUid": {
+          "type": "string"
+        },
+        "participantUids": {
+          "type": "array"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "dataBase64": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["ownerUid", "seq", "dataBase64", "createdAt"]
+      "required": [
+        "ownerUid",
+        "seq",
+        "dataBase64",
+        "createdAt"
+      ]
     },
     "Swipe": {
       "title": "Swipe",
       "description": "Directional swipe action from one user to another.",
       "type": "object",
       "properties": {
-        "fromUserId": { "type": "string" },
-        "toUserId": { "type": "string" },
-        "direction": { "type": "string", "enum": ["LIKE", "PASS"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "fromUserId": {
+          "type": "string"
+        },
+        "toUserId": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LIKE",
+            "PASS"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["fromUserId", "toUserId", "direction", "createdAt"]
+      "required": [
+        "fromUserId",
+        "toUserId",
+        "direction",
+        "createdAt"
+      ]
     },
     "Match": {
       "title": "Match",
       "description": "Direct conversation thread between two users.",
       "type": "object",
       "properties": {
-        "participantUids": { "type": "array" },
-        "createdBy": { "type": "string" },
-        "conversationType": { "type": "string", "enum": ["MATCH", "DIRECT"] },
-        "lastMessageText": { "type": "string" },
-        "lastMessageSenderId": { "type": "string" },
-        "lastMessageAt": { "type": "string", "format": "date-time" },
-        "lastMessageReadByUids": { "type": "array" },
-        "disappearingTtlSeconds": { "type": "integer" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "participantUids": {
+          "type": "array"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "conversationType": {
+          "type": "string",
+          "enum": [
+            "MATCH",
+            "DIRECT"
+          ]
+        },
+        "lastMessageText": {
+          "type": "string"
+        },
+        "lastMessageSenderId": {
+          "type": "string"
+        },
+        "lastMessageAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastMessageReadByUids": {
+          "type": "array"
+        },
+        "disappearingTtlSeconds": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["participantUids", "createdBy", "createdAt", "updatedAt"]
+      "required": [
+        "participantUids",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "ChatMessage": {
       "title": "ChatMessage",
       "description": "Real-time chat message with replies, unsend, delete-for-me, unlimited video chunks, and read receipts.",
       "type": "object",
       "properties": {
-        "matchId": { "type": "string" },
-        "senderId": { "type": "string" },
-        "participantUids": { "type": "array" },
-        "text": { "type": "string" },
-        "messageType": { "type": "string", "enum": ["TEXT", "PHOTO", "VIDEO", "VOICE", "GIF", "CALL"] },
-        "mediaDataUrl": { "type": "string" },
-        "mediaStoragePath": { "type": "string" },
-        "thumbnailDataUrl": { "type": "string" },
-        "thumbnailStoragePath": { "type": "string" },
-        "mediaMimeType": { "type": "string" },
-        "mediaChunkCount": { "type": "integer" },
-        "mediaByteSize": { "type": "integer" },
-        "mediaGifId": { "type": "string" },
-        "mediaDurationSec": { "type": "integer" },
-        "replyToMessageId": { "type": "string" },
-        "replyToSenderId": { "type": "string" },
-        "replyToText": { "type": "string" },
-        "replyToType": { "type": "string" },
-        "deletedForUids": { "type": "array" },
-        "unsent": { "type": "boolean" },
-        "unsentAt": { "type": "string", "format": "date-time" },
-        "readByUids": { "type": "array" },
-        "readAt": { "type": "string", "format": "date-time" },
-        "disappearingSeconds": { "type": "integer" },
-        "viewOnce": { "type": "boolean" },
-        "openedByRecipient": { "type": "boolean" },
-        "expiresAtMs": { "type": "integer" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "matchId": {
+          "type": "string"
+        },
+        "senderId": {
+          "type": "string"
+        },
+        "participantUids": {
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        },
+        "messageType": {
+          "type": "string",
+          "enum": [
+            "TEXT",
+            "PHOTO",
+            "VIDEO",
+            "VOICE",
+            "GIF",
+            "CALL"
+          ]
+        },
+        "mediaDataUrl": {
+          "type": "string"
+        },
+        "mediaStoragePath": {
+          "type": "string"
+        },
+        "thumbnailDataUrl": {
+          "type": "string"
+        },
+        "thumbnailStoragePath": {
+          "type": "string"
+        },
+        "mediaMimeType": {
+          "type": "string"
+        },
+        "mediaChunkCount": {
+          "type": "integer"
+        },
+        "mediaByteSize": {
+          "type": "integer"
+        },
+        "mediaGifId": {
+          "type": "string"
+        },
+        "mediaDurationSec": {
+          "type": "integer"
+        },
+        "replyToMessageId": {
+          "type": "string"
+        },
+        "replyToSenderId": {
+          "type": "string"
+        },
+        "replyToText": {
+          "type": "string"
+        },
+        "replyToType": {
+          "type": "string"
+        },
+        "deletedForUids": {
+          "type": "array"
+        },
+        "unsent": {
+          "type": "boolean"
+        },
+        "unsentAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "readByUids": {
+          "type": "array"
+        },
+        "readAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "disappearingSeconds": {
+          "type": "integer"
+        },
+        "viewOnce": {
+          "type": "boolean"
+        },
+        "openedByRecipient": {
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["matchId", "senderId", "participantUids", "text", "messageType", "createdAt"]
+      "required": [
+        "matchId",
+        "senderId",
+        "participantUids",
+        "text",
+        "messageType",
+        "createdAt"
+      ]
     },
     "TypingStatus": {
       "title": "TypingStatus",
       "description": "Real-time typing indicator scoped to a match participant.",
       "type": "object",
       "properties": {
-        "matchId": { "type": "string" },
-        "userId": { "type": "string" },
-        "isTyping": { "type": "boolean" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "matchId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "isTyping": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["matchId", "userId", "isTyping", "updatedAt"]
+      "required": [
+        "matchId",
+        "userId",
+        "isTyping",
+        "updatedAt"
+      ]
     },
     "CallSession": {
       "title": "CallSession",
       "description": "Real-time in-app voice and video call signaling record within a match.",
       "type": "object",
       "properties": {
-        "matchId": { "type": "string" },
-        "callerUid": { "type": "string" },
-        "calleeUid": { "type": "string" },
-        "participantUids": { "type": "array" },
-        "callType": { "type": "string", "enum": ["VOICE", "VIDEO"] },
-        "status": { "type": "string", "enum": ["RINGING", "ACTIVE", "DECLINED", "ENDED"] },
-        "callerMuted": { "type": "boolean" },
-        "calleeMuted": { "type": "boolean" },
-        "callerCameraOn": { "type": "boolean" },
-        "calleeCameraOn": { "type": "boolean" },
-        "endedAtMs": { "type": "integer" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "matchId": {
+          "type": "string"
+        },
+        "callerUid": {
+          "type": "string"
+        },
+        "calleeUid": {
+          "type": "string"
+        },
+        "participantUids": {
+          "type": "array"
+        },
+        "callType": {
+          "type": "string",
+          "enum": [
+            "VOICE",
+            "VIDEO"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "RINGING",
+            "ACTIVE",
+            "DECLINED",
+            "ENDED"
+          ]
+        },
+        "callerMuted": {
+          "type": "boolean"
+        },
+        "calleeMuted": {
+          "type": "boolean"
+        },
+        "callerCameraOn": {
+          "type": "boolean"
+        },
+        "calleeCameraOn": {
+          "type": "boolean"
+        },
+        "endedAtMs": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["matchId", "callerUid", "calleeUid", "participantUids", "callType", "status", "callerMuted", "calleeMuted", "callerCameraOn", "calleeCameraOn", "createdAt", "updatedAt"]
+      "required": [
+        "matchId",
+        "callerUid",
+        "calleeUid",
+        "participantUids",
+        "callType",
+        "status",
+        "callerMuted",
+        "calleeMuted",
+        "callerCameraOn",
+        "calleeCameraOn",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "CallAudioChunk": {
       "title": "CallAudioChunk",
       "description": "Low-latency PCM audio frame streamed between call participants.",
       "type": "object",
       "properties": {
-        "matchId": { "type": "string" },
-        "callId": { "type": "string" },
-        "senderUid": { "type": "string" },
-        "participantUids": { "type": "array" },
-        "seq": { "type": "integer" },
-        "sampleRateHz": { "type": "integer" },
-        "audioBase64": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "matchId": {
+          "type": "string"
+        },
+        "callId": {
+          "type": "string"
+        },
+        "senderUid": {
+          "type": "string"
+        },
+        "participantUids": {
+          "type": "array"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "sampleRateHz": {
+          "type": "integer"
+        },
+        "audioBase64": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["matchId", "callId", "senderUid", "participantUids", "seq", "sampleRateHz", "audioBase64", "createdAt"]
+      "required": [
+        "matchId",
+        "callId",
+        "senderUid",
+        "participantUids",
+        "seq",
+        "sampleRateHz",
+        "audioBase64",
+        "createdAt"
+      ]
     },
     "CallVideoFrame": {
       "title": "CallVideoFrame",
       "description": "Live camera JPEG frame streamed between video call participants.",
       "type": "object",
       "properties": {
-        "matchId": { "type": "string" },
-        "callId": { "type": "string" },
-        "senderUid": { "type": "string" },
-        "participantUids": { "type": "array" },
-        "seq": { "type": "integer" },
-        "frameBase64": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "matchId": {
+          "type": "string"
+        },
+        "callId": {
+          "type": "string"
+        },
+        "senderUid": {
+          "type": "string"
+        },
+        "participantUids": {
+          "type": "array"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "frameBase64": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["matchId", "callId", "senderUid", "participantUids", "seq", "frameBase64", "createdAt"]
+      "required": [
+        "matchId",
+        "callId",
+        "senderUid",
+        "participantUids",
+        "seq",
+        "frameBase64",
+        "createdAt"
+      ]
     },
     "UserPresence": {
       "title": "UserPresence",
       "description": "Real-time user online and last-seen presence status with privacy toggle.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "online": { "type": "boolean" },
-        "hideOnlineStatus": { "type": "boolean" },
-        "lastSeenAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "hideOnlineStatus": {
+          "type": "boolean"
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "online", "lastSeenAt", "updatedAt"]
+      "required": [
+        "userId",
+        "online",
+        "lastSeenAt",
+        "updatedAt"
+      ]
     },
     "FcmToken": {
       "title": "FcmToken",
       "description": "Device FCM registration token.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "token": { "type": "string" },
-        "platform": { "type": "string", "enum": ["android"] },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "android"
+          ]
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "token", "platform", "updatedAt"]
+      "required": [
+        "userId",
+        "token",
+        "platform",
+        "updatedAt"
+      ]
     },
     "BlockRecord": {
       "title": "BlockRecord",
       "description": "User block record keyed by {blockerUid}_{blockedUid}.",
       "type": "object",
       "properties": {
-        "blockerUid": { "type": "string" },
-        "blockedUid": { "type": "string" },
-        "reason": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "blockerUid": {
+          "type": "string"
+        },
+        "blockedUid": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["blockerUid", "blockedUid", "createdAt"]
+      "required": [
+        "blockerUid",
+        "blockedUid",
+        "createdAt"
+      ]
     },
     "ReportRecord": {
       "title": "ReportRecord",
       "description": "Safety/moderation report with optional admin resolution fields.",
       "type": "object",
       "properties": {
-        "reporterUid": { "type": "string" },
-        "reportedUid": { "type": "string" },
-        "reason": { "type": "string" },
-        "details": { "type": "string" },
-        "sourceSurface": { "type": "string", "enum": ["DISCOVER", "SEARCH", "CHAT", "PROFILE", "VIDEO_FEED", "STORY"] },
-        "matchId": { "type": "string" },
-        "status": { "type": "string", "enum": ["OPEN", "RESOLVED", "DISMISSED"] },
-        "resolvedBy": { "type": "string" },
-        "resolvedAt": { "type": "string", "format": "date-time" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "reporterUid": {
+          "type": "string"
+        },
+        "reportedUid": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "sourceSurface": {
+          "type": "string",
+          "enum": [
+            "DISCOVER",
+            "SEARCH",
+            "CHAT",
+            "PROFILE",
+            "VIDEO_FEED",
+            "STORY"
+          ]
+        },
+        "matchId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "RESOLVED",
+            "DISMISSED"
+          ]
+        },
+        "resolvedBy": {
+          "type": "string"
+        },
+        "resolvedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["reporterUid", "reportedUid", "reason", "sourceSurface", "createdAt"]
+      "required": [
+        "reporterUid",
+        "reportedUid",
+        "reason",
+        "sourceSurface",
+        "createdAt"
+      ]
     },
     "FriendRequestRecord": {
       "title": "FriendRequestRecord",
       "description": "Friend request document keyed by {fromUid}_{toUid}.",
       "type": "object",
       "properties": {
-        "fromUid": { "type": "string" },
-        "toUid": { "type": "string" },
-        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "REJECTED", "CANCELED"] },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "fromUid": {
+          "type": "string"
+        },
+        "toUid": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "PENDING",
+            "ACCEPTED",
+            "REJECTED",
+            "CANCELED"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["fromUid", "toUid", "status", "createdAt", "updatedAt"]
+      "required": [
+        "fromUid",
+        "toUid",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "FriendshipRecord": {
       "title": "FriendshipRecord",
       "description": "Accepted friendship document keyed by sorted {uid1}_{uid2}.",
       "type": "object",
       "properties": {
-        "participantUids": { "type": "array" },
-        "createdBy": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "participantUids": {
+          "type": "array"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["participantUids", "createdBy", "createdAt"]
+      "required": [
+        "participantUids",
+        "createdBy",
+        "createdAt"
+      ]
     },
     "FollowRecord": {
       "title": "FollowRecord",
       "description": "Social follow edge keyed by {followerUid}_{followingUid}.",
       "type": "object",
       "properties": {
-        "followerUid": { "type": "string" },
-        "followingUid": { "type": "string" },
-        "followerName": { "type": "string" },
-        "followerPhoto": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "followerUid": {
+          "type": "string"
+        },
+        "followingUid": {
+          "type": "string"
+        },
+        "followerName": {
+          "type": "string"
+        },
+        "followerPhoto": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["followerUid", "followingUid", "createdAt"]
+      "required": [
+        "followerUid",
+        "followingUid",
+        "createdAt"
+      ]
     },
     "ProfileViewRecord": {
       "title": "ProfileViewRecord",
       "description": "Profile view audit entry keyed by {viewerUid}_{targetUid}.",
       "type": "object",
       "properties": {
-        "viewerUid": { "type": "string" },
-        "targetUid": { "type": "string" },
-        "viewerName": { "type": "string" },
-        "viewerPhoto": { "type": "string" },
-        "viewedAt": { "type": "string", "format": "date-time" }
+        "viewerUid": {
+          "type": "string"
+        },
+        "targetUid": {
+          "type": "string"
+        },
+        "viewerName": {
+          "type": "string"
+        },
+        "viewerPhoto": {
+          "type": "string"
+        },
+        "viewedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["viewerUid", "targetUid", "viewerName", "viewedAt"]
+      "required": [
+        "viewerUid",
+        "targetUid",
+        "viewerName",
+        "viewedAt"
+      ]
     },
     "ProfileLikeRecord": {
       "title": "ProfileLikeRecord",
       "description": "Direct profile like record keyed by {fromUid}_{toUid}.",
       "type": "object",
       "properties": {
-        "fromUid": { "type": "string" },
-        "toUid": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "fromUid": {
+          "type": "string"
+        },
+        "toUid": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["fromUid", "toUid", "createdAt"]
+      "required": [
+        "fromUid",
+        "toUid",
+        "createdAt"
+      ]
     },
     "FavoriteRecord": {
       "title": "FavoriteRecord",
       "description": "Owner-only saved favorite member bookmark.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "targetUid": { "type": "string" },
-        "displayName": { "type": "string" },
-        "age": { "type": "integer" },
-        "cityLabel": { "type": "string" },
-        "country": { "type": "string" },
-        "photoDataUrl": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "targetUid": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "age": {
+          "type": "integer"
+        },
+        "cityLabel": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "photoDataUrl": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "targetUid", "displayName", "createdAt"]
+      "required": [
+        "userId",
+        "targetUid",
+        "displayName",
+        "createdAt"
+      ]
     },
     "StoryItem": {
       "title": "StoryItem",
       "description": "Ephemeral 24-hour photo/video story.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "authorName": { "type": "string" },
-        "authorPhoto": { "type": "string" },
-        "authorCountry": { "type": "string" },
-        "mediaType": { "type": "string", "enum": ["PHOTO", "VIDEO"] },
-        "mediaDataUrl": { "type": "string" },
-        "mediaStoragePath": { "type": "string" },
-        "thumbnailDataUrl": { "type": "string" },
-        "thumbnailStoragePath": { "type": "string" },
-        "caption": { "type": "string" },
-        "mediaDurationSec": { "type": "integer" },
-        "chunkCount": { "type": "integer" },
-        "viewerUids": { "type": "array" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "expiresAt": { "type": "string", "format": "date-time" },
-        "expiresAtMs": { "type": "integer" }
+        "userId": {
+          "type": "string"
+        },
+        "authorName": {
+          "type": "string"
+        },
+        "authorPhoto": {
+          "type": "string"
+        },
+        "authorCountry": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": [
+            "PHOTO",
+            "VIDEO"
+          ]
+        },
+        "mediaDataUrl": {
+          "type": "string"
+        },
+        "mediaStoragePath": {
+          "type": "string"
+        },
+        "thumbnailDataUrl": {
+          "type": "string"
+        },
+        "thumbnailStoragePath": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "mediaDurationSec": {
+          "type": "integer"
+        },
+        "chunkCount": {
+          "type": "integer"
+        },
+        "viewerUids": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAtMs": {
+          "type": "integer"
+        }
       },
-      "required": ["userId", "authorName", "mediaType", "expiresAtMs", "createdAt"]
+      "required": [
+        "userId",
+        "authorName",
+        "mediaType",
+        "expiresAtMs",
+        "createdAt"
+      ]
     },
     "StoryHighlight": {
       "title": "StoryHighlight",
       "description": "Curated permanent profile highlight containing archived story snapshots.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "title": { "type": "string" },
-        "coverUrl": { "type": "string" },
-        "coverStoragePath": { "type": "string" },
-        "storyItems": { "type": "array" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "coverUrl": {
+          "type": "string"
+        },
+        "coverStoragePath": {
+          "type": "string"
+        },
+        "storyItems": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "title", "createdAt"]
+      "required": [
+        "userId",
+        "title",
+        "createdAt"
+      ]
     },
     "FeedPost": {
       "title": "FeedPost",
       "description": "Social timeline post with optional photos or video.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "authorName": { "type": "string" },
-        "authorPhoto": { "type": "string" },
-        "authorCountry": { "type": "string" },
-        "authorCity": { "type": "string" },
-        "caption": { "type": "string" },
-        "mediaType": { "type": "string", "enum": ["NONE", "TEXT", "PHOTO", "VIDEO"] },
-        "mediaDataUrl": { "type": "string" },
-        "mediaStoragePath": { "type": "string" },
-        "mediaUrls": { "type": "array" },
-        "mediaStoragePaths": { "type": "array" },
-        "thumbnailDataUrl": { "type": "string" },
-        "thumbnailStoragePath": { "type": "string" },
-        "mediaMimeType": { "type": "string" },
-        "mediaDurationSec": { "type": "integer" },
-        "mediaByteSize": { "type": "integer" },
-        "chunkCount": { "type": "integer" },
-        "likedByUids": { "type": "array" },
-        "savedByUids": { "type": "array" },
-        "commentCount": { "type": "integer" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "authorName": {
+          "type": "string"
+        },
+        "authorPhoto": {
+          "type": "string"
+        },
+        "authorCountry": {
+          "type": "string"
+        },
+        "authorCity": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "TEXT",
+            "PHOTO",
+            "VIDEO"
+          ]
+        },
+        "mediaDataUrl": {
+          "type": "string"
+        },
+        "mediaStoragePath": {
+          "type": "string"
+        },
+        "mediaUrls": {
+          "type": "array"
+        },
+        "mediaStoragePaths": {
+          "type": "array"
+        },
+        "thumbnailDataUrl": {
+          "type": "string"
+        },
+        "thumbnailStoragePath": {
+          "type": "string"
+        },
+        "mediaMimeType": {
+          "type": "string"
+        },
+        "mediaDurationSec": {
+          "type": "integer"
+        },
+        "mediaByteSize": {
+          "type": "integer"
+        },
+        "chunkCount": {
+          "type": "integer"
+        },
+        "likedByUids": {
+          "type": "array"
+        },
+        "savedByUids": {
+          "type": "array"
+        },
+        "commentCount": {
+          "type": "integer"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "authorName", "caption", "mediaType", "createdAt"]
+      "required": [
+        "userId",
+        "authorName",
+        "caption",
+        "mediaType",
+        "createdAt"
+      ]
     },
     "FeedComment": {
       "title": "FeedComment",
       "description": "Comment on a timeline post or video post.",
       "type": "object",
       "properties": {
-        "postId": { "type": "string" },
-        "userId": { "type": "string" },
-        "authorName": { "type": "string" },
-        "authorPhoto": { "type": "string" },
-        "text": { "type": "string" },
-        "likedByUids": { "type": "array" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "postId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "authorName": {
+          "type": "string"
+        },
+        "authorPhoto": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "likedByUids": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["postId", "userId", "authorName", "text", "createdAt"]
+      "required": [
+        "postId",
+        "userId",
+        "authorName",
+        "text",
+        "createdAt"
+      ]
     },
     "VideoPost": {
       "title": "VideoPost",
       "description": "Public video feed post uploaded by a member.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "authorName": { "type": "string" },
-        "authorPhoto": { "type": "string" },
-        "authorCountry": { "type": "string" },
-        "caption": { "type": "string" },
-        "mediaDataUrl": { "type": "string" },
-        "mediaStoragePath": { "type": "string" },
-        "thumbnailDataUrl": { "type": "string" },
-        "thumbnailStoragePath": { "type": "string" },
-        "mediaMimeType": { "type": "string" },
-        "mediaDurationSec": { "type": "integer" },
-        "mediaByteSize": { "type": "integer" },
-        "chunkCount": { "type": "integer" },
-        "likedByUids": { "type": "array" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "userId": {
+          "type": "string"
+        },
+        "authorName": {
+          "type": "string"
+        },
+        "authorPhoto": {
+          "type": "string"
+        },
+        "authorCountry": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "mediaDataUrl": {
+          "type": "string"
+        },
+        "mediaStoragePath": {
+          "type": "string"
+        },
+        "thumbnailDataUrl": {
+          "type": "string"
+        },
+        "thumbnailStoragePath": {
+          "type": "string"
+        },
+        "mediaMimeType": {
+          "type": "string"
+        },
+        "mediaDurationSec": {
+          "type": "integer"
+        },
+        "mediaByteSize": {
+          "type": "integer"
+        },
+        "chunkCount": {
+          "type": "integer"
+        },
+        "likedByUids": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["userId", "authorName", "caption", "mediaDurationSec", "chunkCount", "createdAt"]
+      "required": [
+        "userId",
+        "authorName",
+        "caption",
+        "mediaDurationSec",
+        "chunkCount",
+        "createdAt"
+      ]
     },
     "ModerationNoticeRecord": {
       "title": "ModerationNoticeRecord",
       "description": "Notice delivered to a user when a moderator deletes content for violating community guidelines.",
       "type": "object",
       "properties": {
-        "targetUid": { "type": "string" },
-        "moderatorUid": { "type": "string" },
-        "contentType": { "type": "string", "enum": ["POST", "REEL", "STORY", "PROFILE_VIDEO"] },
-        "contentId": { "type": "string" },
-        "contentPreview": { "type": "string" },
-        "reason": { "type": "string" },
-        "details": { "type": "string" },
-        "read": { "type": "boolean" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "targetUid": {
+          "type": "string"
+        },
+        "moderatorUid": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string",
+          "enum": [
+            "POST",
+            "REEL",
+            "STORY",
+            "PROFILE_VIDEO"
+          ]
+        },
+        "contentId": {
+          "type": "string"
+        },
+        "contentPreview": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["targetUid", "moderatorUid", "contentType", "contentId", "reason", "read", "createdAt"]
+      "required": [
+        "targetUid",
+        "moderatorUid",
+        "contentType",
+        "contentId",
+        "reason",
+        "read",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
-    "/users/{userId}": { "schema": { "$ref": "#/entities/PrivateUser" } },
-    "/users/{userId}/fcmTokens/{tokenId}": { "schema": { "$ref": "#/entities/FcmToken" } },
-    "/users/{userId}/favorites/{targetUid}": { "schema": { "$ref": "#/entities/FavoriteRecord" } },
-    "/users/{userId}/moderationNotices/{noticeId}": { "schema": { "$ref": "#/entities/ModerationNoticeRecord" } },
-    "/publicProfiles/{userId}": { "schema": { "$ref": "#/entities/PublicProfile" } },
-    "/publicProfiles/{userId}/videos/{videoId}": { "schema": { "$ref": "#/entities/ProfileVideoItem" } },
-    "/publicProfiles/{userId}/videos/{videoId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
-    "/geoCells/{cellId}/profiles/{userId}": { "schema": { "$ref": "#/entities/GeoCellProfile" } },
-    "/swipes/{swipeId}": { "schema": { "$ref": "#/entities/Swipe" } },
-    "/matches/{matchId}": { "schema": { "$ref": "#/entities/Match" } },
-    "/matches/{matchId}/messages/{messageId}": { "schema": { "$ref": "#/entities/ChatMessage" } },
-    "/matches/{matchId}/messages/{messageId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
-    "/matches/{matchId}/calls/{callId}": { "schema": { "$ref": "#/entities/CallSession" } },
-    "/matches/{matchId}/calls/{callId}/audioChunks/{chunkId}": { "schema": { "$ref": "#/entities/CallAudioChunk" } },
-    "/matches/{matchId}/calls/{callId}/videoFrames/{frameId}": { "schema": { "$ref": "#/entities/CallVideoFrame" } },
-    "/presence/{userId}": { "schema": { "$ref": "#/entities/UserPresence" } },
-    "/blocks/{blockId}": { "schema": { "$ref": "#/entities/BlockRecord" } },
-    "/reports/{reportId}": { "schema": { "$ref": "#/entities/ReportRecord" } },
-    "/friendRequests/{requestId}": { "schema": { "$ref": "#/entities/FriendRequestRecord" } },
-    "/friendships/{friendshipId}": { "schema": { "$ref": "#/entities/FriendshipRecord" } },
-    "/follows/{followId}": { "schema": { "$ref": "#/entities/FollowRecord" } },
-    "/profileViews/{viewId}": { "schema": { "$ref": "#/entities/ProfileViewRecord" } },
-    "/profileLikes/{likeId}": { "schema": { "$ref": "#/entities/ProfileLikeRecord" } },
-    "/stories/{storyId}": { "schema": { "$ref": "#/entities/StoryItem" } },
-    "/stories/{storyId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
-    "/highlights/{highlightId}": { "schema": { "$ref": "#/entities/StoryHighlight" } },
-    "/videoPosts/{postId}": { "schema": { "$ref": "#/entities/VideoPost" } },
-    "/videoPosts/{postId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
-    "/feedPosts/{postId}": { "schema": { "$ref": "#/entities/FeedPost" } },
-    "/feedPosts/{postId}/mediaChunks/{chunkId}": { "schema": { "$ref": "#/entities/MediaChunk" } },
-    "/feedPosts/{postId}/comments/{commentId}": { "schema": { "$ref": "#/entities/FeedComment" } }
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/PrivateUser"
+      }
+    },
+    "/users/{userId}/fcmTokens/{tokenId}": {
+      "schema": {
+        "$ref": "#/entities/FcmToken"
+      }
+    },
+    "/users/{userId}/favorites/{targetUid}": {
+      "schema": {
+        "$ref": "#/entities/FavoriteRecord"
+      }
+    },
+    "/users/{userId}/moderationNotices/{noticeId}": {
+      "schema": {
+        "$ref": "#/entities/ModerationNoticeRecord"
+      }
+    },
+    "/publicProfiles/{userId}": {
+      "schema": {
+        "$ref": "#/entities/PublicProfile"
+      }
+    },
+    "/publicProfiles/{userId}/videos/{videoId}": {
+      "schema": {
+        "$ref": "#/entities/ProfileVideoItem"
+      }
+    },
+    "/publicProfiles/{userId}/videos/{videoId}/mediaChunks/{chunkId}": {
+      "schema": {
+        "$ref": "#/entities/MediaChunk"
+      }
+    },
+    "/geoCells/{cellId}/profiles/{userId}": {
+      "schema": {
+        "$ref": "#/entities/GeoCellProfile"
+      }
+    },
+    "/swipes/{swipeId}": {
+      "schema": {
+        "$ref": "#/entities/Swipe"
+      }
+    },
+    "/matches/{matchId}": {
+      "schema": {
+        "$ref": "#/entities/Match"
+      }
+    },
+    "/matches/{matchId}/messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/ChatMessage"
+      }
+    },
+    "/matches/{matchId}/messages/{messageId}/mediaChunks/{chunkId}": {
+      "schema": {
+        "$ref": "#/entities/MediaChunk"
+      }
+    },
+    "/matches/{matchId}/calls/{callId}": {
+      "schema": {
+        "$ref": "#/entities/CallSession"
+      }
+    },
+    "/matches/{matchId}/calls/{callId}/audioChunks/{chunkId}": {
+      "schema": {
+        "$ref": "#/entities/CallAudioChunk"
+      }
+    },
+    "/matches/{matchId}/calls/{callId}/videoFrames/{frameId}": {
+      "schema": {
+        "$ref": "#/entities/CallVideoFrame"
+      }
+    },
+    "/presence/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserPresence"
+      }
+    },
+    "/blocks/{blockId}": {
+      "schema": {
+        "$ref": "#/entities/BlockRecord"
+      }
+    },
+    "/reports/{reportId}": {
+      "schema": {
+        "$ref": "#/entities/ReportRecord"
+      }
+    },
+    "/friendRequests/{requestId}": {
+      "schema": {
+        "$ref": "#/entities/FriendRequestRecord"
+      }
+    },
+    "/friendships/{friendshipId}": {
+      "schema": {
+        "$ref": "#/entities/FriendshipRecord"
+      }
+    },
+    "/follows/{followId}": {
+      "schema": {
+        "$ref": "#/entities/FollowRecord"
+      }
+    },
+    "/profileViews/{viewId}": {
+      "schema": {
+        "$ref": "#/entities/ProfileViewRecord"
+      }
+    },
+    "/profileLikes/{likeId}": {
+      "schema": {
+        "$ref": "#/entities/ProfileLikeRecord"
+      }
+    },
+    "/stories/{storyId}": {
+      "schema": {
+        "$ref": "#/entities/StoryItem"
+      }
+    },
+    "/stories/{storyId}/mediaChunks/{chunkId}": {
+      "schema": {
+        "$ref": "#/entities/MediaChunk"
+      }
+    },
+    "/highlights/{highlightId}": {
+      "schema": {
+        "$ref": "#/entities/StoryHighlight"
+      }
+    },
+    "/videoPosts/{postId}": {
+      "schema": {
+        "$ref": "#/entities/VideoPost"
+      }
+    },
+    "/videoPosts/{postId}/mediaChunks/{chunkId}": {
+      "schema": {
+        "$ref": "#/entities/MediaChunk"
+      }
+    },
+    "/feedPosts/{postId}": {
+      "schema": {
+        "$ref": "#/entities/FeedPost"
+      }
+    },
+    "/feedPosts/{postId}/mediaChunks/{chunkId}": {
+      "schema": {
+        "$ref": "#/entities/MediaChunk"
+      }
+    },
+    "/feedPosts/{postId}/comments/{commentId}": {
+      "schema": {
+        "$ref": "#/entities/FeedComment"
+      }
+    }
   }
 }

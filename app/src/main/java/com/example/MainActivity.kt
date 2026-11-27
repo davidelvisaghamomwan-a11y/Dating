@@ -1424,6 +1424,27 @@ private fun MainKindredApp(
                                                 onCompleteResult = onDone
                                             )
                                         },
+                                        onSaveInstagramProfile = { name, username, pronouns, bio, link, gender, page, category, photos, onDone ->
+                                            viewModel.updateProfileContent(
+                                                displayName = name,
+                                                username = username,
+                                                pronouns = pronouns,
+                                                bio = bio,
+                                                profileLink = link,
+                                                gender = gender,
+                                                pageInfo = page,
+                                                category = category,
+                                                profilePhotos = photos,
+                                                interests = data.myProfile?.interests ?: emptyList(),
+                                                cityLabel = data.myProfile?.cityLabel,
+                                                country = data.myProfile?.country,
+                                                onComplete = { navController.popBackStack() },
+                                                onCompleteResult = onDone
+                                            )
+                                        },
+                                        onUploadProfilePicture = { photoDataUrl, onDone ->
+                                            viewModel.uploadProfilePicture(photoDataUrl, onDone)
+                                        },
                                         onStatusMessage = { msg ->
                                             viewModel.postStatusMessage(msg)
                                         }

@@ -54,6 +54,11 @@ data class PublicProfile(
     val photosVisibility: String = VisibilityLevel.EVERYONE,
     val videosVisibility: String = VisibilityLevel.EVERYONE,
     val infoVisibility: String = VisibilityLevel.EVERYONE,
+    val username: String = "",
+    val pronouns: String = "",
+    val profileLink: String = "",
+    val pageInfo: String = "",
+    val category: String = "Personal blog",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {

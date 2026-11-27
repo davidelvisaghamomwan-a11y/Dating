@@ -115,10 +115,12 @@ class CloudMediaStorageService(
     private fun normalizeStoragePath(rawPath: String, uid: String): String {
         val cleaned = rawPath.trim().trimStart('/').replace(Regex("/+"), "/")
         require(cleaned.isNotBlank()) { "Storage path must not be empty." }
-        return if (cleaned.startsWith("users/")) {
-            cleaned
-        } else {
-            "users/$uid/$cleaned"
+        return when {
+            cleaned.startsWith("profile_pictures/$uid/") -> cleaned
+            cleaned.startsWith("profile_pictures/") -> "profile_pictures/$uid/${cleaned.removePrefix("profile_pictures/").trimStart('/')}"
+            cleaned.startsWith("users/$uid/") -> cleaned
+            cleaned.startsWith("users/") -> "users/$uid/${cleaned.removePrefix("users/").trimStart('/')}"
+            else -> "profile_pictures/$uid/$cleaned"
         }
     }
 
@@ -422,7 +424,8 @@ class CloudMediaStorageService(
         val cleanPath = storagePath?.trim()?.trimStart('/')?.replace(Regex("/+"), "/").orEmpty()
         if (cleanPath.isBlank()) return@withContext true
         val uid = authProvider().currentUser?.uid?.trim().orEmpty()
-        if (uid.isBlank() || !cleanPath.startsWith("users/$uid/")) {
+        val isOwned = cleanPath.startsWith("users/$uid/") || cleanPath.startsWith("profile_pictures/$uid/")
+        if (uid.isBlank() || !isOwned) {
             return@withContext false
         }
         try {
@@ -478,6 +481,14 @@ class CloudMediaStorageService(
         const val MAX_INLINE_FIRESTORE_BYTES = 640_000
         const val MAX_INLINE_FIRESTORE_MEDIA_CHARS = 900_000
         const val MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS = 175_000
+
+        fun buildProfilePicturePath(uid: String, fileName: String): String {
+            val cleanUid = uid.trim().trim('/')
+            val cleanName = fileName.trim().trim('/')
+            require(cleanUid.isNotBlank()) { "Authenticated user ID is required for Storage path." }
+            require(cleanName.isNotBlank()) { "Invalid Storage fileName." }
+            return "profile_pictures/$cleanUid/$cleanName"
+        }
 
         fun buildUserPath(uid: String, category: String, fileName: String): String {
             val cleanUid = uid.trim().trim('/')
