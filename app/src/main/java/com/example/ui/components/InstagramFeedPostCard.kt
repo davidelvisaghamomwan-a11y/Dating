@@ -207,7 +207,7 @@ fun InstagramFeedPostCard(
     var isMuted by remember(post.id) { mutableStateOf(false) }
     var resolvedVideoFile by remember(post.id) { mutableStateOf<File?>(null) }
     var loadingVideo by remember(post.id) { mutableStateOf(false) }
-    var activeMediaPlayer by remember(post.id) { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var isFirstFrameRendered by remember(post.id) { mutableStateOf(false) }
 
     LaunchedEffect(isVisibleForAutoPlay) {
         if (!isVisibleForAutoPlay) {
@@ -216,15 +216,6 @@ fun InstagramFeedPostCard(
     }
 
     val playVideo = isVisibleForAutoPlay && !userPaused
-
-    LaunchedEffect(isMuted, activeMediaPlayer) {
-        activeMediaPlayer?.let { mp ->
-            runCatching {
-                val vol = if (isMuted) 0f else 1f
-                mp.setVolume(vol, vol)
-            }
-        }
-    }
 
     LaunchedEffect(post.id, post.mediaType) {
         if (post.mediaType == "VIDEO" && resolvedVideoFile == null && !loadingVideo) {
@@ -470,46 +461,23 @@ fun InstagramFeedPostCard(
                 post.mediaType == "VIDEO" -> {
                     val file = resolvedVideoFile
                     if (file != null) {
-                        AndroidView(
-                            factory = { ctx ->
-                                VideoView(ctx).apply {
-                                    layoutParams = ViewGroup.LayoutParams(
-                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                        ViewGroup.LayoutParams.MATCH_PARENT
-                                    )
-                                    setOnErrorListener { _, _, _ -> true }
-                                    setVideoURI(Uri.fromFile(file))
-                                    setOnPreparedListener { mp ->
-                                        activeMediaPlayer = mp
-                                        mp.isLooping = true
-                                        val vol = if (isMuted) 0f else 1f
-                                        mp.setVolume(vol, vol)
-                                        if (playVideo) start()
-                                    }
-                                }
-                            },
-                            update = { vv ->
-                                if (playVideo && !vv.isPlaying) {
-                                    runCatching { vv.start() }
-                                } else if (!playVideo && vv.isPlaying) {
-                                    runCatching { vv.pause() }
-                                }
-                            },
-                            onRelease = {
-                                activeMediaPlayer = null
-                                runCatching { it.stopPlayback() }
-                            },
+                        LoopingVideoPlayer(
+                            videoFile = file,
+                            shouldPlay = playVideo,
+                            isMuted = isMuted,
+                            isActiveInViewport = isVisibleForAutoPlay,
+                            onFirstFrameRendered = { isFirstFrameRendered = true },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
 
-                    if (file == null || (!playVideo && !loadingVideo)) {
+                    if (file == null || !isFirstFrameRendered || (!playVideo && !loadingVideo)) {
                         val thumb = remember(post.thumbnailDataUrl) {
                             post.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                         }
                         val isRemoteThumb = post.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
                             post.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true
-                        if (file == null && thumb != null) {
+                        if ((file == null || !isFirstFrameRendered) && thumb != null) {
                             Image(
                                 bitmap = thumb,
                                 contentDescription = "Video preview",
@@ -517,7 +485,7 @@ fun InstagramFeedPostCard(
                                 filterQuality = FilterQuality.High,
                                 modifier = Modifier.fillMaxSize()
                             )
-                        } else if (file == null && isRemoteThumb) {
+                        } else if ((file == null || !isFirstFrameRendered) && isRemoteThumb) {
                             AsyncImage(
                                 model = post.thumbnailDataUrl,
                                 contentDescription = "Video preview",

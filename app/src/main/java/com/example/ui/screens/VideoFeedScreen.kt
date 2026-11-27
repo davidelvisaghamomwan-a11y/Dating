@@ -1,10 +1,6 @@
 package com.example.ui.screens
 
 import android.content.Intent
-import android.media.MediaPlayer
-import android.net.Uri
-import android.view.ViewGroup
-import android.widget.VideoView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -89,9 +85,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
 import com.example.model.PublicProfile
 import com.example.model.VideoPost
+import com.example.ui.components.LoopingVideoPlayer
 import com.example.ui.components.ProfileAvatarImage
 import com.example.ui.theme.CoralRose
 import com.example.util.CountryFlagHelper
@@ -100,6 +97,7 @@ import com.example.util.MediaImageHelper
 import com.example.util.VideoClipHelper
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -234,16 +232,20 @@ fun VideoFeedScreen(
                 }
                 VerticalPager(
                     state = pagerState,
+                    beyondViewportPageCount = 1,
+                    key = { index -> videoPosts[index].id },
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("reels_vertical_pager")
                 ) { page ->
                     val post = videoPosts[page]
-                    val isSettledActive = pagerState.settledPage == page
+                    val isCurrentActive = pagerState.currentPage == page
+                    val shouldPreload = abs(page - pagerState.currentPage) <= 1
                     ReelPageItem(
                         post = post,
                         authorProfile = profilesByUid[post.userId],
-                        isActive = isSettledActive,
+                        isActive = isCurrentActive,
+                        shouldPreload = shouldPreload,
                         isMuted = isMuted,
                         currentUserId = currentUserId,
                         isFollowing = isFollowingUid(post.userId),
@@ -482,6 +484,7 @@ private fun ReelPageItem(
     post: VideoPost,
     authorProfile: PublicProfile? = null,
     isActive: Boolean,
+    shouldPreload: Boolean = isActive,
     isMuted: Boolean,
     currentUserId: String,
     isFollowing: Boolean,
@@ -498,26 +501,21 @@ private fun ReelPageItem(
     var isLoading by remember(post.id) { mutableStateOf(false) }
     var userPaused by remember(post.id) { mutableStateOf(false) }
     var showDeleteConfirm by remember(post.id) { mutableStateOf(false) }
-    var mediaPlayerRef by remember(post.id) { mutableStateOf<MediaPlayer?>(null) }
+    var isFirstFrameRendered by remember(post.id) { mutableStateOf(false) }
 
     val shouldPlay = isActive && !userPaused && !showDeleteConfirm
 
-    LaunchedEffect(post.id, isActive) {
-        if (!isActive) {
-            userPaused = false
-        } else if (resolvedFile == null && !isLoading) {
+    LaunchedEffect(post.id, shouldPreload) {
+        if (shouldPreload && resolvedFile == null && !isLoading) {
             isLoading = true
             resolvedFile = resolveVideoFile(post).getOrNull()
             isLoading = false
         }
     }
 
-    LaunchedEffect(isMuted, mediaPlayerRef) {
-        mediaPlayerRef?.let { mp ->
-            runCatching {
-                val vol = if (isMuted) 0f else 1f
-                mp.setVolume(vol, vol)
-            }
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            userPaused = false
         }
     }
 
@@ -547,40 +545,23 @@ private fun ReelPageItem(
     ) {
         val file = resolvedFile
         if (file != null) {
-            AndroidView(
-                factory = { ctx ->
-                    VideoView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        setVideoURI(Uri.fromFile(file))
-                        setOnPreparedListener { mp ->
-                            mediaPlayerRef = mp
-                            mp.isLooping = true
-                            val vol = if (isMuted) 0f else 1f
-                            mp.setVolume(vol, vol)
-                            if (shouldPlay) start()
-                        }
-                    }
-                },
-                update = { vv ->
-                    if (shouldPlay && !vv.isPlaying) {
-                        runCatching { vv.start() }
-                    } else if (!shouldPlay && vv.isPlaying) {
-                        runCatching { vv.pause() }
-                    }
-                },
-                onRelease = {
-                    mediaPlayerRef = null
-                    runCatching { it.stopPlayback() }
-                },
+            LoopingVideoPlayer(
+                videoFile = file,
+                shouldPlay = shouldPlay,
+                isMuted = isMuted,
+                resetToStartWhenPausedOutOfView = true,
+                isActiveInViewport = isActive,
+                onFirstFrameRendered = { isFirstFrameRendered = true },
                 modifier = Modifier.fillMaxSize()
             )
-        } else {
+        }
+
+        if (file == null || !isFirstFrameRendered) {
             val thumb = remember(post.thumbnailDataUrl) {
                 post.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
             }
+            val isRemoteThumb = post.thumbnailDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                post.thumbnailDataUrl?.startsWith("https://", ignoreCase = true) == true
             if (thumb != null) {
                 Image(
                     bitmap = thumb,
@@ -589,8 +570,15 @@ private fun ReelPageItem(
                     filterQuality = FilterQuality.High,
                     modifier = Modifier.fillMaxSize()
                 )
+            } else if (isRemoteThumb) {
+                AsyncImage(
+                    model = post.thumbnailDataUrl,
+                    contentDescription = "Reel thumbnail",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
-            if (isLoading) {
+            if (isLoading && file == null) {
                 CircularProgressIndicator(color = CoralRose, modifier = Modifier.align(Alignment.Center))
             }
         }

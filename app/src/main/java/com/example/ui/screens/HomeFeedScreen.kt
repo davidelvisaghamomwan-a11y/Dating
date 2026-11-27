@@ -1273,7 +1273,7 @@ private fun HomeReelPostCard(
     var isMuted by remember(reel.id) { mutableStateOf(false) }
     var resolvedVideoFile by remember(reel.id) { mutableStateOf<File?>(null) }
     var loadingVideo by remember(reel.id) { mutableStateOf(false) }
-    var activeMediaPlayer by remember(reel.id) { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var isFirstFrameRendered by remember(reel.id) { mutableStateOf(false) }
 
     LaunchedEffect(isVisibleForAutoPlay) {
         if (!isVisibleForAutoPlay) {
@@ -1282,15 +1282,6 @@ private fun HomeReelPostCard(
     }
 
     val playVideo = isVisibleForAutoPlay && !userPaused
-
-    LaunchedEffect(isMuted, activeMediaPlayer) {
-        activeMediaPlayer?.let { mp ->
-            runCatching {
-                val vol = if (isMuted) 0f else 1f
-                mp.setVolume(vol, vol)
-            }
-        }
-    }
 
     LaunchedEffect(reel.id) {
         if (resolvedVideoFile == null && !loadingVideo) {
@@ -1508,7 +1499,7 @@ private fun HomeReelPostCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.8f)
+                .aspectRatio(0.5625f)
                 .background(Color(0xFF0D0C10))
                 .pointerInput(reel.id) {
                     detectTapGestures(
@@ -1524,44 +1515,21 @@ private fun HomeReelPostCard(
         ) {
             val file = resolvedVideoFile
             if (file != null) {
-                AndroidView(
-                    factory = { ctx ->
-                        VideoView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            setOnErrorListener { _, _, _ -> true }
-                            setVideoURI(Uri.fromFile(file))
-                            setOnPreparedListener { mp ->
-                                activeMediaPlayer = mp
-                                mp.isLooping = true
-                                val vol = if (isMuted) 0f else 1f
-                                mp.setVolume(vol, vol)
-                                if (playVideo) start()
-                            }
-                        }
-                    },
-                    update = { vv ->
-                        if (playVideo && !vv.isPlaying) {
-                            runCatching { vv.start() }
-                        } else if (!playVideo && vv.isPlaying) {
-                            runCatching { vv.pause() }
-                        }
-                    },
-                    onRelease = {
-                        activeMediaPlayer = null
-                        runCatching { it.stopPlayback() }
-                    },
+                com.example.ui.components.LoopingVideoPlayer(
+                    videoFile = file,
+                    shouldPlay = playVideo,
+                    isMuted = isMuted,
+                    isActiveInViewport = isVisibleForAutoPlay,
+                    onFirstFrameRendered = { isFirstFrameRendered = true },
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
-            if (file == null || (!playVideo && !loadingVideo)) {
+            if (file == null || !isFirstFrameRendered || (!playVideo && !loadingVideo)) {
                 val thumb = remember(reel.thumbnailDataUrl) {
                     reel.thumbnailDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
                 }
-                if (file == null && thumb != null) {
+                if ((file == null || !isFirstFrameRendered) && thumb != null) {
                     Image(
                         bitmap = thumb,
                         contentDescription = "Reel preview",
