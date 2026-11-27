@@ -9,7 +9,9 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
@@ -18,11 +20,14 @@ import com.example.model.DiscoveryCandidate
 import com.example.model.FeedComment
 import com.example.model.FeedPost
 import com.example.model.FollowRecord
+import com.example.model.ProfileVideoItem
 import com.example.model.PublicProfile
 import com.example.model.SocialActivityItem
 import com.example.model.UiState
 import com.example.model.UserPresence
+import com.example.ui.components.InstagramFeedPostCard
 import com.example.ui.screens.ActivityNotificationsScreen
+import com.example.ui.screens.EditProfileScreen
 import com.example.ui.screens.ExploreSearchScreen
 import com.example.ui.screens.FriendsHubScreen
 import com.example.ui.screens.MatchesAndChatScreen
@@ -30,6 +35,8 @@ import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SettingsScreen
 import com.google.firebase.Timestamp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -306,5 +313,99 @@ class SocialConversionUiTest {
 
         composeTestRule.onNodeWithTag("profile_stat_following").performClick()
         assertEquals(1, openedTab)
+    }
+
+    @Test
+    fun feedPostCard_requiresConfirmationBeforeDeletingPost() {
+        var deleted = false
+        val post = FeedPost(
+            id = "fp_del_1",
+            userId = "me_1",
+            authorName = "Me",
+            caption = "Sunset",
+            mediaType = "PHOTO",
+            mediaDataUrl = "https://example.com/sunset.jpg",
+            createdAt = Timestamp(100L, 0)
+        )
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(412.dp, 915.dp)) {
+                    InstagramFeedPostCard(
+                        post = post,
+                        authorProfile = PublicProfile(userId = "me_1", displayName = "Me"),
+                        currentUserId = "me_1",
+                        resolveVideoFile = { Result.failure(IllegalStateException("none")) },
+                        onToggleLike = {},
+                        onToggleSave = {},
+                        onOpenComments = {},
+                        onDeletePost = { deleted = true },
+                        onOpenAuthor = {}
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithContentDescription("Post options").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Delete Post").performClick()
+        composeTestRule.waitForIdle()
+
+        assertFalse(deleted)
+        composeTestRule.onNodeWithTag("confirm_delete_post_${post.id}").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("cancel_delete_post_${post.id}").performClick()
+        composeTestRule.waitForIdle()
+        assertFalse(deleted)
+
+        composeTestRule.onNodeWithContentDescription("Post options").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Delete Post").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_delete_post_${post.id}").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(deleted)
+    }
+
+    @Test
+    fun editProfileScreen_requiresConfirmationBeforeDeletingPictureOrVideo() {
+        var deletedVideoId: String? = null
+        val video = ProfileVideoItem(id = "vid_1", userId = "me_1", caption = "Trip")
+        val profile = PublicProfile(
+            userId = "me_1",
+            displayName = "Me",
+            profilePhotos = listOf("https://example.com/a.jpg", "https://example.com/b.jpg")
+        )
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(412.dp, 915.dp)) {
+                    EditProfileScreen(
+                        myProfile = profile,
+                        defaultDisplayName = "Me",
+                        isBusy = false,
+                        videos = listOf(video),
+                        onDeleteVideo = { deletedVideoId = it },
+                        onBack = {},
+                        onSaveChanges = { _, _, _, _, _ -> },
+                        onStatusMessage = {}
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("edit_remove_photo_0").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_delete_profile_photo_0").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("cancel_delete_profile_photo_0").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithContentDescription("Delete video").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(null, deletedVideoId)
+        composeTestRule.onNodeWithTag("confirm_delete_showcase_video_${video.id}").performClick()
+        composeTestRule.waitForIdle()
+        assertEquals(video.id, deletedVideoId)
     }
 }

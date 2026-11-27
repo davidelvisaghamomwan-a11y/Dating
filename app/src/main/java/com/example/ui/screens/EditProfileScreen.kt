@@ -192,6 +192,8 @@ fun EditProfileScreen(
     var isPreparingVideo by remember { mutableStateOf(false) }
     var isUploadingVideo by remember { mutableStateOf(false) }
     var videoUploadError by remember { mutableStateOf<String?>(null) }
+    var photoSlotToDelete by remember { mutableStateOf<Int?>(null) }
+    var videoToDelete by remember { mutableStateOf<ProfileVideoItem?>(null) }
 
     LaunchedEffect(latestLocation) {
         val loc = latestLocation ?: return@LaunchedEffect
@@ -438,7 +440,7 @@ fun EditProfileScreen(
 
                                                 IconButton(
                                                     onClick = {
-                                                        profilePhotos = profilePhotos.filterIndexed { idx, _ -> idx != slot }
+                                                        photoSlotToDelete = slot
                                                     },
                                                     modifier = Modifier
                                                         .align(Alignment.TopEnd)
@@ -573,7 +575,7 @@ fun EditProfileScreen(
                                                 .align(Alignment.Center)
                                         )
                                         IconButton(
-                                            onClick = { onDeleteVideo(video.id) },
+                                            onClick = { videoToDelete = video },
                                             modifier = Modifier
                                                 .align(Alignment.TopEnd)
                                                 .minimumInteractiveComponentSize()
@@ -1197,6 +1199,62 @@ fun EditProfileScreen(
                     },
                     enabled = !isUploadingVideo
                 ) { Text("Cancel") }
+            }
+        )
+    }
+
+    photoSlotToDelete?.let { slotToRemove ->
+        AlertDialog(
+            onDismissRequest = { photoSlotToDelete = null },
+            title = { Text("Delete Picture?") },
+            text = { Text("Remove this picture from your profile?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        profilePhotos = profilePhotos.filterIndexed { idx, _ -> idx != slotToRemove }
+                        photoSlotToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_profile_photo_$slotToRemove")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { photoSlotToDelete = null },
+                    modifier = Modifier.testTag("cancel_delete_profile_photo_$slotToRemove")
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    videoToDelete?.let { targetVideo ->
+        AlertDialog(
+            onDismissRequest = { videoToDelete = null },
+            title = { Text("Delete Video?") },
+            text = { Text("Remove this showcase video from your Kindred profile? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteVideo(targetVideo.id)
+                        videoToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_showcase_video_${targetVideo.id}")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { videoToDelete = null },
+                    modifier = Modifier.testTag("cancel_delete_showcase_video_${targetVideo.id}")
+                ) {
+                    Text("Cancel")
+                }
             }
         )
     }

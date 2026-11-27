@@ -497,9 +497,10 @@ private fun ReelPageItem(
     var resolvedFile by remember(post.id) { mutableStateOf<File?>(null) }
     var isLoading by remember(post.id) { mutableStateOf(false) }
     var userPaused by remember(post.id) { mutableStateOf(false) }
+    var showDeleteConfirm by remember(post.id) { mutableStateOf(false) }
     var mediaPlayerRef by remember(post.id) { mutableStateOf<MediaPlayer?>(null) }
 
-    val shouldPlay = isActive && !userPaused
+    val shouldPlay = isActive && !userPaused && !showDeleteConfirm
 
     LaunchedEffect(post.id, isActive) {
         if (!isActive) {
@@ -799,10 +800,11 @@ private fun ReelPageItem(
 
             if (isOwner) {
                 IconButton(
-                    onClick = onDelete,
+                    onClick = { showDeleteConfirm = true },
                     modifier = Modifier
                         .size(48.dp)
                         .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+                        .testTag("delete_video_reel_button_${post.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Filled.DeleteOutline,
@@ -812,6 +814,34 @@ private fun ReelPageItem(
                     )
                 }
             }
+        }
+
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text("Delete Video?") },
+                text = { Text("Are you sure you want to delete this video? This action cannot be undone.") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showDeleteConfirm = false
+                            onDelete()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.testTag("confirm_delete_video_reel_${post.id}")
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showDeleteConfirm = false },
+                        modifier = Modifier.testTag("cancel_delete_video_reel_${post.id}")
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }

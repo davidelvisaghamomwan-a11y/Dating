@@ -48,6 +48,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -60,6 +63,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -355,7 +359,9 @@ fun StoryViewerDialog(
     var activeVideoView by remember { mutableStateOf<VideoView?>(null) }
 
     var isHeldPaused by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember(story.id) { mutableStateOf(false) }
     var showViewerListSheet by remember { mutableStateOf(false) }
+    val isStoryPaused = isHeldPaused || showDeleteConfirm || showViewerListSheet
     var replyDraft by remember { mutableStateOf("") }
     var isSendingReply by remember { mutableStateOf(false) }
 
@@ -408,12 +414,12 @@ fun StoryViewerDialog(
         }
     }
 
-    // Photo story timer loop that pauses when user holds down
-    LaunchedEffect(story.id, isHeldPaused) {
-        if (story.mediaType != "VIDEO" && !isHeldPaused) {
+    // Photo story timer loop that pauses when user holds down or confirms delete
+    LaunchedEffect(story.id, isStoryPaused) {
+        if (story.mediaType != "VIDEO" && !isStoryPaused) {
             while (elapsedMs < storyDurationMs) {
                 delay(timerStepMs)
-                if (!isHeldPaused) {
+                if (!isStoryPaused) {
                     elapsedMs += timerStepMs
                 }
             }
@@ -425,10 +431,10 @@ fun StoryViewerDialog(
         }
     }
 
-    // Pause/Resume video playback when user holds down
-    LaunchedEffect(isHeldPaused) {
+    // Pause/Resume video playback when user holds down or confirms delete
+    LaunchedEffect(isStoryPaused) {
         activeVideoView?.let { vv ->
-            if (isHeldPaused) {
+            if (isStoryPaused) {
                 runCatching { vv.pause() }
             } else {
                 runCatching { vv.start() }
@@ -663,10 +669,7 @@ fun StoryViewerDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (isOwner) {
                             IconButton(
-                                onClick = {
-                                    onDeleteStory(story.id)
-                                    onDismiss()
-                                },
+                                onClick = { showDeleteConfirm = true },
                                 modifier = Modifier.size(36.dp)
                             ) {
                                 Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete story", tint = Color.White)
@@ -878,5 +881,30 @@ fun StoryViewerDialog(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(if (story.mediaType == "VIDEO") "Delete Video Story?" else "Delete Story?") },
+            text = { Text("Are you sure you want to delete this story? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteStory(story.id)
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

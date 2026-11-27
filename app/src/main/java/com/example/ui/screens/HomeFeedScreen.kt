@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -1222,6 +1223,7 @@ private fun HomeReelPostCard(
     }
 
     var showMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember(reel.id) { mutableStateOf(false) }
     var showHeartPop by remember { mutableStateOf(false) }
     val heartScale = remember { Animatable(0.2f) }
     val heartAlpha = remember { Animatable(1f) }
@@ -1471,7 +1473,7 @@ private fun HomeReelPostCard(
                                 leadingIcon = { Icon(Icons.Filled.DeleteOutline, contentDescription = null) },
                                 onClick = {
                                     showMenu = false
-                                    onDeleteReel()
+                                    showDeleteConfirm = true
                                 }
                             )
                         } else {
@@ -1802,6 +1804,34 @@ private fun HomeReelPostCard(
         HorizontalDivider(
             thickness = 0.5.dp,
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Video?") },
+            text = { Text("Are you sure you want to delete this video reel? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteReel()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_reel_${reel.id}")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteConfirm = false },
+                    modifier = Modifier.testTag("cancel_delete_reel_${reel.id}")
+                ) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }

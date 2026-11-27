@@ -50,6 +50,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -152,6 +155,7 @@ fun InstagramFeedPostCard(
     }
 
     var showMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember(post.id) { mutableStateOf(false) }
     var showHeartPop by remember { mutableStateOf(false) }
     val heartScale = remember { Animatable(0.2f) }
     val heartAlpha = remember { Animatable(1f) }
@@ -394,7 +398,7 @@ fun InstagramFeedPostCard(
                                 leadingIcon = { Icon(Icons.Filled.DeleteOutline, contentDescription = null) },
                                 onClick = {
                                     showMenu = false
-                                    onDeletePost()
+                                    showDeleteConfirm = true
                                 }
                             )
                         } else {
@@ -857,6 +861,52 @@ fun InstagramFeedPostCard(
         HorizontalDivider(
             thickness = 0.5.dp,
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+    }
+
+    if (showDeleteConfirm) {
+        val hasPhotos = remember(post.id, post.mediaDataUrl, post.mediaUrls) {
+            post.allPhotoUrls().isNotEmpty()
+        }
+        val itemLabel = when {
+            post.mediaType == "VIDEO" -> "video"
+            hasPhotos -> "photo post"
+            else -> "post"
+        }
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = {
+                Text(
+                    text = when {
+                        post.mediaType == "VIDEO" -> "Delete Video?"
+                        hasPhotos -> "Delete Photo Post?"
+                        else -> "Delete Post?"
+                    }
+                )
+            },
+            text = {
+                Text("Are you sure you want to delete this $itemLabel? This action cannot be undone.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeletePost()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_post_${post.id}")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteConfirm = false },
+                    modifier = Modifier.testTag("cancel_delete_post_${post.id}")
+                ) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }

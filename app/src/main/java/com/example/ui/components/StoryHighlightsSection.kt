@@ -663,9 +663,10 @@ fun HighlightViewerDialog(
     val safeIndex = activeIndex.coerceIn(0, stories.lastIndex)
     val currentStory = stories[safeIndex]
     var isPaused by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember(highlight.id) { mutableStateOf(false) }
 
-    LaunchedEffect(highlight.id, safeIndex, isPaused) {
-        if (!isPaused) {
+    LaunchedEffect(highlight.id, safeIndex, isPaused, showDeleteConfirm) {
+        if (!isPaused && !showDeleteConfirm) {
             delay(5_000L)
             if (safeIndex < stories.lastIndex) {
                 activeIndex = safeIndex + 1
@@ -845,10 +846,7 @@ fun HighlightViewerDialog(
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (isOwner) {
-                            IconButton(onClick = {
-                                onDeleteHighlight(highlight.id)
-                                onDismiss()
-                            }) {
+                            IconButton(onClick = { showDeleteConfirm = true }) {
                                 Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete Highlight", tint = Color.White)
                             }
                         }
@@ -878,5 +876,30 @@ fun HighlightViewerDialog(
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Highlight?") },
+            text = { Text("Are you sure you want to delete '${highlight.title}'? The original stories will still remain in your archive.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteHighlight(highlight.id)
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
