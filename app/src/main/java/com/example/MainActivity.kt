@@ -481,6 +481,7 @@ private fun MainKindredApp(
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
                     isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
                     presenceScope.launch { runAutoUpdateCheck(force = false) }
+                    viewModel.refreshFeed()
                 }
                 Lifecycle.Event.ON_STOP -> {
                     heartbeatJob?.cancel()
@@ -547,6 +548,7 @@ private fun MainKindredApp(
         KindredNotificationHelper.ensureChannels(context)
         KindredBackgroundService.startIfEnabled(context)
         viewModel.syncFcmToken()
+        viewModel.refreshFeed()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !KindredNotificationHelper.hasNotificationPermission(context)
         ) {
@@ -632,6 +634,9 @@ private fun MainKindredApp(
         if (route == "create") {
             showCreateChooserSheet = true
             return
+        }
+        if (route == ROUTE_HOME && currentRoute == ROUTE_HOME) {
+            viewModel.refreshFeed()
         }
         navController.navigate(route) {
             popUpTo(navController.graph.findStartDestination().id) {

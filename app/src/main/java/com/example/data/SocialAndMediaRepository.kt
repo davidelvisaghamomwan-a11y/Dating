@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -69,9 +70,9 @@ class SocialAndMediaRepository(
     private val auth: FirebaseAuth = Firebase.auth,
     private val cloudStorage: CloudMediaStorageService = CloudMediaStorageService(authProvider = { auth })
 ) {
-    private val refreshedFeedPostsFlow = MutableSharedFlow<List<FeedPost>>(extraBufferCapacity = 4)
-    private val refreshedStoriesFlow = MutableSharedFlow<List<StoryItem>>(extraBufferCapacity = 4)
-    private val refreshedVideoFeedFlow = MutableSharedFlow<List<VideoPost>>(extraBufferCapacity = 4)
+    private val refreshedFeedPostsFlow = MutableSharedFlow<List<FeedPost>>(replay = 1, extraBufferCapacity = 16)
+    private val refreshedStoriesFlow = MutableSharedFlow<List<StoryItem>>(replay = 1, extraBufferCapacity = 16)
+    private val refreshedVideoFeedFlow = MutableSharedFlow<List<VideoPost>>(replay = 1, extraBufferCapacity = 16)
 
     private val deletedFeedPostIdsFlow = MutableStateFlow<Set<String>>(emptySet())
     private val deletedVideoPostIdsFlow = MutableStateFlow<Set<String>>(emptySet())
@@ -1090,8 +1091,29 @@ class SocialAndMediaRepository(
                     .catch { handleStreamError(it, OperationType.LIST, "stories", viewerUid) }
             )
         }
-        return combine(merge(liveFlow, refreshedStoriesFlow), deletedStoryIdsFlow) { stories, deletedIds ->
-            if (deletedIds.isEmpty()) stories else stories.filter { it.id !in deletedIds }
+        return combine(
+            liveFlow,
+            refreshedStoriesFlow.onStart { emit(emptyList()) },
+            deletedStoryIdsFlow
+        ) { live, refreshed, deletedIds ->
+            val now = System.currentTimeMillis()
+            val base = if (refreshed.isNotEmpty()) {
+                val newestRefreshedSeconds = refreshed.maxOfOrNull { it.createdAt?.seconds ?: 0L } ?: 0L
+                val refreshedMap = refreshed.associateBy { it.id }.toMutableMap()
+                for (item in live) {
+                    if (item.id.isNotBlank() && !refreshedMap.containsKey(item.id)) {
+                        val itemSeconds = item.createdAt?.seconds ?: 0L
+                        if (itemSeconds >= newestRefreshedSeconds) {
+                            refreshedMap[item.id] = item
+                        }
+                    }
+                }
+                refreshedMap.values.filter { !it.isExpiredAt(now) }
+                    .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            } else {
+                live
+            }
+            if (deletedIds.isEmpty()) base else base.filter { it.id !in deletedIds }
         }
     }
 
@@ -1503,8 +1525,27 @@ class SocialAndMediaRepository(
                     .catch { handleStreamError(it, OperationType.LIST, "videoPosts", viewerUid) }
             )
         }
-        return combine(merge(liveFlow, refreshedVideoFeedFlow), deletedVideoPostIdsFlow) { videos, deletedIds ->
-            if (deletedIds.isEmpty()) videos else videos.filter { it.id !in deletedIds }
+        return combine(
+            liveFlow,
+            refreshedVideoFeedFlow.onStart { emit(emptyList()) },
+            deletedVideoPostIdsFlow
+        ) { live, refreshed, deletedIds ->
+            val base = if (refreshed.isNotEmpty()) {
+                val newestRefreshedSeconds = refreshed.maxOfOrNull { it.createdAt?.seconds ?: 0L } ?: 0L
+                val refreshedMap = refreshed.associateBy { it.id }.toMutableMap()
+                for (item in live) {
+                    if (item.id.isNotBlank() && !refreshedMap.containsKey(item.id)) {
+                        val itemSeconds = item.createdAt?.seconds ?: 0L
+                        if (itemSeconds >= newestRefreshedSeconds) {
+                            refreshedMap[item.id] = item
+                        }
+                    }
+                }
+                refreshedMap.values.sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            } else {
+                live
+            }
+            if (deletedIds.isEmpty()) base else base.filter { it.id !in deletedIds }
         }
     }
 
@@ -1668,8 +1709,28 @@ class SocialAndMediaRepository(
                     .catch { handleStreamError(it, OperationType.LIST, "feedPosts", viewerUid) }
             )
         }
-        return combine(merge(liveFlow, refreshedFeedPostsFlow), deletedFeedPostIdsFlow) { posts, deletedIds ->
-            if (deletedIds.isEmpty()) posts else posts.filter {
+        return combine(
+            liveFlow,
+            refreshedFeedPostsFlow.onStart { emit(emptyList()) },
+            deletedFeedPostIdsFlow
+        ) { live, refreshed, deletedIds ->
+            val base = if (refreshed.isNotEmpty()) {
+                val newestRefreshedSeconds = refreshed.maxOfOrNull { it.createdAt?.seconds ?: 0L } ?: 0L
+                val refreshedMap = refreshed.associateBy { it.id.ifBlank { it.postId } }.toMutableMap()
+                for (item in live) {
+                    val resolvedId = item.id.ifBlank { item.postId }
+                    if (resolvedId.isNotBlank() && !refreshedMap.containsKey(resolvedId)) {
+                        val itemSeconds = item.createdAt?.seconds ?: 0L
+                        if (itemSeconds >= newestRefreshedSeconds) {
+                            refreshedMap[resolvedId] = item
+                        }
+                    }
+                }
+                refreshedMap.values.sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
+            } else {
+                live
+            }
+            if (deletedIds.isEmpty()) base else base.filter {
                 val resolvedId = it.id.ifBlank { it.postId }
                 resolvedId !in deletedIds
             }

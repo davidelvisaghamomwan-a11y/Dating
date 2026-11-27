@@ -359,13 +359,13 @@ fun HomeFeedScreen(
     var hasNewPostsBanner by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        onAutoRefreshFeed()
+        onRefreshFeed()
     }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                onAutoRefreshFeed()
+                onRefreshFeed()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

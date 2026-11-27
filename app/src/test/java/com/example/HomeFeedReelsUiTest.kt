@@ -185,4 +185,26 @@ class HomeFeedReelsUiTest {
             org.junit.Assert.assertEquals(0, nodes.fetchSemanticsNodes().size)
         }
     }
+
+    @Test
+    fun homeFeedScreen_triggersRefreshFeedWhenOpened() {
+        val currentUser = PublicProfile(userId = "me_1", displayName = "Me")
+        var refreshCalled = false
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(412.dp, 915.dp)) {
+                    HomeFeedScreen(
+                        myProfile = currentUser,
+                        currentUserId = currentUser.userId,
+                        onRefreshFeed = { refreshCalled = true }
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        org.junit.Assert.assertTrue("Feed should be refreshed automatically when opening screen", refreshCalled)
+    }
 }
+

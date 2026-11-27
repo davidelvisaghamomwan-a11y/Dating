@@ -780,6 +780,7 @@ class KindredViewModel(
     private val isAutoFeedRefreshing = AtomicBoolean(false)
 
     fun refreshFeed() {
+        if (currentUserId.isBlank()) return
         if (_isFeedRefreshing.value) return
         viewModelScope.launch {
             _isFeedRefreshing.value = true
@@ -1091,6 +1092,7 @@ class KindredViewModel(
         viewModelScope.launch {
             _isAdminUser.value = socialRepo.checkIsAdmin(userEmail)
         }
+        refreshFeed()
 
         val sessionStartTimeMs = System.currentTimeMillis()
 
