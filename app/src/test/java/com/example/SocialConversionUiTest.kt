@@ -408,4 +408,51 @@ class SocialConversionUiTest {
         composeTestRule.waitForIdle()
         assertEquals(video.id, deletedVideoId)
     }
+
+    @Test
+    fun profileScreen_deletingPostInvokesCallbackAndRemovesTileImmediately() {
+        var deletedId: String? = null
+        val initialPost = FeedPost(
+            id = "fp_prof_1",
+            userId = "me_1",
+            authorName = "Me",
+            caption = "Morning coffee",
+            mediaType = "PHOTO",
+            mediaDataUrl = "https://example.com/coffee.jpg",
+            createdAt = Timestamp(100L, 0)
+        )
+        val postsState = androidx.compose.runtime.mutableStateOf(listOf(initialPost))
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(412.dp, 915.dp)) {
+                    ProfileScreen(
+                        currentUserId = "me_1",
+                        userEmail = "me@example.com",
+                        defaultDisplayName = "Me",
+                        myProfile = PublicProfile(userId = "me_1", displayName = "Me"),
+                        myPosts = postsState.value,
+                        onDeleteFeedPost = { postId ->
+                            deletedId = postId
+                            postsState.value = postsState.value.filterNot { it.id == postId }
+                        }
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("profile_grid_tile_post_${initialPost.id}").assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithContentDescription("Post options").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Delete Post").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_delete_post_${initialPost.id}").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(initialPost.id, deletedId)
+        composeTestRule.onAllNodesWithTag("profile_grid_tile_post_${initialPost.id}").assertCountEquals(0)
+    }
 }

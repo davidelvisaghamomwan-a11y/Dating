@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -134,5 +135,54 @@ class HomeFeedReelsUiTest {
             .performScrollToNode(hasTestTag("home_suggested_reels_shelf"))
         composeTestRule.onNodeWithTag("home_shelf_reel_reel_1").performClick()
         assertEquals("reel_1", openedReelId)
+    }
+
+    @Test
+    fun homeFeedScreen_deletingOwnPostRemovesItImmediatelyAfterConfirm() {
+        val currentUser = PublicProfile(userId = "me_1", displayName = "Me")
+        val myPost = FeedPost(
+            id = "my_post_doc_1",
+            postId = "my_post_doc_1",
+            userId = currentUser.userId,
+            authorName = currentUser.displayName,
+            caption = "Temporary update",
+            mediaType = "PHOTO",
+            mediaDataUrl = "https://example.com/update.jpg",
+            createdAt = Timestamp(500L, 0)
+        )
+        val postsState = androidx.compose.runtime.mutableStateOf(listOf(myPost))
+        var deletedPostId: String? = null
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(412.dp, 915.dp)) {
+                    HomeFeedScreen(
+                        myProfile = currentUser,
+                        currentUserId = currentUser.userId,
+                        feedPosts = postsState.value,
+                        profilesByUid = mapOf(currentUser.userId to currentUser),
+                        onDeleteFeedPost = { postId ->
+                            deletedPostId = postId
+                            postsState.value = postsState.value.filterNot { it.id == postId }
+                        }
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("feed_post_card_${myPost.id}").assertIsDisplayed()
+
+        composeTestRule.onNodeWithContentDescription("Post options").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onAllNodesWithText("Delete Post")[0].performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("confirm_delete_post_${myPost.id}").performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(myPost.id, deletedPostId)
+        composeTestRule.onAllNodesWithText("Temporary update").let { nodes ->
+            org.junit.Assert.assertEquals(0, nodes.fetchSemanticsNodes().size)
+        }
     }
 }

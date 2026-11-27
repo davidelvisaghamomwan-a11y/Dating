@@ -418,6 +418,59 @@ class CloudMediaStorageService(
         onProgress = onProgress
     ).map { it.downloadUrl }
 
+    suspend fun deleteFileIfOwned(storagePath: String?): Boolean = withContext(Dispatchers.IO) {
+        val cleanPath = storagePath?.trim()?.trimStart('/')?.replace(Regex("/+"), "/").orEmpty()
+        if (cleanPath.isBlank()) return@withContext true
+        val uid = authProvider().currentUser?.uid?.trim().orEmpty()
+        if (uid.isBlank() || !cleanPath.startsWith("users/$uid/")) {
+            return@withContext false
+        }
+        try {
+            val prereqs = validatePrerequisites()
+            val primaryErr = runCatching {
+                withTimeout(10_000L) {
+                    prereqs.primaryStorage.reference.child(cleanPath).delete().await()
+                }
+            }.exceptionOrNull()
+
+            if (primaryErr == null) return@withContext true
+            if (primaryErr is CancellationException) throw primaryErr
+
+            val primaryStorageEx = generateSequence(primaryErr) { it.cause }
+                .filterIsInstance<StorageException>()
+                .firstOrNull()
+            if (primaryStorageEx?.errorCode == StorageException.ERROR_OBJECT_NOT_FOUND) {
+                return@withContext true
+            }
+
+            val altBucket = alternateBucketFor(prereqs.primaryBucket)
+            if (altBucket != null && isStorageUnavailableError(primaryErr)) {
+                val altStorage = FirebaseStorage.getInstance(prereqs.app, "gs://$altBucket").apply {
+                    maxOperationRetryTimeMillis = DOWNLOAD_TIMEOUT_MS
+                }
+                val altErr = runCatching {
+                    withTimeout(10_000L) {
+                        altStorage.reference.child(cleanPath).delete().await()
+                    }
+                }.exceptionOrNull()
+                if (altErr == null) return@withContext true
+                val altStorageEx = generateSequence(altErr) { it.cause }
+                    .filterIsInstance<StorageException>()
+                    .firstOrNull()
+                if (altStorageEx?.errorCode == StorageException.ERROR_OBJECT_NOT_FOUND) {
+                    return@withContext true
+                }
+            }
+            Log.w(TAG, "Best-effort deleteFileIfOwned failed for $cleanPath", primaryErr)
+            false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Best-effort deleteFileIfOwned failed for $cleanPath", e)
+            false
+        }
+    }
+
     companion object {
         const val TAG = "KindredMediaUpload"
         const val UPLOAD_TIMEOUT_MS = 60_000L

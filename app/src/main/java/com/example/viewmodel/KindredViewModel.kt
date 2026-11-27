@@ -71,6 +71,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.io.File
@@ -739,12 +740,18 @@ class KindredViewModel(
 
     // --- 24h Stories & Video Feed ---
 
+    private val _pendingDeletedStoryIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _pendingDeletedVideoPostIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _pendingDeletedProfileVideoIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _pendingDeletedFeedPostIds = MutableStateFlow<Set<String>>(emptySet())
+
     val activeStoriesState: StateFlow<List<StoryItem>> = combine(
         socialRepo.observeActiveStories(currentUserId).catch { emit(emptyList()) },
-        blockingStateFlow
-    ) { stories, blocking ->
+        blockingStateFlow,
+        _pendingDeletedStoryIds
+    ) { stories, blocking, deletedStoryIds ->
         val blocked = blocking.allBlockedIds
-        stories.filter { it.userId !in blocked }
+        stories.filter { it.userId !in blocked && it.id !in deletedStoryIds }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -753,10 +760,11 @@ class KindredViewModel(
 
     val videoFeedState: StateFlow<List<VideoPost>> = combine(
         socialRepo.observeVideoFeed(currentUserId).catch { emit(emptyList()) },
-        blockingStateFlow
-    ) { posts, blocking ->
+        blockingStateFlow,
+        _pendingDeletedVideoPostIds
+    ) { posts, blocking, deletedVideoIds ->
         val blocked = blocking.allBlockedIds
-        posts.filter { it.userId !in blocked }
+        posts.filter { it.userId !in blocked && it.id !in deletedVideoIds }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -817,10 +825,14 @@ class KindredViewModel(
 
     val feedPostsState: StateFlow<List<FeedPost>> = combine(
         socialRepo.observeFeedPosts(currentUserId).catch { emit(emptyList()) },
-        blockingStateFlow
-    ) { posts, blocking ->
+        blockingStateFlow,
+        _pendingDeletedFeedPostIds
+    ) { posts, blocking, deletedPostIds ->
         val blocked = blocking.allBlockedIds
-        posts.filter { it.userId !in blocked }
+        posts.filter { post ->
+            val resolvedId = post.id.ifBlank { post.postId }
+            post.userId !in blocked && resolvedId !in deletedPostIds
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -2010,8 +2022,12 @@ class KindredViewModel(
 
     // --- Profile Showcase Videos ---
 
-    fun observeUserVideos(targetUserId: String): Flow<List<ProfileVideoItem>> =
-        socialRepo.observeUserVideos(targetUserId, currentUserId).catch { emit(emptyList()) }
+    fun observeUserVideos(targetUserId: String): Flow<List<ProfileVideoItem>> = combine(
+        socialRepo.observeUserVideos(targetUserId, currentUserId).catch { emit(emptyList()) },
+        _pendingDeletedProfileVideoIds
+    ) { videos, deletedIds ->
+        if (deletedIds.isEmpty()) videos else videos.filter { it.id !in deletedIds }
+    }
 
     fun uploadProfileVideo(
         caption: String,
@@ -2070,10 +2086,16 @@ class KindredViewModel(
     }
 
     fun deleteProfileVideo(ownerUid: String, videoId: String) {
+        val cleanVideoId = videoId.trim()
+        if (cleanVideoId.isBlank()) return
+        _pendingDeletedProfileVideoIds.update { it + cleanVideoId }
         viewModelScope.launch {
-            socialRepo.deleteProfileVideo(ownerUid, videoId)
+            socialRepo.deleteProfileVideo(ownerUid, cleanVideoId)
                 .onSuccess { _actionStatusMessage.value = "Video deleted" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+                .onFailure { err ->
+                    _pendingDeletedProfileVideoIds.update { it - cleanVideoId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Delete failed"
+                }
         }
     }
 
@@ -2216,10 +2238,19 @@ class KindredViewModel(
     }
 
     fun deleteStory(storyId: String) {
+        val cleanStoryId = storyId.trim()
+        if (cleanStoryId.isBlank()) return
+        _pendingDeletedStoryIds.update { it + cleanStoryId }
         viewModelScope.launch {
-            socialRepo.deleteStory(storyId)
-                .onSuccess { _actionStatusMessage.value = "Story removed" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not remove story" }
+            socialRepo.deleteStory(cleanStoryId)
+                .onSuccess {
+                    _actionStatusMessage.value = "Story removed"
+                    autoRefreshFeed()
+                }
+                .onFailure { err ->
+                    _pendingDeletedStoryIds.update { it - cleanStoryId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Could not remove story"
+                }
         }
     }
 
@@ -2258,8 +2289,12 @@ class KindredViewModel(
     fun observeUserHighlights(userId: String): Flow<List<StoryHighlight>> =
         socialRepo.observeUserHighlights(userId)
 
-    fun observeUserStoriesArchive(userId: String): Flow<List<StoryItem>> =
-        socialRepo.observeUserStoriesArchive(userId)
+    fun observeUserStoriesArchive(userId: String): Flow<List<StoryItem>> = combine(
+        socialRepo.observeUserStoriesArchive(userId).catch { emit(emptyList()) },
+        _pendingDeletedStoryIds
+    ) { stories, deletedIds ->
+        if (deletedIds.isEmpty()) stories else stories.filter { it.id !in deletedIds }
+    }
 
     fun createStoryHighlight(
         title: String,
@@ -2394,10 +2429,19 @@ class KindredViewModel(
     }
 
     fun deleteVideoPost(postId: String) {
+        val cleanPostId = postId.trim()
+        if (cleanPostId.isBlank()) return
+        _pendingDeletedVideoPostIds.update { it + cleanPostId }
         viewModelScope.launch {
-            socialRepo.deleteVideoPost(postId)
-                .onSuccess { _actionStatusMessage.value = "Video post deleted" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+            socialRepo.deleteVideoPost(cleanPostId)
+                .onSuccess {
+                    _actionStatusMessage.value = "Video post deleted"
+                    autoRefreshFeed()
+                }
+                .onFailure { err ->
+                    _pendingDeletedVideoPostIds.update { it - cleanPostId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Delete failed"
+                }
         }
     }
 
@@ -2548,10 +2592,19 @@ class KindredViewModel(
     }
 
     fun deleteFeedPost(postId: String) {
+        val cleanPostId = postId.trim()
+        if (cleanPostId.isBlank()) return
+        _pendingDeletedFeedPostIds.update { it + cleanPostId }
         viewModelScope.launch {
-            socialRepo.deleteFeedPost(postId)
-                .onSuccess { _actionStatusMessage.value = "Post deleted" }
-                .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Delete failed" }
+            socialRepo.deleteFeedPost(cleanPostId)
+                .onSuccess {
+                    _actionStatusMessage.value = "Post deleted"
+                    autoRefreshFeed()
+                }
+                .onFailure { err ->
+                    _pendingDeletedFeedPostIds.update { it - cleanPostId }
+                    _actionStatusMessage.value = err.localizedMessage ?: "Delete failed"
+                }
         }
     }
 

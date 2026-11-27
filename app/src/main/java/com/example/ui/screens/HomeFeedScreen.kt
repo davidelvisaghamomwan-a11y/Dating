@@ -251,6 +251,21 @@ fun HomeFeedScreen(
     var activeCommentsPost by remember { mutableStateOf<FeedPost?>(null) }
     var activeCommentsReel by remember { mutableStateOf<VideoPost?>(null) }
 
+    LaunchedEffect(feedPosts, activeCommentsPost?.id) {
+        val openPost = activeCommentsPost ?: return@LaunchedEffect
+        val openId = openPost.id.ifBlank { openPost.postId }
+        if (feedPosts.none { it.id.ifBlank { it.postId } == openId }) {
+            activeCommentsPost = null
+        }
+    }
+
+    LaunchedEffect(videoPosts, activeCommentsReel?.id) {
+        val openReelId = activeCommentsReel?.id ?: return@LaunchedEffect
+        if (videoPosts.none { it.id == openReelId }) {
+            activeCommentsReel = null
+        }
+    }
+
     fun fetchAndApplyGps() {
         scope.launch {
             val loc = LocationAndGeoHelper.fetchCurrentLocation(context)
@@ -679,7 +694,7 @@ fun HomeFeedScreen(
                                             onToggleFeedPostSave(post.id, currentUserId in post.savedByUids)
                                         },
                                         onOpenComments = { activeCommentsPost = post },
-                                        onDeletePost = { onDeleteFeedPost(post.id) },
+                                        onDeletePost = { onDeleteFeedPost(post.id.ifBlank { post.postId }) },
                                         onOpenAuthor = { onOpenUserProfileById(post.userId) },
                                         onReportPost = {
                                             val candidate = candidates.firstOrNull { it.profile.userId == post.userId }

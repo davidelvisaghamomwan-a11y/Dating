@@ -42,15 +42,19 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
 
@@ -67,6 +71,51 @@ class SocialAndMediaRepository(
     private val refreshedFeedPostsFlow = MutableSharedFlow<List<FeedPost>>(extraBufferCapacity = 4)
     private val refreshedStoriesFlow = MutableSharedFlow<List<StoryItem>>(extraBufferCapacity = 4)
     private val refreshedVideoFeedFlow = MutableSharedFlow<List<VideoPost>>(extraBufferCapacity = 4)
+
+    private val deletedFeedPostIdsFlow = MutableStateFlow<Set<String>>(emptySet())
+    private val deletedVideoPostIdsFlow = MutableStateFlow<Set<String>>(emptySet())
+    private val deletedProfileVideoIdsFlow = MutableStateFlow<Set<String>>(emptySet())
+    private val deletedStoryIdsFlow = MutableStateFlow<Set<String>>(emptySet())
+
+    private fun DocumentSnapshot.extractOwnedStoragePaths(): List<String> = buildList {
+        getString("mediaStoragePath")?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        getString("thumbnailStoragePath")?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        (get("mediaStoragePaths") as? List<*>)?.forEach { item ->
+            (item as? String)?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+    }.distinct()
+
+    private suspend fun deleteSubcollectionDocsBestEffort(
+        collection: CollectionReference,
+        timeoutMs: Long = 2_500L
+    ) {
+        runCatching {
+            withTimeoutOrNull(timeoutMs) {
+                val snap = runCatching { collection.get(Source.SERVER).await() }
+                    .getOrElse { collection.get(Source.DEFAULT).await() }
+                if (!snap.isEmpty) {
+                    snap.documents.chunked(400).forEach { chunk ->
+                        val batch = db.batch()
+                        chunk.forEach { batch.delete(it.reference) }
+                        batch.commit().await()
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun deleteStoragePathsBestEffort(paths: List<String>) {
+        if (paths.isEmpty()) return
+        runCatching {
+            withTimeoutOrNull(4_000L) {
+                coroutineScope {
+                    paths.map { path ->
+                        async(Dispatchers.IO) { cloudStorage.deleteFileIfOwned(path) }
+                    }.awaitAll()
+                }
+            }
+        }
+    }
 
     private fun requireUserId(): String {
         return auth.currentUser?.uid
@@ -154,7 +203,7 @@ class SocialAndMediaRepository(
     private fun DocumentSnapshot.toStoryItemSafe(): StoryItem? {
         return runCatching {
             toObject(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?.let { item -> if (item.id.isBlank()) item.copy(id = id) else item }
+                ?.copy(id = id)
         }.onFailure { err ->
             Log.e("KindredStories", "Skipping malformed story document $id", err)
         }.getOrNull()
@@ -163,7 +212,7 @@ class SocialAndMediaRepository(
     private fun DocumentSnapshot.toStoryHighlightSafe(): StoryHighlight? {
         return runCatching {
             toObject(StoryHighlight::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?.let { hl -> if (hl.id.isBlank()) hl.copy(id = id) else hl }
+                ?.copy(id = id)
         }.onFailure { err ->
             Log.e("KindredHighlights", "Skipping malformed highlight document $id", err)
         }.getOrNull()
@@ -173,9 +222,8 @@ class SocialAndMediaRepository(
         return runCatching {
             val direct = toObject(FeedPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
             if (direct != null) {
-                val resolvedId = if (direct.id.isNotBlank()) direct.id else id
                 val resolvedUserId = if (direct.userId.isNotBlank()) direct.userId else (data?.get("authorId") as? String).orEmpty()
-                direct.copy(id = resolvedId, userId = resolvedUserId)
+                direct.copy(id = id, postId = id, userId = resolvedUserId)
             } else null
         }.recoverCatching {
             val d = data ?: return null
@@ -243,9 +291,8 @@ class SocialAndMediaRepository(
         return runCatching {
             val direct = toObject(VideoPost::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
             if (direct != null) {
-                val resolvedId = if (direct.id.isNotBlank()) direct.id else id
                 val resolvedUserId = if (direct.userId.isNotBlank()) direct.userId else (data?.get("authorId") as? String).orEmpty()
-                direct.copy(id = resolvedId, userId = resolvedUserId)
+                direct.copy(id = id, userId = resolvedUserId)
             } else null
         }.recoverCatching {
             val d = data ?: return null
@@ -915,7 +962,7 @@ class SocialAndMediaRepository(
     fun observeUserVideos(targetUserId: String, viewerUid: String): Flow<List<ProfileVideoItem>> {
         if (targetUserId.isBlank() || viewerUid.isBlank()) return flowOf(emptyList())
         val path = "publicProfiles/$targetUserId/videos"
-        return flow {
+        val liveFlow = flow {
             emitAll(
                 db.collection("publicProfiles").document(targetUserId).collection("videos")
                     .snapshots()
@@ -925,6 +972,9 @@ class SocialAndMediaRepository(
                     }
                     .catch { handleStreamError(it, OperationType.LIST, path, viewerUid) }
             )
+        }
+        return combine(liveFlow, deletedProfileVideoIdsFlow) { videos, deletedIds ->
+            if (deletedIds.isEmpty()) videos else videos.filter { it.id !in deletedIds }
         }
     }
 
@@ -994,16 +1044,29 @@ class SocialAndMediaRepository(
     }
 
     suspend fun deleteProfileVideo(ownerUid: String, videoId: String): Result<Unit> {
-        var docPath = "publicProfiles/$ownerUid/videos/$videoId"
+        val cleanOwnerUid = ownerUid.trim()
+        val cleanVideoId = videoId.trim()
+        if (cleanOwnerUid.isBlank() || cleanVideoId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Video ID is missing."))
+        }
+        var docPath = "publicProfiles/$cleanOwnerUid/videos/$cleanVideoId"
+        deletedProfileVideoIdsFlow.update { it + cleanVideoId }
         return try {
             requireUserId()
-            val ref = db.collection("publicProfiles").document(ownerUid).collection("videos").document(videoId)
+            val ref = db.collection("publicProfiles").document(cleanOwnerUid).collection("videos").document(cleanVideoId)
             docPath = ref.path
+            val storagePaths = runCatching {
+                withTimeoutOrNull(1_500L) { ref.get(Source.DEFAULT).await().extractOwnedStoragePaths() }
+            }.getOrNull().orEmpty()
             ref.delete().await()
+            deleteSubcollectionDocsBestEffort(profileVideoChunksRef(cleanOwnerUid, cleanVideoId))
+            deleteStoragePathsBestEffort(storagePaths)
             Result.success(Unit)
         } catch (e: CancellationException) {
+            deletedProfileVideoIdsFlow.update { it - cleanVideoId }
             throw e
         } catch (e: Exception) {
+            deletedProfileVideoIdsFlow.update { it - cleanVideoId }
             handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
@@ -1026,7 +1089,9 @@ class SocialAndMediaRepository(
                     .catch { handleStreamError(it, OperationType.LIST, "stories", viewerUid) }
             )
         }
-        return merge(liveFlow, refreshedStoriesFlow)
+        return combine(merge(liveFlow, refreshedStoriesFlow), deletedStoryIdsFlow) { stories, deletedIds ->
+            if (deletedIds.isEmpty()) stories else stories.filter { it.id !in deletedIds }
+        }
     }
 
     suspend fun fetchLatestActiveStories(viewerUid: String): Result<List<StoryItem>> {
@@ -1038,8 +1103,9 @@ class SocialAndMediaRepository(
                 db.collection("stories").get(Source.DEFAULT).await()
             }
             val now = System.currentTimeMillis()
+            val deleted = deletedStoryIdsFlow.value
             val list = snap.documents.mapNotNull { it.toStoryItemSafe() }
-                .filter { !it.isExpiredAt(now) }
+                .filter { !it.isExpiredAt(now) && it.id !in deleted }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedStoriesFlow.tryEmit(list)
             Result.success(list)
@@ -1205,16 +1271,28 @@ class SocialAndMediaRepository(
     }
 
     suspend fun deleteStory(storyId: String): Result<Unit> {
-        var docPath = "stories/$storyId"
+        val cleanStoryId = storyId.trim()
+        if (cleanStoryId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Story ID is missing."))
+        }
+        var docPath = "stories/$cleanStoryId"
+        deletedStoryIdsFlow.update { it + cleanStoryId }
         return try {
             requireUserId()
-            val ref = db.collection("stories").document(storyId)
+            val ref = db.collection("stories").document(cleanStoryId)
             docPath = ref.path
+            val storagePaths = runCatching {
+                withTimeoutOrNull(1_500L) { ref.get(Source.DEFAULT).await().extractOwnedStoragePaths() }
+            }.getOrNull().orEmpty()
             ref.delete().await()
+            deleteSubcollectionDocsBestEffort(storyChunksRef(cleanStoryId))
+            deleteStoragePathsBestEffort(storagePaths)
             Result.success(Unit)
         } catch (e: CancellationException) {
+            deletedStoryIdsFlow.update { it - cleanStoryId }
             throw e
         } catch (e: Exception) {
+            deletedStoryIdsFlow.update { it - cleanStoryId }
             handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
@@ -1224,7 +1302,7 @@ class SocialAndMediaRepository(
 
     fun observeUserStoriesArchive(userId: String): Flow<List<StoryItem>> {
         if (userId.isBlank()) return flowOf(emptyList())
-        return flow {
+        val liveFlow = flow {
             emitAll(
                 db.collection("stories")
                     .whereEqualTo("userId", userId)
@@ -1235,6 +1313,9 @@ class SocialAndMediaRepository(
                     }
                     .catch { handleStreamError(it, OperationType.LIST, "stories", userId) }
             )
+        }
+        return combine(liveFlow, deletedStoryIdsFlow) { stories, deletedIds ->
+            if (deletedIds.isEmpty()) stories else stories.filter { it.id !in deletedIds }
         }
     }
 
@@ -1421,7 +1502,9 @@ class SocialAndMediaRepository(
                     .catch { handleStreamError(it, OperationType.LIST, "videoPosts", viewerUid) }
             )
         }
-        return merge(liveFlow, refreshedVideoFeedFlow)
+        return combine(merge(liveFlow, refreshedVideoFeedFlow), deletedVideoPostIdsFlow) { videos, deletedIds ->
+            if (deletedIds.isEmpty()) videos else videos.filter { it.id !in deletedIds }
+        }
     }
 
     suspend fun fetchLatestVideoFeed(viewerUid: String): Result<List<VideoPost>> {
@@ -1432,7 +1515,9 @@ class SocialAndMediaRepository(
             } catch (_: Exception) {
                 db.collection("videoPosts").get(Source.DEFAULT).await()
             }
+            val deleted = deletedVideoPostIdsFlow.value
             val list = snap.documents.mapNotNull { it.toVideoPostSafe() }
+                .filter { it.id !in deleted }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedVideoFeedFlow.tryEmit(list)
             Result.success(list)
@@ -1538,16 +1623,30 @@ class SocialAndMediaRepository(
     }
 
     suspend fun deleteVideoPost(postId: String): Result<Unit> {
-        var docPath = "videoPosts/$postId"
+        val cleanPostId = postId.trim()
+        if (cleanPostId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Reel ID is missing."))
+        }
+        var docPath = "videoPosts/$cleanPostId"
+        deletedVideoPostIdsFlow.update { it + cleanPostId }
         return try {
             requireUserId()
-            val ref = db.collection("videoPosts").document(postId)
+            val ref = db.collection("videoPosts").document(cleanPostId)
             docPath = ref.path
+            val storagePaths = runCatching {
+                withTimeoutOrNull(1_500L) { ref.get(Source.DEFAULT).await().extractOwnedStoragePaths() }
+            }.getOrNull().orEmpty()
+            // Remove comments before deleting parent doc so Firestore rules verifying parent owner succeed.
+            deleteSubcollectionDocsBestEffort(ref.collection("comments"))
             ref.delete().await()
+            deleteSubcollectionDocsBestEffort(videoPostChunksRef(cleanPostId))
+            deleteStoragePathsBestEffort(storagePaths)
             Result.success(Unit)
         } catch (e: CancellationException) {
+            deletedVideoPostIdsFlow.update { it - cleanPostId }
             throw e
         } catch (e: Exception) {
+            deletedVideoPostIdsFlow.update { it - cleanPostId }
             handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
@@ -1568,7 +1667,12 @@ class SocialAndMediaRepository(
                     .catch { handleStreamError(it, OperationType.LIST, "feedPosts", viewerUid) }
             )
         }
-        return merge(liveFlow, refreshedFeedPostsFlow)
+        return combine(merge(liveFlow, refreshedFeedPostsFlow), deletedFeedPostIdsFlow) { posts, deletedIds ->
+            if (deletedIds.isEmpty()) posts else posts.filter {
+                val resolvedId = it.id.ifBlank { it.postId }
+                resolvedId !in deletedIds
+            }
+        }
     }
 
     suspend fun fetchLatestFeedPosts(viewerUid: String): Result<List<FeedPost>> {
@@ -1579,7 +1683,12 @@ class SocialAndMediaRepository(
             } catch (_: Exception) {
                 db.collection("feedPosts").get(Source.DEFAULT).await()
             }
+            val deleted = deletedFeedPostIdsFlow.value
             val list = snap.documents.mapNotNull { it.toFeedPostSafe() }
+                .filter {
+                    val resolvedId = it.id.ifBlank { it.postId }
+                    resolvedId !in deleted
+                }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedFeedPostsFlow.tryEmit(list)
             Result.success(list)
@@ -1949,16 +2058,30 @@ class SocialAndMediaRepository(
     }
 
     suspend fun deleteFeedPost(postId: String): Result<Unit> {
-        var docPath = "feedPosts/$postId"
+        val cleanPostId = postId.trim()
+        if (cleanPostId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Post ID is missing."))
+        }
+        var docPath = "feedPosts/$cleanPostId"
+        deletedFeedPostIdsFlow.update { it + cleanPostId }
         return try {
             requireUserId()
-            val ref = db.collection("feedPosts").document(postId)
+            val ref = db.collection("feedPosts").document(cleanPostId)
             docPath = ref.path
+            val storagePaths = runCatching {
+                withTimeoutOrNull(1_500L) { ref.get(Source.DEFAULT).await().extractOwnedStoragePaths() }
+            }.getOrNull().orEmpty()
+            // Remove comments before deleting parent doc so Firestore rules verifying parent owner succeed.
+            deleteSubcollectionDocsBestEffort(ref.collection("comments"))
             ref.delete().await()
+            deleteSubcollectionDocsBestEffort(feedPostChunksRef(cleanPostId))
+            deleteStoragePathsBestEffort(storagePaths)
             Result.success(Unit)
         } catch (e: CancellationException) {
+            deletedFeedPostIdsFlow.update { it - cleanPostId }
             throw e
         } catch (e: Exception) {
+            deletedFeedPostIdsFlow.update { it - cleanPostId }
             handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }

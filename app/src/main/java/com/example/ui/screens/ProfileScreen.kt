@@ -215,6 +215,22 @@ fun ProfileScreen(
     var activeCommentsPost by remember { mutableStateOf<FeedPost?>(null) }
     var selectedShowcaseVideo by remember { mutableStateOf<ProfileVideoItem?>(null) }
 
+    LaunchedEffect(myPosts, savedPosts, selectedFeedPost?.id) {
+        val opened = selectedFeedPost ?: return@LaunchedEffect
+        val openedId = opened.id.ifBlank { opened.postId }
+        if ((myPosts + savedPosts).none { it.id.ifBlank { it.postId } == openedId }) {
+            selectedFeedPost = null
+            activeCommentsPost = null
+        }
+    }
+
+    LaunchedEffect(myVideos, selectedShowcaseVideo?.id) {
+        val openedId = selectedShowcaseVideo?.id ?: return@LaunchedEffect
+        if (myVideos.none { it.id == openedId }) {
+            selectedShowcaseVideo = null
+        }
+    }
+
     val allGridEntries = remember(myPosts, myVideos) {
         (myPosts.map { ProfileGridEntry.PostEntry(it) } +
             myVideos.map { ProfileGridEntry.ShowcaseVideoEntry(it) })
@@ -842,7 +858,7 @@ fun ProfileScreen(
                                 },
                                 onOpenComments = { activeCommentsPost = livePost },
                                 onDeletePost = {
-                                    onDeleteFeedPost(livePost.id)
+                                    onDeleteFeedPost(livePost.id.ifBlank { livePost.postId })
                                     selectedFeedPost = null
                                 },
                                 onOpenAuthor = {

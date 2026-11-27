@@ -34,6 +34,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FilterNone
@@ -46,6 +47,9 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -171,6 +175,7 @@ fun ExploreSearchScreen(
     onAddVideoComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, _ -> },
     onDeleteVideoComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
+    onDeleteVideoPost: (postId: String) -> Unit = {},
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File>,
     resolveVideoPostFile: suspend (VideoPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },
     onRefreshExplore: () -> Unit = {}
@@ -260,6 +265,9 @@ fun ExploreSearchScreen(
     }
 
     LaunchedEffect(displayedExplorePosts) {
+        if (selectedExploreIndex != null && displayedExplorePosts.isEmpty()) {
+            selectedExploreIndex = null
+        }
         val urls = displayedExplorePosts.take(24).mapNotNull { it.imageUrl }
         if (urls.isNotEmpty()) {
             MediaImageHelper.prefetchDataUrls(urls)
@@ -694,7 +702,7 @@ fun ExploreSearchScreen(
                                             },
                                             onOpenComments = { activeCommentsPost = livePost },
                                             onDeletePost = {
-                                                onDeleteFeedPost(livePost.id)
+                                                onDeleteFeedPost(livePost.id.ifBlank { livePost.postId })
                                             },
                                             onOpenAuthor = {
                                                 selectedExploreIndex = null
@@ -732,6 +740,9 @@ fun ExploreSearchScreen(
                                             onOpenAuthor = {
                                                 selectedExploreIndex = null
                                                 onOpenUserProfile(liveReel.userId)
+                                            },
+                                            onDeleteReel = {
+                                                onDeleteVideoPost(liveReel.id)
                                             },
                                             onOpenComments = {
                                                 activeCommentsPost = FeedPost(
@@ -914,6 +925,7 @@ private fun ExploreReelFeedCard(
     onToggleLike: () -> Unit,
     onToggleFollow: () -> Unit,
     onOpenAuthor: () -> Unit,
+    onDeleteReel: () -> Unit = {},
     onOpenComments: () -> Unit
 ) {
     val displayAuthorName = authorProfile?.displayName?.takeIf { it.isNotBlank() }
@@ -922,6 +934,7 @@ private fun ExploreReelFeedCard(
     val isLiked = currentUserId in videoPost.likedByUids
     val isOwner = videoPost.userId == currentUserId
 
+    var confirmDelete by remember(videoPost.id) { mutableStateOf(false) }
     var resolvedFile by remember(videoPost.id) { mutableStateOf<File?>(null) }
     var isMuted by remember(videoPost.id) { mutableStateOf(false) }
     var userPaused by remember(videoPost.id) { mutableStateOf(false) }
@@ -989,7 +1002,15 @@ private fun ExploreReelFeedCard(
                 }
             }
 
-            if (!isOwner) {
+            if (isOwner) {
+                IconButton(onClick = { confirmDelete = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteOutline,
+                        contentDescription = "Delete reel",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
                 TextButton(onClick = onToggleFollow) {
                     Text(
                         text = if (isFollowing) "Following" else "Follow",
@@ -1153,5 +1174,30 @@ private fun ExploreReelFeedCard(
             Spacer(modifier = Modifier.height(8.dp))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete Reel?") },
+            text = { Text("Are you sure you want to delete this reel permanently?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmDelete = false
+                        onDeleteReel()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_explore_reel_${videoPost.id}")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

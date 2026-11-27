@@ -1018,6 +1018,9 @@ private fun MainKindredApp(
                                         onDeleteFeedPost = { postId ->
                                             viewModel.deleteFeedPost(postId)
                                         },
+                                        onDeleteVideoPost = { postId ->
+                                            viewModel.deleteVideoPost(postId)
+                                        },
                                         resolveFeedPostVideoFile = { post ->
                                             viewModel.resolveFeedPostVideoFile(context, post)
                                         },
