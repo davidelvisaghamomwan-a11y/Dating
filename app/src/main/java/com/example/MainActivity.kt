@@ -422,7 +422,7 @@ private fun MainKindredApp(
     var showSearchSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) { runCatching { CredentialManager.create(context) }.getOrNull() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val presenceScope = rememberCoroutineScope()
     var hasLocationPermission by remember {

@@ -93,7 +93,7 @@ fun AuthScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) { runCatching { CredentialManager.create(context) }.getOrNull() }
 
     var authMode by remember { mutableStateOf(AuthMode.SIGN_IN) }
     var emailOrIdentifier by remember { mutableStateOf("") }

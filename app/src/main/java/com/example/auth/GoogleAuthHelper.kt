@@ -64,11 +64,15 @@ object GoogleAuthHelper {
 
     fun attemptAutoSignIn(
         context: Context,
-        credentialManager: CredentialManager,
+        credentialManager: CredentialManager?,
         onAuthSuccess: () -> Unit,
         onUnauthenticated: () -> Unit,
         scope: CoroutineScope
     ) {
+        if (credentialManager == null) {
+            onUnauthenticated()
+            return
+        }
         if (Firebase.auth.currentUser != null) {
             onAuthSuccess()
             return
@@ -117,13 +121,16 @@ object GoogleAuthHelper {
 
     fun onGoogleSignInClicked(
         context: Context,
-        credentialManager: CredentialManager,
+        credentialManager: CredentialManager?,
         onAuthSuccess: () -> Unit,
         onAuthError: (String) -> Unit,
         onAuthCancelled: () -> Unit,
         scope: CoroutineScope
     ) {
-        resetAutoSignInSuppression()
+        if (credentialManager == null) {
+            onAuthError("Credential Manager is not supported or available on this device.")
+            return
+        }
         val clientId = resolveServerClientId(context) ?: run {
             onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
             return
@@ -244,7 +251,7 @@ object GoogleAuthHelper {
     }
 
     fun signOut(
-        credentialManager: CredentialManager,
+        credentialManager: CredentialManager?,
         @Suppress("UNUSED_PARAMETER") scope: CoroutineScope,
         onBeforeSignOut: suspend () -> Unit = {},
         onSignOutComplete: () -> Unit = {}
@@ -266,12 +273,14 @@ object GoogleAuthHelper {
                         Firebase.auth.signOut()
                         onSignOutComplete()
                     }
-                    try {
-                        withTimeoutOrNull(800L) {
-                            credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                    if (credentialManager != null) {
+                        try {
+                            withTimeoutOrNull(800L) {
+                                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to clear credential state: ${e.message}")
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to clear credential state: ${e.message}")
                     }
                 } finally {
                     _isSigningOutFlow.value = false

@@ -183,7 +183,7 @@ fun ProfileScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val credentialManager = remember(context) { runCatching { CredentialManager.create(context) }.getOrNull() }
 
     val displayName = remember(myProfile, defaultDisplayName) {
         myProfile?.displayName?.takeIf { it.isNotBlank() }
