@@ -238,32 +238,39 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configureAppCheck(this, intent)
-        MediaImageHelper.initImageCache(applicationContext)
-        Coil.setImageLoader {
-            ImageLoader.Builder(applicationContext)
-                .memoryCache {
-                    MemoryCache.Builder(applicationContext)
-                        .maxSizePercent(0.25)
-                        .build()
-                }
-                .diskCache {
-                    DiskCache.Builder()
-                        .directory(File(applicationContext.cacheDir, "coil_image_cache"))
-                        .maxSizeBytes(100L * 1024L * 1024L)
-                        .build()
-                }
-                .respectCacheHeaders(false)
-                .crossfade(true)
-                .build()
+        runCatching { configureAppCheck(this, intent) }
+        runCatching { MediaImageHelper.initImageCache(applicationContext) }
+        runCatching {
+            Coil.setImageLoader {
+                ImageLoader.Builder(applicationContext)
+                    .memoryCache {
+                        MemoryCache.Builder(applicationContext)
+                            .maxSizePercent(0.25)
+                            .build()
+                    }
+                    .diskCache {
+                        DiskCache.Builder()
+                            .directory(File(applicationContext.cacheDir, "coil_image_cache"))
+                            .maxSizeBytes(100L * 1024L * 1024L)
+                            .build()
+                    }
+                    .respectCacheHeaders(false)
+                    .crossfade(true)
+                    .build()
+            }
         }
-        enableEdgeToEdge()
-        KindredNotificationHelper.ensureChannels(this)
-        pendingDeepLinkMatchId = extractMatchDeepLink(intent)
+        runCatching { enableEdgeToEdge() }
+        runCatching { KindredNotificationHelper.ensureChannels(this) }
+        pendingDeepLinkMatchId = runCatching { extractMatchDeepLink(intent) }.getOrNull()
         setContent {
             KindredTheme {
                 val firebaseReady = remember {
-                    FirebaseApp.getApps(this@MainActivity).isNotEmpty()
+                    runCatching {
+                        if (FirebaseApp.getApps(this@MainActivity).isEmpty()) {
+                            FirebaseApp.initializeApp(this@MainActivity)
+                        }
+                        FirebaseApp.getApps(this@MainActivity).isNotEmpty()
+                    }.getOrDefault(false)
                 }
                 if (firebaseReady) {
                     AppNavigation(
