@@ -156,9 +156,17 @@ class KindredViewModel(
             )
 
     private val privateUserFlow = repository.observePrivateUser(currentUserId)
+        .catch { emit(null) }
+        .onStart { emit(null) }
     private val myProfileFlow = repository.observeMyPublicProfile(currentUserId)
+        .catch { emit(null) }
+        .onStart { emit(null) }
     private val allProfilesFlow = repository.observeDiscoverableProfiles(currentUserId)
+        .catch { emit(emptyList()) }
+        .onStart { emit(emptyList()) }
     private val matchesFlow = repository.observeMyMatches(currentUserId)
+        .catch { emit(emptyList()) }
+        .onStart { emit(emptyList()) }
     private val usersIBlockedFlow = repository.observeUsersIBlocked(currentUserId)
         .catch { emit(emptyList()) }
         .onStart { emit(emptyList()) }
