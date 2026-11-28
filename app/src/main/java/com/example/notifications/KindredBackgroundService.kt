@@ -77,6 +77,10 @@ class KindredBackgroundService : Service() {
 
     private fun promoteToForegroundSafely() {
         if (isForegroundPromoted) return
+        // On Android 12+ (SDK 31+), starting foreground services from background is restricted and throws ForegroundServiceStartNotAllowedException.
+        if (Build.VERSION.SDK_INT >= 31) {
+            return
+        }
         val notification = KindredNotificationHelper.buildBackgroundServiceNotification(this)
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -562,6 +566,7 @@ class KindredBackgroundService : Service() {
             if (!hasUser) return
             val useForegroundServiceApi = !fromForeground &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                Build.VERSION.SDK_INT < 31 &&
                 KindredNotificationHelper.hasNotificationPermission(context)
             val intent = Intent(context.applicationContext, KindredBackgroundService::class.java).apply {
                 putExtra(EXTRA_STARTED_AS_FOREGROUND, useForegroundServiceApi)
