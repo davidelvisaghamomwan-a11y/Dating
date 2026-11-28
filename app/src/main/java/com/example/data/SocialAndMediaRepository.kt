@@ -1127,8 +1127,22 @@ class SocialAndMediaRepository(
             }
             val now = System.currentTimeMillis()
             val deleted = deletedStoryIdsFlow.value
-            val list = snap.documents.mapNotNull { it.toStoryItemSafe() }
-                .filter { !it.isExpiredAt(now) && it.id !in deleted }
+            val allStories = snap.documents.mapNotNull { it.toStoryItemSafe() }
+            val expiredOwnedIds = allStories
+                .filter { it.isExpiredAt(now) && it.userId == viewerUid && it.id.isNotBlank() && it.id !in deleted }
+                .map { it.id }
+            if (expiredOwnedIds.isNotEmpty()) {
+                deletedStoryIdsFlow.update { it + expiredOwnedIds }
+                allStories
+                    .filter { it.id in expiredOwnedIds }
+                    .forEach { expiredStory ->
+                        runCatching {
+                            deleteExpiredStoryDocInternal(expiredStory)
+                        }
+                    }
+            }
+            val list = allStories
+                .filter { !it.isExpiredAt(now) && it.id !in deleted && it.id !in expiredOwnedIds }
                 .sortedByDescending { it.createdAt ?: Timestamp(0, 0) }
             refreshedStoriesFlow.tryEmit(list)
             Result.success(list)
@@ -1317,6 +1331,72 @@ class SocialAndMediaRepository(
         } catch (e: Exception) {
             deletedStoryIdsFlow.update { it - cleanStoryId }
             handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun deleteExpiredStoryDocInternal(story: StoryItem) {
+        val cleanStoryId = story.id.trim()
+        if (cleanStoryId.isBlank()) return
+        val ref = db.collection("stories").document(cleanStoryId)
+        val storagePaths = buildList {
+            story.mediaStoragePath?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+            story.thumbnailStoragePath?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }.distinct()
+        ref.delete().await()
+        deleteSubcollectionDocsBestEffort(storyChunksRef(cleanStoryId))
+        deleteStoragePathsBestEffort(storagePaths)
+    }
+
+    /**
+     * Automatically deletes stories from Firestore (and their mediaChunks + Cloud Storage assets)
+     * once they have exceeded the 24-hour TTL (StoryItem.STORY_TTL_MS).
+     * Non-admin users clean up their own expired stories; admins sweep all users' expired stories.
+     */
+    suspend fun purgeExpiredStories(
+        viewerUid: String,
+        includeAllUsers: Boolean = false,
+        nowMs: Long = System.currentTimeMillis()
+    ): Result<Int> {
+        if (viewerUid.isBlank()) return Result.success(0)
+        return try {
+            val query = if (includeAllUsers) {
+                db.collection("stories")
+            } else {
+                db.collection("stories").whereEqualTo("userId", viewerUid)
+            }
+            val snap = try {
+                query.get(Source.SERVER).await()
+            } catch (_: Exception) {
+                query.get(Source.DEFAULT).await()
+            }
+            val expiredStories = snap.documents
+                .mapNotNull { it.toStoryItemSafe() }
+                .filter { story ->
+                    story.id.isNotBlank() &&
+                        story.isExpiredAt(nowMs) &&
+                        (includeAllUsers || story.userId == viewerUid)
+                }
+            if (expiredStories.isEmpty()) {
+                return Result.success(0)
+            }
+            deletedStoryIdsFlow.update { it + expiredStories.map { s -> s.id } }
+            var removedCount = 0
+            for (story in expiredStories) {
+                try {
+                    deleteExpiredStoryDocInternal(story)
+                    removedCount += 1
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("SocialMediaRepo", "Failed to auto-purge expired story ${story.id}", e)
+                }
+            }
+            Result.success(removedCount)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, "stories")
             Result.failure(e)
         }
     }

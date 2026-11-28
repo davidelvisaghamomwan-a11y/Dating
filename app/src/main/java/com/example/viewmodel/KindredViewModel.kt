@@ -54,6 +54,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
@@ -746,14 +747,20 @@ class KindredViewModel(
     private val _pendingDeletedVideoPostIds = MutableStateFlow<Set<String>>(emptySet())
     private val _pendingDeletedProfileVideoIds = MutableStateFlow<Set<String>>(emptySet())
     private val _pendingDeletedFeedPostIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _storyExpiryTickMs = MutableStateFlow(System.currentTimeMillis())
 
     val activeStoriesState: StateFlow<List<StoryItem>> = combine(
         socialRepo.observeActiveStories(currentUserId).catch { emit(emptyList()) },
         blockingStateFlow,
-        _pendingDeletedStoryIds
-    ) { stories, blocking, deletedStoryIds ->
+        _pendingDeletedStoryIds,
+        _storyExpiryTickMs
+    ) { stories, blocking, deletedStoryIds, nowMs ->
         val blocked = blocking.allBlockedIds
-        stories.filter { it.userId !in blocked && it.id !in deletedStoryIds }
+        stories.filter {
+            it.userId !in blocked &&
+                it.id !in deletedStoryIds &&
+                !it.isExpiredAt(nowMs)
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -1091,6 +1098,7 @@ class KindredViewModel(
     init {
         viewModelScope.launch {
             _isAdminUser.value = socialRepo.checkIsAdmin(userEmail)
+            startExpiredStoryCleanupLoop()
         }
         refreshFeed()
 
@@ -2342,6 +2350,48 @@ class KindredViewModel(
                 _isVideoUploading.value = false
                 _isBusy.value = false
             }
+        }
+    }
+
+    private val isPurgingExpiredStories = AtomicBoolean(false)
+    private var expiredStoryLoopStarted = AtomicBoolean(false)
+
+    private fun startExpiredStoryCleanupLoop() {
+        if (currentUserId.isBlank()) return
+        if (!expiredStoryLoopStarted.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            while (isActive) {
+                runCatching { purgeExpiredStoriesSuspend() }
+                val now = System.currentTimeMillis()
+                val nextExpiryWaitMs = activeStoriesState.value
+                    .mapNotNull { it.remainingTtlMs(now).takeIf { rem -> rem < Long.MAX_VALUE } }
+                    .minOrNull()
+                    ?.coerceIn(5_000L, 60_000L)
+                    ?: 60_000L
+                delay(nextExpiryWaitMs)
+            }
+        }
+    }
+
+    fun cleanupExpiredStoriesNow() {
+        if (currentUserId.isBlank()) return
+        viewModelScope.launch {
+            runCatching { purgeExpiredStoriesSuspend() }
+        }
+    }
+
+    private suspend fun purgeExpiredStoriesSuspend() {
+        val now = System.currentTimeMillis()
+        _storyExpiryTickMs.value = now
+        if (!isPurgingExpiredStories.compareAndSet(false, true)) return
+        try {
+            socialRepo.purgeExpiredStories(
+                viewerUid = currentUserId,
+                includeAllUsers = _isAdminUser.value,
+                nowMs = now
+            )
+        } finally {
+            isPurgingExpiredStories.set(false)
         }
     }
 

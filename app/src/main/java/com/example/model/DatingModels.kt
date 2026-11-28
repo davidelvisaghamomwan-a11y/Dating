@@ -426,16 +426,26 @@ data class StoryItem(
     val expiresAtMs: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null
 ) {
+    fun expiryTimestampMs(): Long? {
+        val explicit = expiresAt?.toDate()?.time?.takeIf { it > 0L }
+            ?: expiresAtMs.takeIf { it > 0L }
+        if (explicit != null) return explicit
+        val created = createdAt?.toDate()?.time?.takeIf { it > 0L } ?: return null
+        return created + STORY_TTL_MS
+    }
+
     fun isExpiredAt(nowMs: Long = System.currentTimeMillis()): Boolean {
-        val expiry = expiresAt?.toDate()?.time ?: expiresAtMs
-        if (expiry > 0L) {
-            return nowMs >= expiry
-        }
-        val created = createdAt?.toDate()?.time ?: 0L
-        if (created > 0L) {
-            return (nowMs - created) >= 86_400_000L
-        }
-        return false
+        val expiry = expiryTimestampMs() ?: return false
+        return nowMs >= expiry
+    }
+
+    fun remainingTtlMs(nowMs: Long = System.currentTimeMillis()): Long {
+        val expiry = expiryTimestampMs() ?: return Long.MAX_VALUE
+        return (expiry - nowMs).coerceAtLeast(0L)
+    }
+
+    companion object {
+        const val STORY_TTL_MS = 86_400_000L
     }
 }
 

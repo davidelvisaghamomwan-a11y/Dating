@@ -30,8 +30,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -354,20 +356,27 @@ fun StoryViewerDialog(
     var activeIndex by remember(stories.size, initialIndex) {
         mutableIntStateOf(initialIndex.coerceIn(0, stories.lastIndex))
     }
-    val story = stories[activeIndex]
-    val isOwner = story.userId == currentUserId
+    val safeActiveIndex = activeIndex.coerceIn(0, stories.lastIndex)
+    val story = stories[safeActiveIndex]
+    val isOwner = currentUserId.isNotBlank() && story.userId == currentUserId
 
     var resolvedVideo by remember(story.id) { mutableStateOf<File?>(null) }
     var isLoadingVideo by remember(story.id) { mutableStateOf(false) }
     var activeVideoView by remember { mutableStateOf<VideoView?>(null) }
 
     var isHeldPaused by remember { mutableStateOf(false) }
+    var isReplyFocused by remember(story.id) { mutableStateOf(false) }
     var showDeleteConfirm by remember(story.id) { mutableStateOf(false) }
     var showModeratorDeleteDialog by remember(story.id) { mutableStateOf(false) }
     var showViewerListSheet by remember { mutableStateOf(false) }
-    val isStoryPaused = isHeldPaused || showDeleteConfirm || showModeratorDeleteDialog || showViewerListSheet
-    var replyDraft by remember { mutableStateOf("") }
-    var isSendingReply by remember { mutableStateOf(false) }
+    var replyDraft by remember(story.id) { mutableStateOf("") }
+    var isSendingReply by remember(story.id) { mutableStateOf(false) }
+    val isStoryPaused = isHeldPaused ||
+        isReplyFocused ||
+        replyDraft.isNotBlank() ||
+        showDeleteConfirm ||
+        showModeratorDeleteDialog ||
+        showViewerListSheet
 
     val scope = rememberCoroutineScope()
     var floatingReactions by remember { mutableStateOf<List<FloatingStoryReaction>>(emptyList()) }
@@ -408,7 +417,7 @@ fun StoryViewerDialog(
 
     LaunchedEffect(story.id) {
         elapsedMs = 0L
-        if (story.id.isNotBlank() && currentUserId !in story.viewerUids) {
+        if (story.id.isNotBlank() && currentUserId.isNotBlank() && currentUserId !in story.viewerUids) {
             onMarkViewed(story.id)
         }
         if (story.mediaType == "VIDEO") {
@@ -418,7 +427,7 @@ fun StoryViewerDialog(
         }
     }
 
-    // Photo story timer loop that pauses when user holds down or confirms delete
+    // Photo story timer loop that pauses when user holds down, types a reply, or confirms delete
     LaunchedEffect(story.id, isStoryPaused) {
         if (story.mediaType != "VIDEO" && !isStoryPaused) {
             while (elapsedMs < storyDurationMs) {
@@ -427,15 +436,15 @@ fun StoryViewerDialog(
                     elapsedMs += timerStepMs
                 }
             }
-            if (activeIndex < stories.lastIndex) {
-                activeIndex += 1
+            if (safeActiveIndex < stories.lastIndex) {
+                activeIndex = safeActiveIndex + 1
             } else {
                 onDismiss()
             }
         }
     }
 
-    // Pause/Resume video playback when user holds down or confirms delete
+    // Pause/Resume video playback when user holds down, types a reply, or confirms delete
     LaunchedEffect(isStoryPaused) {
         activeVideoView?.let { vv ->
             if (isStoryPaused) {
@@ -448,161 +457,25 @@ fun StoryViewerDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
                 .testTag("story_viewer_dialog")
         ) {
-            // Media Layer
-            if (story.mediaType == "VIDEO") {
-                val vidFile = resolvedVideo
-                if (vidFile != null) {
-                    AndroidView(
-                        factory = { ctx ->
-                            VideoView(ctx).apply {
-                                layoutParams = ViewGroup.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT
-                                )
-                                setVideoURI(Uri.fromFile(vidFile))
-                                setOnPreparedListener { mp ->
-                                    mp.isLooping = false
-                                    activeVideoView = this
-                                    if (!isHeldPaused) start()
-                                }
-                                setOnCompletionListener {
-                                    if (activeIndex < stories.lastIndex) activeIndex += 1 else onDismiss()
-                                }
-                            }
-                        },
-                        onRelease = {
-                            activeVideoView = null
-                            runCatching { it.stopPlayback() }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        if (isLoadingVideo) CircularProgressIndicator(color = CoralRose)
-                        else Text("Video unavailable", color = Color.White)
-                    }
-                }
-            } else {
-                val bitmap = remember(story.mediaDataUrl) {
-                    story.mediaDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
-                }
-                val isRemoteHttp = story.mediaDataUrl?.startsWith("http://", ignoreCase = true) == true ||
-                    story.mediaDataUrl?.startsWith("https://", ignoreCase = true) == true
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = "Story photo by ${story.authorName}",
-                        contentScale = ContentScale.Fit,
-                        filterQuality = FilterQuality.High,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else if (isRemoteHttp) {
-                    AsyncImage(
-                        model = story.mediaDataUrl,
-                        contentDescription = "Story photo by ${story.authorName}",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            // Optional Text Overlay in center of story
-            if (!story.caption.isNullOrBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color.Black.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(horizontal = 24.dp)
-                ) {
-                    Text(
-                        text = story.caption,
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                    )
-                }
-            }
-
-            // Floating Quick Reaction Animations
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("story_floating_reactions_overlay")
-            ) {
-                val screenWidth = maxWidth
-                floatingReactions.forEach { particle ->
-                    val progress = particle.animatable.value
-                    if (progress > 0f) {
-                        val yOffset = -1f * (progress * particle.targetHeight)
-                        val sway = sin(progress * Math.PI.toFloat() * 2f) * particle.swayAmount
-                        val alpha = if (progress < 0.65f) 1f else (1f - ((progress - 0.65f) / 0.35f)).coerceIn(0f, 1f)
-                        val scale = if (progress < 0.2f) {
-                            (progress / 0.2f) * particle.baseScale
-                        } else {
-                            particle.baseScale * (1f + 0.12f * (1f - progress))
-                        }
-
-                        Text(
-                            text = particle.emoji,
-                            fontSize = 34.sp,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .offset(
-                                    x = (screenWidth * particle.startXFraction) + sway.dp,
-                                    y = (-110).dp + yOffset.dp
-                                )
-                                .graphicsLayer {
-                                    this.scaleX = scale
-                                    this.scaleY = scale
-                                    this.alpha = alpha
-                                }
-                        )
-                    }
-                }
-            }
-
-            // Touch gesture detector: Tap left to go back, tap right to advance, hold to pause
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(story.id) {
-                        detectTapGestures(
-                            onPress = {
-                                isHeldPaused = true
-                                try {
-                                    tryAwaitRelease()
-                                } finally {
-                                    isHeldPaused = false
-                                }
-                            },
-                            onTap = { offset ->
-                                if (offset.x < size.width * 0.35f) {
-                                    if (activeIndex > 0) activeIndex -= 1
-                                } else {
-                                    if (activeIndex < stories.lastIndex) activeIndex += 1 else onDismiss()
-                                }
-                            }
-                        )
-                    }
-            )
-
             // Top Header: Segmented Progress Bars & Author Details
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.TopCenter)
+                    .background(Color.Black.copy(alpha = 0.72f))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -613,8 +486,8 @@ fun StoryViewerDialog(
                 ) {
                     stories.indices.forEach { idx ->
                         val pVal = when {
-                            idx < activeIndex -> 1f
-                            idx == activeIndex -> {
+                            idx < safeActiveIndex -> 1f
+                            idx == safeActiveIndex -> {
                                 if (story.mediaType == "VIDEO") 1f
                                 else (elapsedMs.toFloat() / storyDurationMs.toFloat()).coerceIn(0f, 1f)
                             }
@@ -662,11 +535,14 @@ fun StoryViewerDialog(
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(
-                                text = "${story.viewerUids.size} views",
-                                color = Color.White.copy(alpha = 0.78f),
-                                style = MaterialTheme.typography.labelSmall
-                            )
+                            if (isOwner) {
+                                Text(
+                                    text = "${story.viewerUids.size} ${if (story.viewerUids.size == 1) "view" else "views"}",
+                                    color = Color.White.copy(alpha = 0.78f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.testTag("story_owner_view_count_header")
+                                )
+                            }
                         }
                     }
 
@@ -674,7 +550,7 @@ fun StoryViewerDialog(
                         if (isOwner) {
                             IconButton(
                                 onClick = { showDeleteConfirm = true },
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.minimumInteractiveComponentSize()
                             ) {
                                 Icon(Icons.Filled.DeleteOutline, contentDescription = "Delete story", tint = Color.White)
                             }
@@ -682,7 +558,7 @@ fun StoryViewerDialog(
                             IconButton(
                                 onClick = { showModeratorDeleteDialog = true },
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .minimumInteractiveComponentSize()
                                     .testTag("moderator_delete_story_button_${story.id}")
                             ) {
                                 Icon(
@@ -692,68 +568,229 @@ fun StoryViewerDialog(
                                 )
                             }
                         }
-                        IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
                             Icon(Icons.Filled.Close, contentDescription = "Close story", tint = Color.White)
                         }
                     }
                 }
             }
 
-            // Bottom Actions: Viewer List for Owner OR Send message reply bar for others
+            // Story Media Container (shrinks smoothly above pinned reply bar using weight(1f) & ContentScale.Fit)
             Box(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .imePadding()
-                    .padding(bottom = 12.dp)
+                    .testTag("story_media_container"),
+                contentAlignment = Alignment.Center
+            ) {
+                if (story.mediaType == "VIDEO") {
+                    val vidFile = resolvedVideo
+                    if (vidFile != null) {
+                        AndroidView(
+                            factory = { ctx ->
+                                VideoView(ctx).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                    setVideoURI(Uri.fromFile(vidFile))
+                                    setOnPreparedListener { mp ->
+                                        mp.isLooping = false
+                                        activeVideoView = this
+                                        if (!isStoryPaused) start()
+                                    }
+                                    setOnCompletionListener {
+                                        if (safeActiveIndex < stories.lastIndex) activeIndex = safeActiveIndex + 1 else onDismiss()
+                                    }
+                                }
+                            },
+                            onRelease = {
+                                activeVideoView = null
+                                runCatching { it.stopPlayback() }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            if (isLoadingVideo) CircularProgressIndicator(color = CoralRose)
+                            else Text("Video unavailable", color = Color.White)
+                        }
+                    }
+                } else {
+                    val bitmap = remember(story.mediaDataUrl) {
+                        story.mediaDataUrl?.let { MediaImageHelper.decodeBase64DataUrl(it) }
+                    }
+                    val isRemoteHttp = story.mediaDataUrl?.startsWith("http://", ignoreCase = true) == true ||
+                        story.mediaDataUrl?.startsWith("https://", ignoreCase = true) == true
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = "Story photo by ${story.authorName}",
+                            contentScale = ContentScale.Fit,
+                            filterQuality = FilterQuality.High,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (isRemoteHttp) {
+                        AsyncImage(
+                            model = story.mediaDataUrl,
+                            contentDescription = "Story photo by ${story.authorName}",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+
+                // Touch gesture detector inside media bounds: Tap left to go back, tap right to advance, hold to pause
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(story.id) {
+                            detectTapGestures(
+                                onPress = {
+                                    isHeldPaused = true
+                                    try {
+                                        tryAwaitRelease()
+                                    } finally {
+                                        isHeldPaused = false
+                                    }
+                                },
+                                onTap = { offset ->
+                                    if (offset.x < size.width * 0.35f) {
+                                        if (safeActiveIndex > 0) activeIndex = safeActiveIndex - 1
+                                    } else {
+                                        if (safeActiveIndex < stories.lastIndex) activeIndex = safeActiveIndex + 1 else onDismiss()
+                                    }
+                                }
+                            )
+                        }
+                )
+
+                // Optional Text Overlay in center of story
+                if (!story.caption.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.Black.copy(alpha = 0.6f),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 24.dp)
+                    ) {
+                        Text(
+                            text = story.caption,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+
+                // Floating Quick Reaction Animations
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("story_floating_reactions_overlay")
+                ) {
+                    val screenWidth = maxWidth
+                    floatingReactions.forEach { particle ->
+                        val progress = particle.animatable.value
+                        if (progress > 0f) {
+                            val yOffset = -1f * (progress * particle.targetHeight)
+                            val sway = sin(progress * Math.PI.toFloat() * 2f) * particle.swayAmount
+                            val alpha = if (progress < 0.65f) 1f else (1f - ((progress - 0.65f) / 0.35f)).coerceIn(0f, 1f)
+                            val scale = if (progress < 0.2f) {
+                                (progress / 0.2f) * particle.baseScale
+                            } else {
+                                particle.baseScale * (1f + 0.12f * (1f - progress))
+                            }
+
+                            Text(
+                                text = particle.emoji,
+                                fontSize = 34.sp,
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .offset(
+                                        x = (screenWidth * particle.startXFraction) + sway.dp,
+                                        y = (-12).dp + yOffset.dp
+                                    )
+                                    .graphicsLayer {
+                                        this.scaleX = scale
+                                        this.scaleY = scale
+                                        this.alpha = alpha
+                                    }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Pinned Bottom Controls with dark translucent background:
+            // Viewer count for owner OR reaction emojis + "Send a reply..." bar for other users
+            Surface(
+                color = Color.Black.copy(alpha = 0.72f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("story_bottom_controls_bar")
             ) {
                 if (isOwner) {
-                    // Viewer list button for the story owner
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color.Black.copy(alpha = 0.65f),
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .clickable { showViewerListSheet = true }
-                            .testTag("story_viewer_list_trigger")
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clickable { showViewerListSheet = true }
+                                .testTag("story_viewer_list_trigger")
                         ) {
-                            Icon(Icons.Filled.Visibility, contentDescription = "Viewers", tint = Color.White, modifier = Modifier.size(18.dp))
-                            Text(
-                                text = "${story.viewerUids.size} ${if (story.viewerUids.size == 1) "viewer" else "viewers"}",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Visibility,
+                                    contentDescription = "Viewers",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "${story.viewerUids.size} ${if (story.viewerUids.size == 1) "viewer" else "viewers"}",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 } else {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 4.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         // Quick Reaction Emojis Row
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             quickReactionEmojis.forEach { emoji ->
                                 Surface(
                                     shape = CircleShape,
-                                    color = Color.Black.copy(alpha = 0.52f),
+                                    color = Color.White.copy(alpha = 0.12f),
                                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)),
                                     modifier = Modifier
-                                        .size(44.dp)
+                                        .size(48.dp)
                                         .clickable { triggerQuickReaction(emoji) }
                                         .testTag("story_quick_reaction_$emoji")
                                 ) {
@@ -764,29 +801,35 @@ fun StoryViewerDialog(
                             }
                         }
 
-                        // Send message reply bar directly to DM
+                        // Send reply bar directly to DM
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 2.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedTextField(
                                 value = replyDraft,
                                 onValueChange = { replyDraft = it },
-                                placeholder = { Text("Send message...", color = Color.White.copy(alpha = 0.7f)) },
+                                placeholder = {
+                                    Text(
+                                        "Send a reply...",
+                                        color = Color.White.copy(alpha = 0.7f)
+                                    )
+                                },
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Color.White,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.5f),
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.55f),
                                     focusedTextColor = Color.White,
                                     unfocusedTextColor = Color.White,
-                                    cursorColor = Color.White
+                                    cursorColor = Color.White,
+                                    focusedContainerColor = Color.White.copy(alpha = 0.08f),
+                                    unfocusedContainerColor = Color.White.copy(alpha = 0.06f)
                                 ),
                                 shape = RoundedCornerShape(24.dp),
                                 modifier = Modifier
                                     .weight(1f)
+                                    .onFocusChanged { isReplyFocused = it.isFocused }
                                     .testTag("story_reply_input")
                             )
                             IconButton(
@@ -800,15 +843,21 @@ fun StoryViewerDialog(
                                     }
                                 },
                                 enabled = replyDraft.isNotBlank() && !isSendingReply,
-                                modifier = Modifier.testTag("story_reply_send_button")
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("story_reply_send_button")
                             ) {
                                 if (isSendingReply) {
-                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                    CircularProgressIndicator(
+                                        color = Color.White,
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
                                 } else {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
                                         contentDescription = "Send Reply",
-                                        tint = if (replyDraft.isNotBlank()) Color(0xFF0095F6) else Color.White.copy(alpha = 0.4f),
+                                        tint = if (replyDraft.isNotBlank()) Color(0xFF0095F6) else Color.White.copy(alpha = 0.45f),
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }

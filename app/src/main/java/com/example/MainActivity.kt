@@ -482,6 +482,7 @@ private fun MainKindredApp(
                     isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
                     presenceScope.launch { runAutoUpdateCheck(force = false) }
                     viewModel.refreshFeed()
+                    viewModel.cleanupExpiredStoriesNow()
                 }
                 Lifecycle.Event.ON_STOP -> {
                     heartbeatJob?.cancel()

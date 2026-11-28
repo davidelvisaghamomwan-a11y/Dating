@@ -9,22 +9,35 @@ import android.os.IBinder
 import android.util.Log
 import com.example.R
 import com.example.communication.CallRingtoneController
+import com.example.data.CloudMediaStorageService
 import com.example.model.CallSession
 import com.example.model.FeedComment
 import com.example.model.FeedPost
 import com.example.model.FollowRecord
 import com.example.model.MatchRecord
+import com.example.model.StoryItem
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 class KindredBackgroundService : Service() {
     private var matchesRegistration: ListenerRegistration? = null
     private var myPostsRegistration: ListenerRegistration? = null
     private var followsRegistration: ListenerRegistration? = null
+    private var myStoriesRegistration: ListenerRegistration? = null
 
     private val callRegistrations = mutableMapOf<String, ListenerRegistration>()
     private val commentRegistrations = mutableMapOf<String, ListenerRegistration>()
@@ -42,6 +55,12 @@ class KindredBackgroundService : Service() {
     private val seenFollowIds = mutableSetOf<String>()
     private var followsInitialized = false
     private val serviceStartTimeMs = System.currentTimeMillis()
+
+    private val trackedStories = mutableListOf<StoryItem>()
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
+    private var storyExpiryTimerJob: Job? = null
+    private val cloudStorage by lazy { CloudMediaStorageService() }
 
     private var ringtoneController: CallRingtoneController? = null
 
@@ -192,6 +211,83 @@ class KindredBackgroundService : Service() {
                         }
                     }
                 }
+        }
+
+        // 4. Real-time 24-Hour Story Expiration Timer & Firestore Auto-Cleanup
+        if (myStoriesRegistration == null) {
+            myStoriesRegistration = db.collection("stories")
+                .whereEqualTo("userId", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Background stories listener error", error)
+                        return@addSnapshotListener
+                    }
+                    val myStories = snapshot?.documents?.mapNotNull { doc ->
+                        doc.toObject(StoryItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+                    }.orEmpty()
+                    synchronized(trackedStories) {
+                        trackedStories.clear()
+                        trackedStories.addAll(myStories)
+                    }
+                    rescheduleStoryExpiryTimer(db)
+                }
+            rescheduleStoryExpiryTimer(db)
+        }
+    }
+
+    private fun rescheduleStoryExpiryTimer(db: FirebaseFirestore) {
+        storyExpiryTimerJob?.cancel()
+        storyExpiryTimerJob = serviceScope.launch {
+            while (isActive) {
+                val snapshotCopy = synchronized(trackedStories) { trackedStories.toList() }
+                val nowMs = System.currentTimeMillis()
+                val expired = snapshotCopy.filter { it.id.isNotBlank() && it.isExpiredAt(nowMs) }
+                for (story in expired) {
+                    runCatching {
+                        deleteExpiredStoryFromFirestore(db, story)
+                    }.onFailure { err ->
+                        Log.w(TAG, "Failed to auto-remove expired story ${story.id}", err)
+                    }
+                }
+                val nextWaitMs = snapshotCopy
+                    .filter { !it.isExpiredAt(nowMs) }
+                    .mapNotNull { it.remainingTtlMs(nowMs).takeIf { rem -> rem < Long.MAX_VALUE } }
+                    .minOrNull()
+                    ?.coerceIn(5_000L, 15 * 60_000L)
+                    ?: (15 * 60_000L)
+                delay(nextWaitMs)
+            }
+        }
+    }
+
+    private suspend fun deleteExpiredStoryFromFirestore(db: FirebaseFirestore, story: StoryItem) {
+        val storyId = story.id.trim()
+        if (storyId.isBlank()) return
+        val storyRef = db.collection("stories").document(storyId)
+        storyRef.delete().await()
+        runCatching {
+            withTimeoutOrNull(2_500L) {
+                val chunks = storyRef.collection("mediaChunks").limit(200).get().await()
+                if (!chunks.isEmpty) {
+                    val batch = db.batch()
+                    chunks.documents.forEach { batch.delete(it.reference) }
+                    batch.commit().await()
+                }
+            }
+        }
+        val storagePaths = buildList {
+            story.mediaStoragePath?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+            story.thumbnailStoragePath?.trim()?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }.distinct()
+        if (storagePaths.isNotEmpty()) {
+            runCatching {
+                withTimeoutOrNull(4_000L) {
+                    storagePaths.forEach { path ->
+                        cloudStorage.deleteFileIfOwned(path)
+                    }
+                }
+            }
         }
     }
 
@@ -391,6 +487,12 @@ class KindredBackgroundService : Service() {
     }
 
     override fun onDestroy() {
+        storyExpiryTimerJob?.cancel()
+        storyExpiryTimerJob = null
+        serviceScope.cancel()
+        myStoriesRegistration?.remove()
+        myStoriesRegistration = null
+        synchronized(trackedStories) { trackedStories.clear() }
         matchesRegistration?.remove()
         matchesRegistration = null
         myPostsRegistration?.remove()
