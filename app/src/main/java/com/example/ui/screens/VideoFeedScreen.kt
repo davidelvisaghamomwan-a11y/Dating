@@ -119,7 +119,7 @@ fun VideoFeedScreen(
     onToggleFollow: (String) -> Unit = {},
     myProfile: PublicProfile? = null,
     observeComments: (String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
-    onAddComment: (String, String) -> Unit = { _, _ -> },
+    onAddComment: (String, String, com.example.model.FeedComment?) -> Unit = { _, _, _ -> },
     onDeleteComment: (String, String) -> Unit = { _, _ -> },
     isModerator: Boolean = false,
     onModeratorDeletePost: ((post: VideoPost, reason: String, details: String) -> Unit)? = null,
@@ -473,8 +473,8 @@ fun VideoFeedScreen(
             myProfile = myProfile,
             profilesByUid = profilesByUid,
             observeComments = observeComments,
-            onAddComment = { postId, text, onDone ->
-                onAddComment(postId, text)
+            onAddComment = { postId, text, replyTo, onDone ->
+                onAddComment(postId, text, replyTo)
                 onDone()
             },
             onDeleteComment = onDeleteComment,

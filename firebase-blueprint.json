@@ -1292,6 +1292,15 @@
         "likedByUids": {
           "type": "array"
         },
+        "replyToCommentId": {
+          "type": "string"
+        },
+        "replyToAuthorName": {
+          "type": "string"
+        },
+        "replyToText": {
+          "type": "string"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -1556,6 +1565,11 @@
     "/videoPosts/{postId}/mediaChunks/{chunkId}": {
       "schema": {
         "$ref": "#/entities/MediaChunk"
+      }
+    },
+    "/videoPosts/{postId}/comments/{commentId}": {
+      "schema": {
+        "$ref": "#/entities/FeedComment"
       }
     },
     "/feedPosts/{postId}": {

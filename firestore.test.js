@@ -928,6 +928,45 @@ test("Social features: up to 12 photos, friends, views, likes, favorites, storie
       createdAt: pastDate(100),
     })
   );
+  // Direct reply to specific comment on feedPost succeeds
+  await assertSucceeds(
+    aliceDb.collection("feedPosts").doc("feed_1").collection("comments").doc("c_reply_1").set({
+      postId: "feed_1",
+      userId: ALICE_UID,
+      authorName: "Alice",
+      text: "Thanks Bob!",
+      likedByUids: [],
+      replyToCommentId: "c_1",
+      replyToAuthorName: "Bob",
+      replyToText: "Great shot!",
+      createdAt: pastDate(80),
+    })
+  );
+  // Direct reply to videoPost comment succeeds; invalid replyToAuthorName fails
+  await assertSucceeds(
+    aliceDb.collection("videoPosts").doc("post_1").collection("comments").doc("vc_reply_1").set({
+      postId: "post_1",
+      userId: ALICE_UID,
+      authorName: "Alice",
+      text: "Appreciate the feedback!",
+      replyToCommentId: "vc_1",
+      replyToAuthorName: "Bob",
+      replyToText: "Nice trail!",
+      createdAt: pastDate(70),
+    })
+  );
+  await assertFails(
+    aliceDb.collection("feedPosts").doc("feed_1").collection("comments").doc("c_bad_reply").set({
+      postId: "feed_1",
+      userId: ALICE_UID,
+      authorName: "Alice",
+      text: "Invalid reply",
+      likedByUids: [],
+      replyToCommentId: "",
+      replyToAuthorName: "Bob",
+      createdAt: pastDate(60),
+    })
+  );
   await assertSucceeds(
     aliceDb.collection("feedPosts").doc("feed_1").collection("comments").doc("c_1").update({
       likedByUids: [ALICE_UID],

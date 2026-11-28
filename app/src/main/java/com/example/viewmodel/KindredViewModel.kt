@@ -2620,10 +2620,15 @@ class KindredViewModel(
     fun observeVideoPostComments(postId: String): Flow<List<FeedComment>> =
         socialRepo.observeVideoPostComments(postId, currentUserId)
 
-    fun addVideoPostComment(postId: String, text: String, onComplete: () -> Unit = {}) {
+    fun addVideoPostComment(
+        postId: String,
+        text: String,
+        replyToComment: FeedComment? = null,
+        onComplete: () -> Unit = {}
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
-            socialRepo.addVideoPostComment(postId, snap?.myProfile, defaultDisplayName, text)
+            socialRepo.addVideoPostComment(postId, snap?.myProfile, defaultDisplayName, text, replyToComment)
                 .onSuccess { onComplete() }
                 .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not add comment" }
         }
@@ -2731,10 +2736,15 @@ class KindredViewModel(
         }
     }
 
-    fun addFeedPostComment(postId: String, text: String, onDone: () -> Unit = {}) {
+    fun addFeedPostComment(
+        postId: String,
+        text: String,
+        replyToComment: FeedComment? = null,
+        onDone: () -> Unit = {}
+    ) {
         val snap = (dashboardState.value as? UiState.Success)?.data
         viewModelScope.launch {
-            socialRepo.addFeedPostComment(postId, snap?.myProfile, defaultDisplayName, text)
+            socialRepo.addFeedPostComment(postId, snap?.myProfile, defaultDisplayName, text, replyToComment)
                 .onSuccess { onDone() }
                 .onFailure { _actionStatusMessage.value = it.localizedMessage ?: "Could not post comment" }
         }

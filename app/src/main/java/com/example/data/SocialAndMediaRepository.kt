@@ -1882,7 +1882,8 @@ class SocialAndMediaRepository(
         postId: String,
         authorProfile: PublicProfile?,
         fallbackName: String?,
-        text: String
+        text: String,
+        replyToComment: FeedComment? = null
     ): Result<String> {
         val cleanText = text.trim().take(500)
         if (cleanText.isBlank()) {
@@ -1903,6 +1904,15 @@ class SocialAndMediaRepository(
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
             if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
                 payload["authorPhoto"] = authorPhoto
+            }
+            val parentCommentId = replyToComment?.id?.trim().orEmpty()
+            if (parentCommentId.isNotBlank()) {
+                payload["replyToCommentId"] = parentCommentId
+                payload["replyToAuthorName"] = replyToComment?.authorName?.trim()?.ifBlank { "Member" }?.take(40) ?: "Member"
+                val snippet = replyToComment?.text?.trim()?.take(120).orEmpty()
+                if (snippet.isNotBlank()) {
+                    payload["replyToText"] = snippet
+                }
             }
             commentRef.set(payload).await()
             Result.success(commentRef.id)
@@ -2119,7 +2129,8 @@ class SocialAndMediaRepository(
         postId: String,
         authorProfile: PublicProfile?,
         fallbackName: String?,
-        text: String
+        text: String,
+        replyToComment: FeedComment? = null
     ): Result<String> {
         val cleanText = text.trim().take(500)
         if (cleanText.isBlank()) {
@@ -2144,6 +2155,15 @@ class SocialAndMediaRepository(
             val authorPhoto = authorProfile?.allProfilePhotos()?.firstOrNull()
             if (!authorPhoto.isNullOrBlank() && authorPhoto.length <= 180_000) {
                 payload["authorPhoto"] = authorPhoto
+            }
+            val parentCommentId = replyToComment?.id?.trim().orEmpty()
+            if (parentCommentId.isNotBlank()) {
+                payload["replyToCommentId"] = parentCommentId
+                payload["replyToAuthorName"] = replyToComment?.authorName?.trim()?.ifBlank { "Member" }?.take(40) ?: "Member"
+                val snippet = replyToComment?.text?.trim()?.take(120).orEmpty()
+                if (snippet.isNotBlank()) {
+                    payload["replyToText"] = snippet
+                }
             }
             val batch = db.batch()
             batch.set(commentRef, payload)

@@ -546,6 +546,9 @@ data class FeedComment(
     val authorPhoto: String? = null,
     val text: String = "",
     val likedByUids: List<String> = emptyList(),
+    val replyToCommentId: String? = null,
+    val replyToAuthorName: String? = null,
+    val replyToText: String? = null,
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 

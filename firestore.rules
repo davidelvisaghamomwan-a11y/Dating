@@ -58,6 +58,12 @@ service cloud.firestore {
       return paths is list && paths.size() <= maxLen && (paths.size() == 0 || isValidStoragePath(paths[0]));
     }
 
+    function isValidCommentReplyFields(data) {
+      return (!('replyToCommentId' in data) || (data.replyToCommentId is string && isValidId(data.replyToCommentId))) &&
+             (!('replyToAuthorName' in data) || (data.replyToAuthorName is string && data.replyToAuthorName.size() >= 1 && data.replyToAuthorName.size() <= 40)) &&
+             (!('replyToText' in data) || (data.replyToText is string && data.replyToText.size() >= 1 && data.replyToText.size() <= 140));
+    }
+
     // --- Entity Validation Helpers ---
     function isValidPrivateUser(data) {
       return data.userId is string && isValidId(data.userId) &&
@@ -1110,8 +1116,9 @@ service cloud.firestore {
                          incoming().authorName is string && incoming().authorName.size() >= 1 && incoming().authorName.size() <= 40 &&
                          (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                          incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
+                         isValidCommentReplyFields(incoming()) &&
                          incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'replyToCommentId', 'replyToAuthorName', 'replyToText', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
         allow update: if false;
@@ -1173,8 +1180,9 @@ service cloud.firestore {
                          (!('authorPhoto' in incoming()) || (incoming().authorPhoto is string && incoming().authorPhoto.size() <= 180000)) &&
                          incoming().text is string && incoming().text.size() >= 1 && incoming().text.size() <= 500 &&
                          (!('likedByUids' in incoming()) || (incoming().likedByUids is list && incoming().likedByUids.size() <= 1000)) &&
+                         isValidCommentReplyFields(incoming()) &&
                          incoming().keys().hasAll(['postId', 'userId', 'authorName', 'text', 'createdAt']) &&
-                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'likedByUids', 'createdAt']) &&
+                         incoming().keys().hasOnly(['postId', 'userId', 'authorName', 'authorPhoto', 'text', 'likedByUids', 'replyToCommentId', 'replyToAuthorName', 'replyToText', 'createdAt']) &&
                          isValidTimestamp(incoming().createdAt);
 
         allow update: if isSignedIn() &&

@@ -940,8 +940,8 @@ private fun MainKindredApp(
                                         observeFeedComments = { postId ->
                                             viewModel.observeFeedComments(postId)
                                         },
-                                        onAddFeedPostComment = { postId, text, onDone ->
-                                            viewModel.addFeedPostComment(postId, text, onDone)
+                                        onAddFeedPostComment = { postId, text, replyTo, onDone ->
+                                            viewModel.addFeedPostComment(postId, text, replyTo, onDone)
                                         },
                                         onDeleteFeedPostComment = { postId, commentId ->
                                             viewModel.deleteFeedPostComment(postId, commentId)
@@ -964,8 +964,8 @@ private fun MainKindredApp(
                                         observeVideoComments = { postId ->
                                             viewModel.observeVideoPostComments(postId)
                                         },
-                                        onAddVideoComment = { postId, text, onDone ->
-                                            viewModel.addVideoPostComment(postId, text, onDone)
+                                        onAddVideoComment = { postId, text, replyTo, onDone ->
+                                            viewModel.addVideoPostComment(postId, text, replyTo, onDone)
                                         },
                                         onDeleteVideoComment = { postId, commentId ->
                                             viewModel.deleteVideoPostComment(postId, commentId)
@@ -1041,8 +1041,8 @@ private fun MainKindredApp(
                                         observeFeedComments = { postId ->
                                             viewModel.observeFeedComments(postId)
                                         },
-                                        onAddFeedPostComment = { postId, text, onDone ->
-                                            viewModel.addFeedPostComment(postId, text, onDone)
+                                        onAddFeedPostComment = { postId, text, replyTo, onDone ->
+                                            viewModel.addFeedPostComment(postId, text, replyTo, onDone)
                                         },
                                         onDeleteFeedPostComment = { postId, commentId ->
                                             viewModel.deleteFeedPostComment(postId, commentId)
@@ -1050,8 +1050,8 @@ private fun MainKindredApp(
                                         observeVideoComments = { postId ->
                                             viewModel.observeVideoPostComments(postId)
                                         },
-                                        onAddVideoComment = { postId, text, onDone ->
-                                            viewModel.addVideoPostComment(postId, text, onDone)
+                                        onAddVideoComment = { postId, text, replyTo, onDone ->
+                                            viewModel.addVideoPostComment(postId, text, replyTo, onDone)
                                         },
                                         onDeleteVideoComment = { postId, commentId ->
                                             viewModel.deleteVideoPostComment(postId, commentId)
@@ -1332,8 +1332,8 @@ private fun MainKindredApp(
                                         observeFeedComments = { postId ->
                                             viewModel.observeFeedComments(postId)
                                         },
-                                        onAddFeedPostComment = { postId, text, onDone ->
-                                            viewModel.addFeedPostComment(postId, text, onDone)
+                                        onAddFeedPostComment = { postId, text, replyTo, onDone ->
+                                            viewModel.addFeedPostComment(postId, text, replyTo, onDone)
                                         },
                                         onDeleteFeedPostComment = { postId, commentId ->
                                             viewModel.deleteFeedPostComment(postId, commentId)
@@ -1708,8 +1708,8 @@ private fun MainKindredApp(
                                         observeComments = { postId ->
                                             viewModel.observeVideoPostComments(postId)
                                         },
-                                        onAddComment = { postId, text ->
-                                            viewModel.addVideoPostComment(postId, text)
+                                        onAddComment = { postId, text, replyTo ->
+                                            viewModel.addVideoPostComment(postId, text, replyTo)
                                         },
                                         onDeleteComment = { postId, commentId ->
                                             viewModel.deleteVideoPostComment(postId, commentId)

@@ -168,7 +168,7 @@ fun ProfileScreen(
     onToggleFeedPostLike: (postId: String, currentlyLiked: Boolean) -> Unit = { _, _ -> },
     onToggleFeedPostSave: (postId: String, currentlySaved: Boolean) -> Unit = { _, _ -> },
     observeFeedComments: (postId: String) -> Flow<List<FeedComment>> = { flowOf(emptyList()) },
-    onAddFeedPostComment: (postId: String, text: String, onDone: () -> Unit) -> Unit = { _, _, _ -> },
+    onAddFeedPostComment: (postId: String, text: String, replyTo: FeedComment?, onDone: () -> Unit) -> Unit = { _, _, _, _ -> },
     onDeleteFeedPostComment: (postId: String, commentId: String) -> Unit = { _, _ -> },
     onDeleteFeedPost: (postId: String) -> Unit = {},
     resolveFeedPostVideoFile: suspend (FeedPost) -> Result<File> = { Result.failure(IllegalStateException("Unavailable")) },

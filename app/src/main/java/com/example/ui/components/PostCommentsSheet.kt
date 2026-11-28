@@ -1,13 +1,16 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -19,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -32,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -41,7 +46,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +63,59 @@ import kotlinx.coroutines.flow.Flow
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+data class CommentThreadRow(
+    val comment: FeedComment,
+    val isReply: Boolean
+)
+
+/**
+ * Organizes comments into top-level threads with direct replies nested chronologically
+ * beneath their root parent comment. Orphaned replies (whose parent was deleted) remain visible
+ * at the top level with their "Replying to @Author" context intact.
+ */
+fun buildCommentThreadRows(comments: List<FeedComment>): List<CommentThreadRow> {
+    if (comments.isEmpty()) return emptyList()
+    val byId = comments.associateBy { it.id }
+
+    fun findRootAncestorId(comment: FeedComment): String? {
+        var parentId = comment.replyToCommentId?.trim().orEmpty()
+        if (parentId.isEmpty() || parentId !in byId) return null
+        val visited = mutableSetOf(comment.id)
+        var currentRoot = parentId
+        while (true) {
+            if (!visited.add(currentRoot)) break
+            val parent = byId[currentRoot] ?: break
+            val grandParentId = parent.replyToCommentId?.trim().orEmpty()
+            if (grandParentId.isEmpty() || grandParentId !in byId) {
+                return parent.id
+            }
+            currentRoot = grandParentId
+        }
+        return currentRoot
+    }
+
+    val repliesByRoot = linkedMapOf<String, MutableList<FeedComment>>()
+    val topLevel = mutableListOf<FeedComment>()
+
+    for (comment in comments) {
+        val rootId = findRootAncestorId(comment)
+        if (rootId == null) {
+            topLevel += comment
+        } else {
+            repliesByRoot.getOrPut(rootId) { mutableListOf() }.add(comment)
+        }
+    }
+
+    val result = ArrayList<CommentThreadRow>(comments.size)
+    for (root in topLevel) {
+        result += CommentThreadRow(comment = root, isReply = false)
+        repliesByRoot[root.id]?.forEach { reply ->
+            result += CommentThreadRow(comment = reply, isReply = true)
+        }
+    }
+    return result
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PostCommentsSheet(
@@ -64,7 +124,7 @@ fun PostCommentsSheet(
     myProfile: PublicProfile?,
     profilesByUid: Map<String, PublicProfile> = emptyMap(),
     observeComments: (String) -> Flow<List<FeedComment>>,
-    onAddComment: (postId: String, text: String, onDone: () -> Unit) -> Unit,
+    onAddComment: (postId: String, text: String, replyTo: FeedComment?, onDone: () -> Unit) -> Unit,
     onDeleteComment: (postId: String, commentId: String) -> Unit,
     onToggleCommentLike: (postId: String, commentId: String, currentlyLiked: Boolean) -> Unit = { _, _, _ -> },
     onOpenProfile: (String) -> Unit,
@@ -72,8 +132,11 @@ fun PostCommentsSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val comments by observeComments(post.id).collectAsStateWithLifecycle(initialValue = emptyList())
+    val threadRows = remember(comments) { buildCommentThreadRows(comments) }
     var commentText by remember { mutableStateOf("") }
+    var replyingToComment by remember { mutableStateOf<FeedComment?>(null) }
     var isSending by remember { mutableStateOf(false) }
+    val inputFocusRequester = remember { FocusRequester() }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -148,12 +211,12 @@ fun PostCommentsSheet(
             LazyColumn(
                 modifier = Modifier
                     .weight(1f, fill = false)
-                    .height(300.dp)
+                    .height(320.dp)
                     .fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                if (comments.isEmpty()) {
+                if (threadRows.isEmpty()) {
                     item {
                         Box(
                             modifier = Modifier
@@ -169,40 +232,73 @@ fun PostCommentsSheet(
                         }
                     }
                 } else {
-                    items(comments, key = { it.id }) { comment ->
+                    items(threadRows, key = { it.comment.id }) { row ->
+                        val comment = row.comment
+                        val resolvedProfile = profilesByUid[comment.userId]
+                        val displayPhoto = comment.authorPhoto ?: resolvedProfile?.allProfilePhotos()?.firstOrNull()
+                        val displayAuthorName = comment.authorName.ifBlank {
+                            resolvedProfile?.displayName?.ifBlank { "Member" } ?: "Member"
+                        }
                         val timeStr = remember(comment.createdAt) {
                             comment.createdAt?.toDate()?.let {
                                 SimpleDateFormat("h:mm a", Locale.getDefault()).format(it)
                             } ?: "Now"
                         }
+
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (row.isReply) {
+                                        Modifier
+                                            .padding(start = 26.dp)
+                                            .height(IntrinsicSize.Min)
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .testTag("comment_item_${comment.id}"),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.Top
                         ) {
+                            if (row.isReply) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(2.dp)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(1.dp))
+                                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                            }
+
                             Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { onOpenProfile(comment.userId) },
+                                modifier = Modifier.weight(1f),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                ProfileAvatarImage(
-                                    photoDataUrl = comment.authorPhoto,
-                                    displayName = comment.authorName,
-                                    seed = comment.userId,
-                                    modifier = Modifier.size(32.dp),
-                                    shape = CircleShape,
-                                    initialsFontSizeSp = 12
-                                )
-                                Column {
+                                Box(
+                                    modifier = Modifier.clickable { onOpenProfile(comment.userId) }
+                                ) {
+                                    ProfileAvatarImage(
+                                        photoDataUrl = displayPhoto,
+                                        displayName = displayAuthorName,
+                                        seed = comment.userId,
+                                        modifier = Modifier.size(if (row.isReply) 26.dp else 32.dp),
+                                        shape = CircleShape,
+                                        initialsFontSizeSp = if (row.isReply) 10 else 12
+                                    )
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Text(
-                                            text = comment.authorName.ifBlank { "Member" },
+                                            text = displayAuthorName,
                                             style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.clickable { onOpenProfile(comment.userId) }
                                         )
                                         Text(
                                             text = timeStr,
@@ -210,10 +306,42 @@ fun PostCommentsSheet(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
+
+                                    if (!comment.replyToAuthorName.isNullOrBlank()) {
+                                        Text(
+                                            text = "Replying to @${comment.replyToAuthorName}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = CoralRose,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.padding(top = 1.dp)
+                                        )
+                                    }
+
                                     Text(
                                         text = comment.text,
-                                        style = MaterialTheme.typography.bodySmall
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(top = 2.dp)
                                     )
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "Reply",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    replyingToComment = comment.copy(authorName = displayAuthorName)
+                                                    runCatching { inputFocusRequester.requestFocus() }
+                                                }
+                                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                                                .testTag("comment_reply_btn_${comment.id}")
+                                        )
+                                    }
                                 }
                             }
 
@@ -259,6 +387,71 @@ fun PostCommentsSheet(
                 }
             }
 
+            // Active reply indicator banner above input bar
+            AnimatedVisibility(visible = replyingToComment != null) {
+                replyingToComment?.let { target ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("comment_replying_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Reply,
+                                    contentDescription = null,
+                                    tint = CoralRose,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Replying to ${target.authorName.ifBlank { "Member" }}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = CoralRose,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (target.text.isNotBlank()) {
+                                        Text(
+                                            text = target.text,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                            IconButton(
+                                onClick = { replyingToComment = null },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("comment_cancel_reply_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Cancel reply",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Input Bar
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Row(
@@ -277,14 +470,19 @@ fun PostCommentsSheet(
                     initialsFontSizeSp = 14
                 )
 
+                val inputPlaceholder = replyingToComment?.let {
+                    "Reply to ${it.authorName.ifBlank { "Member" }}..."
+                } ?: "Add a comment..."
+
                 OutlinedTextField(
                     value = commentText,
                     onValueChange = { if (it.length <= 400) commentText = it },
-                    placeholder = { Text("Add a comment...") },
+                    placeholder = { Text(inputPlaceholder, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp),
                     modifier = Modifier
                         .weight(1f)
+                        .focusRequester(inputFocusRequester)
                         .testTag("comment_input_field")
                 )
 
@@ -292,10 +490,12 @@ fun PostCommentsSheet(
                     onClick = {
                         val text = commentText.trim()
                         if (text.isNotBlank()) {
+                            val activeReply = replyingToComment
                             isSending = true
-                            onAddComment(post.id, text) {
+                            onAddComment(post.id, text, activeReply) {
                                 isSending = false
                                 commentText = ""
+                                replyingToComment = null
                             }
                         }
                     },

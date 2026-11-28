@@ -56,10 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.foundation.Image
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -223,29 +220,18 @@ fun AuthScreen(
 
     val fieldsReady = emailOrIdentifier.isNotBlank() && password.length >= 6
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color.White,
+        contentColor = IgTextPrimary
     ) {
-        Image(
-            painter = painterResource(com.example.R.drawable.app_startup_wallpaper),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        // Dark translucent overlay for enhanced readability of inputs and buttons
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.35f))
-        )
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(Color.White)
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
         ) {
         // Main Centered Form Area
         Box(
@@ -267,12 +253,12 @@ fun AuthScreen(
                     text = stringResource(R.string.app_name),
                     fontFamily = GrandHotelFamily,
                     fontSize = 52.sp,
-                    color = Color.White,
+                    color = IgTextPrimary,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.testTag("auth_brand_wordmark")
                 )
 
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(32.dp))
 
                 // Sign-Up Extra Fields (only visible when switching to Sign Up)
                 AnimatedVisibility(visible = authMode == AuthMode.SIGN_UP) {
@@ -621,6 +607,6 @@ private fun instagramInputColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = IgInputBackground,
     unfocusedContainerColor = IgInputBackground,
     focusedBorderColor = Color(0xFFA8A8A8),
-    unfocusedBorderColor = IgInputBorder,
+    unfocusedBorderColor = Color(0xFFEEEEEE),
     cursorColor = IgLoginBlue
 )
