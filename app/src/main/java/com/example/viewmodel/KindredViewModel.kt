@@ -792,16 +792,23 @@ class KindredViewModel(
         viewModelScope.launch {
             _isFeedRefreshing.value = true
             try {
-                val uid = currentUserId
-                val postsJob = async { socialRepo.fetchLatestFeedPosts(uid) }
-                val storiesJob = async { socialRepo.fetchLatestActiveStories(uid) }
-                val videosJob = async { socialRepo.fetchLatestVideoFeed(uid) }
-                val postsRes = postsJob.await()
-                storiesJob.await()
-                videosJob.await()
-                postsRes.onFailure { err ->
-                    _actionStatusMessage.value = err.localizedMessage ?: "Unable to refresh feed from server"
+                kotlinx.coroutines.supervisorScope {
+                    val uid = currentUserId
+                    val postsJob = async { socialRepo.fetchLatestFeedPosts(uid) }
+                    val storiesJob = async { socialRepo.fetchLatestActiveStories(uid) }
+                    val videosJob = async { socialRepo.fetchLatestVideoFeed(uid) }
+                    val postsRes = postsJob.await()
+                    runCatching { storiesJob.await() }
+                    runCatching { videosJob.await() }
+                    postsRes.onFailure { err ->
+                        _actionStatusMessage.value = err.localizedMessage ?: "Unable to refresh feed from server"
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Feed refresh failed gracefully", e)
+                _actionStatusMessage.value = e.localizedMessage ?: "Unable to refresh feed from server"
             } finally {
                 delay(250L)
                 _isFeedRefreshing.value = false
@@ -1218,7 +1225,12 @@ class KindredViewModel(
                 allProfilesFlow
             ) { follows, profiles ->
                 follows to profiles.associateBy { it.userId }
-            }.collect { (follows, profileMap) ->
+            }
+                .catch { error ->
+                    if (error is CancellationException) throw error
+                    Log.w(TAG, "New follower notification watcher paused", error)
+                }
+                .collect { (follows, profileMap) ->
                 val incomingFollows = follows.filter {
                     it.followingUid == currentUserId && it.followerUid != currentUserId
                 }

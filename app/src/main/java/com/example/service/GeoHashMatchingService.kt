@@ -52,9 +52,14 @@ class GeoHashMatchingService(
     private val auth: FirebaseAuth = Firebase.auth
 ) {
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
+        runCatching {
+            val dbId = context.applicationContext.getString(R.string.firestore_database_id).trim()
+            if (dbId.isNotBlank() && dbId != "(default)") {
+                FirebaseFirestore.getInstance(dbId)
+            } else {
+                FirebaseFirestore.getInstance()
+            }
+        }.getOrElse { FirebaseFirestore.getInstance() }
     )
 
     private fun requireUserId(): String {

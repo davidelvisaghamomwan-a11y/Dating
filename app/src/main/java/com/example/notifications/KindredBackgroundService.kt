@@ -64,13 +64,21 @@ class KindredBackgroundService : Service() {
 
     private var ringtoneController: CallRingtoneController? = null
 
+    @Volatile
+    private var isForegroundPromoted: Boolean = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         KindredNotificationHelper.ensureChannels(this)
+        ringtoneController = runCatching { CallRingtoneController(applicationContext) }.getOrNull()
+    }
+
+    private fun promoteToForegroundSafely() {
+        if (isForegroundPromoted) return
         val notification = KindredNotificationHelper.buildBackgroundServiceNotification(this)
-        try {
+        runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     KindredNotificationHelper.NOTIFICATION_ID_BACKGROUND_SERVICE,
@@ -83,24 +91,33 @@ class KindredBackgroundService : Service() {
                     notification
                 )
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Unable to elevate background sync listener to foreground", e)
-            stopSelf()
-            return
+            isForegroundPromoted = true
+        }.onFailure { err ->
+            Log.w(TAG, "Background sync listener staying non-foreground: ${err.message}", err)
         }
-        ringtoneController = CallRingtoneController(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val startedViaFgsApi = intent?.getBooleanExtra(EXTRA_STARTED_AS_FOREGROUND, false) == true
+        if (startedViaFgsApi) {
+            // When launched via startForegroundService(), startForeground() must be attempted before stopSelf().
+            promoteToForegroundSafely()
+        }
+
         if (!isEnabled(this) || FirebaseApp.getApps(this).isEmpty()) {
             stopSelf()
             return START_NOT_STICKY
         }
-        val uid = Firebase.auth.currentUser?.uid
+        val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
         if (uid.isNullOrBlank()) {
             stopSelf()
             return START_NOT_STICKY
         }
+
+        if (!startedViaFgsApi && KindredNotificationHelper.hasNotificationPermission(this)) {
+            promoteToForegroundSafely()
+        }
+
         attachFirestoreListeners(uid)
         return START_STICKY
     }
@@ -518,6 +535,7 @@ class KindredBackgroundService : Service() {
         private const val TAG = "KindredBgService"
         private const val PREFS_NAME = "kindred_background_sync"
         private const val KEY_ENABLED = "background_listener_enabled"
+        private const val EXTRA_STARTED_AS_FOREGROUND = "extra_started_as_foreground"
 
         fun isEnabled(context: Context): Boolean {
             return context.applicationContext
@@ -532,18 +550,24 @@ class KindredBackgroundService : Service() {
                 .putBoolean(KEY_ENABLED, enabled)
                 .apply()
             if (enabled) {
-                startIfEnabled(context)
+                startIfEnabled(context, fromForeground = true)
             } else {
                 stop(context)
             }
         }
 
-        fun startIfEnabled(context: Context) {
+        fun startIfEnabled(context: Context, fromForeground: Boolean = true) {
             if (!isEnabled(context) || FirebaseApp.getApps(context).isEmpty()) return
-            if (Firebase.auth.currentUser == null) return
-            val intent = Intent(context.applicationContext, KindredBackgroundService::class.java)
+            val hasUser = runCatching { Firebase.auth.currentUser != null }.getOrDefault(false)
+            if (!hasUser) return
+            val useForegroundServiceApi = !fromForeground &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                KindredNotificationHelper.hasNotificationPermission(context)
+            val intent = Intent(context.applicationContext, KindredBackgroundService::class.java).apply {
+                putExtra(EXTRA_STARTED_AS_FOREGROUND, useForegroundServiceApi)
+            }
             runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (useForegroundServiceApi) {
                     context.applicationContext.startForegroundService(intent)
                 } else {
                     context.applicationContext.startService(intent)

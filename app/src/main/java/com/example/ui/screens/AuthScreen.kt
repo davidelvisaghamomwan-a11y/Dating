@@ -428,7 +428,7 @@ fun AuthScreen(
                 }
 
                 // Error or Info banner
-                if (!errorMessage.isNullOrBlank()) {
+                errorMessage?.takeIf { it.isNotBlank() }?.let { msg ->
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -437,7 +437,7 @@ fun AuthScreen(
                         border = BorderStroke(1.dp, Color(0xFFEF9A9A))
                     ) {
                         Text(
-                            text = errorMessage!!,
+                            text = msg,
                             color = Color(0xFFB71C1C),
                             fontSize = 13.sp,
                             modifier = Modifier.padding(10.dp)
@@ -445,7 +445,7 @@ fun AuthScreen(
                     }
                 }
 
-                if (!infoMessage.isNullOrBlank()) {
+                infoMessage?.takeIf { it.isNotBlank() }?.let { msg ->
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -454,7 +454,7 @@ fun AuthScreen(
                         border = BorderStroke(1.dp, Color(0xFF90CAF9))
                     ) {
                         Text(
-                            text = infoMessage!!,
+                            text = msg,
                             color = Color(0xFF0D47A1),
                             fontSize = 13.sp,
                             modifier = Modifier.padding(10.dp)

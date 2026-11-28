@@ -300,9 +300,18 @@ fun HomeFeedScreen(
 
     val displayedTimelineItems = remember(feedPosts, videoPosts, filterMode, currentUserId, isFollowingUid, isFollowerUid, dismissedSuggestedPostIds) {
         val rawCombined = buildList<HomeTimelineItem> {
-            feedPosts.forEach { add(HomeTimelineItem.PostItem(it)) }
-            videoPosts.forEach { add(HomeTimelineItem.ReelItem(it)) }
-        }
+            feedPosts.forEach { post ->
+                val resolvedId = post.id.ifBlank { post.postId }
+                if (resolvedId.isNotBlank()) {
+                    add(HomeTimelineItem.PostItem(post))
+                }
+            }
+            videoPosts.forEach { reel ->
+                if (reel.id.isNotBlank()) {
+                    add(HomeTimelineItem.ReelItem(reel))
+                }
+            }
+        }.distinctBy { it.key }
         val filtered = when (filterMode) {
             FeedFilterMode.FOLLOWING -> rawCombined.filter { item ->
                 item.key !in dismissedSuggestedPostIds
@@ -319,12 +328,16 @@ fun HomeFeedScreen(
 
     // Prioritize other people's Reels for the "Suggested reels" horizontal shelf on Home
     val shelfReels = remember(videoPosts, currentUserId) {
-        val others = videoPosts.filter { it.userId != currentUserId }
-        (if (others.isNotEmpty()) others else videoPosts).take(15)
+        val validReels = videoPosts.filter { it.id.isNotBlank() }.distinctBy { it.id }
+        val others = validReels.filter { it.userId != currentUserId }
+        (if (others.isNotEmpty()) others else validReels).take(15)
     }
 
     val peopleToKnow = remember(suggestedProfiles, candidates) {
-        (if (suggestedProfiles.isNotEmpty()) suggestedProfiles else candidates).take(20)
+        (if (suggestedProfiles.isNotEmpty()) suggestedProfiles else candidates)
+            .filter { it.profile.userId.isNotBlank() }
+            .distinctBy { it.profile.userId }
+            .take(20)
     }
 
     LaunchedEffect(displayedTimelineItems, stories, profilesByUid) {
@@ -830,10 +843,10 @@ fun HomeFeedScreen(
         }
     }
 
-    if (activeStoryIndex != null && stories.isNotEmpty()) {
+    activeStoryIndex?.takeIf { stories.isNotEmpty() }?.let { storyIdx ->
         StoryViewerDialog(
             stories = stories,
-            initialIndex = activeStoryIndex!!.coerceIn(0, stories.lastIndex),
+            initialIndex = storyIdx.coerceIn(0, stories.lastIndex),
             currentUserId = currentUserId,
             profilesByUid = profilesByUid,
             resolveVideoFile = resolveStoryVideoFile,

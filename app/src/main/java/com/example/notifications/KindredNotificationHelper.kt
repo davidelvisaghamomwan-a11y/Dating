@@ -75,7 +75,9 @@ object KindredNotificationHelper {
             enableVibration(true)
         }
 
-        val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        val ringtoneUri = runCatching {
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        }.getOrNull()
         val callsChannel = NotificationChannel(
             CHANNEL_CALLS,
             context.getString(R.string.fcm_calls_channel_name),
@@ -85,13 +87,15 @@ object KindredNotificationHelper {
             enableVibration(true)
             vibrationPattern = longArrayOf(0L, 600L, 600L)
             if (ringtoneUri != null) {
-                setSound(
-                    ringtoneUri,
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
+                runCatching {
+                    setSound(
+                        ringtoneUri,
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                }
             }
         }
 
@@ -121,12 +125,14 @@ object KindredNotificationHelper {
             enableVibration(true)
         }
 
-        manager.createNotificationChannel(matchesChannel)
-        manager.createNotificationChannel(messagesChannel)
-        manager.createNotificationChannel(callsChannel)
-        manager.createNotificationChannel(backgroundChannel)
-        manager.createNotificationChannel(updatesChannel)
-        manager.createNotificationChannel(socialChannel)
+        runCatching {
+            manager.createNotificationChannel(matchesChannel)
+            manager.createNotificationChannel(messagesChannel)
+            manager.createNotificationChannel(callsChannel)
+            manager.createNotificationChannel(backgroundChannel)
+            manager.createNotificationChannel(updatesChannel)
+            manager.createNotificationChannel(socialChannel)
+        }
     }
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -180,7 +186,7 @@ object KindredNotificationHelper {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_MATCHES)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kindred)
             .setContentTitle("It's a Match with $partnerName!")
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -214,7 +220,7 @@ object KindredNotificationHelper {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kindred)
             .setContentTitle("New message from $senderName")
             .setContentText(messageText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(messageText))
@@ -255,7 +261,7 @@ object KindredNotificationHelper {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_SOCIAL)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kindred)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -361,7 +367,7 @@ object KindredNotificationHelper {
 
         val callLabel = if (isVideo) "Incoming video call" else "Incoming voice call"
         val notification = NotificationCompat.Builder(context, CHANNEL_CALLS)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kindred)
             .setContentTitle("$callerName is calling…")
             .setContentText("$callLabel on Kindred — tap to answer")
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -413,7 +419,7 @@ object KindredNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(context, CHANNEL_BACKGROUND_SERVICE)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kindred)
             .setContentTitle("Kindred real-time sync active")
             .setContentText("Listening for live messages, likes, comments & calls")
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -441,7 +447,7 @@ object KindredNotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_APP_UPDATES)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kindred)
             .setContentTitle("Kindred Update Ready ($tagName)")
             .setContentText("$title is available on GitHub. Tap to download and install.")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -473,6 +479,8 @@ object KindredNotificationHelper {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
         } catch (_: SecurityException) {
             // Permission revoked at runtime while posting notification.
+        } catch (_: Exception) {
+            // Defensive catch against OEM NotificationManager binder exceptions.
         }
     }
 

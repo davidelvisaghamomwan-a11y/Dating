@@ -194,9 +194,11 @@ object LocationAndGeoHelper {
             }
         }
 
-        client.lastLocation.addOnSuccessListener { last ->
-            if (last != null) {
-                emitLocation(last)
+        runCatching {
+            client.lastLocation.addOnSuccessListener { last ->
+                if (last != null) {
+                    emitLocation(last)
+                }
             }
         }
 
@@ -212,10 +214,19 @@ object LocationAndGeoHelper {
             }
         }
 
-        client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+        val started = runCatching {
+            client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+            true
+        }.getOrDefault(false)
+
+        if (!started) {
+            resolverScope.cancel()
+            close()
+            return@callbackFlow
+        }
 
         awaitClose {
-            client.removeLocationUpdates(callback)
+            runCatching { client.removeLocationUpdates(callback) }
             resolverScope.cancel()
         }
     }
@@ -223,7 +234,9 @@ object LocationAndGeoHelper {
     @SuppressLint("MissingPermission")
     suspend fun fetchCurrentLocation(context: Context): ResolvedDeviceLocation? {
         if (!hasLocationPermission(context)) return null
-        val client = LocationServices.getFusedLocationProviderClient(context.applicationContext)
+        val client = runCatching {
+            LocationServices.getFusedLocationProviderClient(context.applicationContext)
+        }.getOrNull() ?: return null
         val fineGranted = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.ACCESS_FINE_LOCATION
@@ -237,21 +250,29 @@ object LocationAndGeoHelper {
         val currentLocation: Location? = suspendCancellableCoroutine { cont ->
             val cts = CancellationTokenSource()
             cont.invokeOnCancellation { cts.cancel() }
-            client.getCurrentLocation(priority, cts.token)
-                .addOnSuccessListener { loc ->
-                    if (loc != null) {
-                        cont.resume(loc)
-                    } else {
-                        client.lastLocation
-                            .addOnSuccessListener { last -> cont.resume(last) }
-                            .addOnFailureListener { cont.resume(null) }
+            try {
+                client.getCurrentLocation(priority, cts.token)
+                    .addOnSuccessListener { loc ->
+                        if (loc != null) {
+                            cont.resume(loc)
+                        } else {
+                            runCatching {
+                                client.lastLocation
+                                    .addOnSuccessListener { last -> cont.resume(last) }
+                                    .addOnFailureListener { cont.resume(null) }
+                            }.onFailure { cont.resume(null) }
+                        }
                     }
-                }
-                .addOnFailureListener {
-                    client.lastLocation
-                        .addOnSuccessListener { last -> cont.resume(last) }
-                        .addOnFailureListener { cont.resume(null) }
-                }
+                    .addOnFailureListener {
+                        runCatching {
+                            client.lastLocation
+                                .addOnSuccessListener { last -> cont.resume(last) }
+                                .addOnFailureListener { cont.resume(null) }
+                        }.onFailure { cont.resume(null) }
+                    }
+            } catch (_: Throwable) {
+                if (cont.isActive) cont.resume(null)
+            }
         }
 
         val location = currentLocation ?: return null

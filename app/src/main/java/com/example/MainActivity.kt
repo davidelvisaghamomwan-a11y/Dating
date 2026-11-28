@@ -148,11 +148,13 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import android.util.Log
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -346,8 +348,12 @@ private fun MainKindredApp(
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
+                val databaseId = runCatching { app.getString(R.string.firestore_database_id) }.getOrNull()?.trim().orEmpty()
+                val db = if (databaseId.isNotBlank() && databaseId != "(default)") {
+                    runCatching { FirebaseFirestore.getInstance(databaseId) }.getOrElse { FirebaseFirestore.getInstance() }
+                } else {
+                    FirebaseFirestore.getInstance()
+                }
                 val geoService = GeoHashMatchingService(db = db)
                 KindredViewModel(
                     repository = KindredRepository(db = db, geoService = geoService),
@@ -466,7 +472,7 @@ private fun MainKindredApp(
 
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
             startForegroundHeartbeat()
-            KindredBackgroundService.startIfEnabled(context)
+            KindredBackgroundService.startIfEnabled(context, fromForeground = true)
         }
 
         val observer = LifecycleEventObserver { _, event ->
@@ -475,12 +481,14 @@ private fun MainKindredApp(
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
                     isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
                     startForegroundHeartbeat()
-                    KindredBackgroundService.startIfEnabled(context)
+                    KindredBackgroundService.startIfEnabled(context, fromForeground = true)
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     hasLocationPermission = LocationAndGeoHelper.hasLocationPermission(context)
                     isLocationEnabled = LocationAndGeoHelper.isLocationServicesEnabled(context)
-                    presenceScope.launch { runAutoUpdateCheck(force = false) }
+                    presenceScope.launch {
+                        runCatching { runAutoUpdateCheck(force = false) }
+                    }
                     viewModel.refreshFeed()
                     viewModel.cleanupExpiredStoriesNow()
                 }
@@ -502,14 +510,18 @@ private fun MainKindredApp(
 
     LaunchedEffect(lifecycleOwner, user.uid, hasLocationPermission, isLocationEnabled) {
         if (!hasLocationPermission || !isLocationEnabled) return@LaunchedEffect
-        val immediateFix = LocationAndGeoHelper.fetchCurrentLocation(context)
+        val immediateFix = runCatching { LocationAndGeoHelper.fetchCurrentLocation(context) }.getOrNull()
         if (immediateFix != null) {
             viewModel.onLiveLocationTick(immediateFix)
         }
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            LocationAndGeoHelper.observeLocationUpdates(context).collect { resolved ->
-                viewModel.onLiveLocationTick(resolved)
-            }
+            LocationAndGeoHelper.observeLocationUpdates(context)
+                .catch { err ->
+                    Log.w("MainActivity", "Location observer stopped gracefully", err)
+                }
+                .collect { resolved ->
+                    viewModel.onLiveLocationTick(resolved)
+                }
         }
     }
 
@@ -541,21 +553,23 @@ private fun MainKindredApp(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            KindredBackgroundService.startIfEnabled(context, fromForeground = true)
             viewModel.syncFcmToken()
         }
     }
 
     LaunchedEffect(user.uid) {
         KindredNotificationHelper.ensureChannels(context)
-        KindredBackgroundService.startIfEnabled(context)
         viewModel.syncFcmToken()
         viewModel.refreshFeed()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !KindredNotificationHelper.hasNotificationPermission(context)
         ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            runCatching {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
-        runAutoUpdateCheck(force = true)
+        runCatching { runAutoUpdateCheck(force = true) }
     }
 
     LaunchedEffect(user.uid) {
