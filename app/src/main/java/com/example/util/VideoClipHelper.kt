@@ -38,16 +38,15 @@ object VideoClipHelper {
         uri: Uri,
         cacheKey: String = "upload_${System.currentTimeMillis()}"
     ): Result<PreparedVideoUpload> = withContext(Dispatchers.IO) {
+        val dir = File(context.cacheDir, "chat_videos").apply { mkdirs() }
+        val safeId = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "clip" }
+        val cachedFile = File(dir, "video_$safeId.mp4")
         runCatching {
             val resolver = context.contentResolver
             val mimeType = resolver.getType(uri)?.takeIf { it.startsWith("video/") } ?: "video/mp4"
 
             // Step 1: Stream content:// URI directly to app cache file so Firebase Storage can
             // upload it directly as a binary File without Base64 memory bloat or Firestore limits.
-            val dir = File(context.cacheDir, "chat_videos").apply { mkdirs() }
-            val safeId = cacheKey.replace(Regex("[^A-Za-z0-9_-]"), "_").ifBlank { "clip" }
-            val cachedFile = File(dir, "video_$safeId.mp4")
-
             var totalBytes = 0L
             resolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cachedFile).use { output ->
@@ -66,7 +65,7 @@ object VideoClipHelper {
             } ?: throw IllegalArgumentException("Unable to read selected video.")
 
             if (totalBytes <= 0L || !cachedFile.exists() || cachedFile.length() <= 0L) {
-                cachedFile.delete()
+                com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(cachedFile)
                 throw IllegalArgumentException("Selected video is empty.")
             }
 
@@ -112,7 +111,13 @@ object VideoClipHelper {
                 sizeBytes = totalBytes,
                 localCachedFile = cachedFile
             )
+        }.onFailure {
+            com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(cachedFile)
         }
+    }
+
+    fun cleanupPreparedUpload(prepared: PreparedVideoUpload?) {
+        com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(prepared?.localCachedFile)
     }
 
     fun streamFileIntoBase64Chunks(file: File, chunkSize: Int = CHUNK_RAW_BYTES): List<String> {

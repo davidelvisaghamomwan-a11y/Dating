@@ -120,6 +120,7 @@ import com.example.R
 import com.example.communication.VoiceNotePlayer
 import com.example.communication.VoiceNoteRecorder
 import com.example.communication.VoicePermissionHelper
+import com.example.data.CloudMediaStorageService
 import com.example.data.KindredRepository
 import com.example.model.CallAudioChunk
 import com.example.model.CallSession
@@ -410,6 +411,7 @@ fun ChatScreen(
     var showTimerSheet by remember { mutableStateOf(false) }
     var showVideoOptionsSheet by remember { mutableStateOf(false) }
     var pendingCaptureVideoUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingCaptureVideoFile by remember { mutableStateOf<File?>(null) }
     var isProcessingVideo by remember { mutableStateOf(false) }
     var handledCallIds by remember(matchId) { mutableStateOf(emptySet<String>()) }
     var viewOnceNextMedia by remember(matchId) { mutableStateOf(false) }
@@ -622,11 +624,18 @@ fun ChatScreen(
         }
     }
 
-    fun processAndSendVideo(uri: Uri) {
-        if (participants.size != 2 || isProcessingVideo) return
+    fun processAndSendVideo(uri: Uri, tempSourceFile: File? = null) {
+        if (participants.size != 2 || isProcessingVideo) {
+            CloudMediaStorageService.cleanupTempFileBestEffort(tempSourceFile)
+            return
+        }
         isProcessingVideo = true
         scope.launch {
-            val result = VideoClipHelper.prepareVideoForUpload(context, uri)
+            val result = try {
+                VideoClipHelper.prepareVideoForUpload(context, uri)
+            } finally {
+                CloudMediaStorageService.cleanupTempFileBestEffort(tempSourceFile)
+            }
             isProcessingVideo = false
             result.onSuccess { clip ->
                 val caption = messageDraft.trim()
@@ -656,18 +665,26 @@ fun ChatScreen(
         contract = CaptureUnlimitedVideoContract()
     ) { saved ->
         val uri = pendingCaptureVideoUri
+        val captureFile = pendingCaptureVideoFile
         pendingCaptureVideoUri = null
+        pendingCaptureVideoFile = null
         if (saved && uri != null) {
-            processAndSendVideo(uri)
+            processAndSendVideo(uri, tempSourceFile = captureFile)
+        } else {
+            CloudMediaStorageService.cleanupTempFileBestEffort(captureFile)
         }
     }
 
     fun launchVideoCapture() {
         runCatching {
-            val (_, uri) = VideoClipHelper.createCaptureVideoUri(context)
+            val (captureFile, uri) = VideoClipHelper.createCaptureVideoUri(context)
+            pendingCaptureVideoFile = captureFile
             pendingCaptureVideoUri = uri
             captureUnlimitedVideoLauncher.launch(uri)
         }.onFailure { err ->
+            CloudMediaStorageService.cleanupTempFileBestEffort(pendingCaptureVideoFile)
+            pendingCaptureVideoFile = null
+            pendingCaptureVideoUri = null
             onStatusMessage(err.localizedMessage ?: "Camera video capture unavailable on this device.")
         }
     }

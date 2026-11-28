@@ -10,6 +10,7 @@ import com.google.firebase.auth.auth
 import com.google.firebase.storage.FirebaseStorage
 import com.google.firebase.storage.OnProgressListener
 import com.google.firebase.storage.StorageException
+import com.google.firebase.storage.StorageMetadata
 import com.google.firebase.storage.StorageReference
 import com.google.firebase.storage.UploadTask
 import com.google.firebase.storage.storage
@@ -234,20 +235,23 @@ class CloudMediaStorageService(
         file: File,
         remotePath: String,
         contentType: String,
+        cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL,
+        deleteLocalFileAfterUpload: Boolean = false,
         timeoutMs: Long = UPLOAD_TIMEOUT_MS,
         onProgress: (Float) -> Unit = {}
     ): Result<CloudUploadResult> = withContext(Dispatchers.IO) {
-        if (!file.exists() || file.length() <= 0L) {
-            val err = IllegalArgumentException("Media file is missing or empty.")
-            Log.e(TAG, "uploadFile rejected for $remotePath: empty file", err)
-            return@withContext Result.failure(err)
-        }
         try {
+            if (!file.exists() || file.length() <= 0L) {
+                val err = IllegalArgumentException("Media file is missing or empty.")
+                Log.e(TAG, "uploadFile rejected for $remotePath: empty file", err)
+                return@withContext Result.failure(err)
+            }
             val prereqs = validatePrerequisites()
             val scopedPath = normalizeStoragePath(remotePath, prereqs.uid)
-            val metadata = storageMetadata {
-                this.contentType = contentType
-            }
+            val metadata = buildMediaMetadata(
+                contentType = contentType,
+                cacheControl = cacheControl
+            )
             val fileUri = Uri.fromFile(file)
             val result = executeWithBucketFallback(
                 prereqs = prereqs,
@@ -259,7 +263,7 @@ class CloudMediaStorageService(
             }
             Log.i(
                 TAG,
-                "uploadFile succeeded: bucket=${result.bucketName}, path=${result.storagePath}, bytes=${file.length()}"
+                "uploadFile succeeded: bucket=${result.bucketName}, path=${result.storagePath}, bytes=${file.length()}, cacheControl=${metadata.cacheControl}"
             )
             Result.success(result)
         } catch (e: TimeoutCancellationException) {
@@ -272,6 +276,10 @@ class CloudMediaStorageService(
             val msg = formatUploadError(e)
             Log.e(TAG, "uploadFile failed for path=$remotePath: $msg", e)
             Result.failure(IllegalStateException(msg, e))
+        } finally {
+            if (deleteLocalFileAfterUpload) {
+                cleanupTempFileBestEffort(file)
+            }
         }
     }
 
@@ -279,12 +287,16 @@ class CloudMediaStorageService(
         file: File,
         remotePath: String,
         contentType: String,
+        cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL,
+        deleteLocalFileAfterUpload: Boolean = false,
         timeoutMs: Long = UPLOAD_TIMEOUT_MS,
         onProgress: (Float) -> Unit = {}
     ): Result<String> = uploadFileWithMeta(
         file = file,
         remotePath = remotePath,
         contentType = contentType,
+        cacheControl = cacheControl,
+        deleteLocalFileAfterUpload = deleteLocalFileAfterUpload,
         timeoutMs = timeoutMs,
         onProgress = onProgress
     ).map { it.downloadUrl }
@@ -293,6 +305,7 @@ class CloudMediaStorageService(
         bytes: ByteArray,
         remotePath: String,
         contentType: String,
+        cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL,
         timeoutMs: Long = UPLOAD_TIMEOUT_MS,
         onProgress: (Float) -> Unit = {}
     ): Result<CloudUploadResult> = withContext(Dispatchers.IO) {
@@ -304,9 +317,10 @@ class CloudMediaStorageService(
         try {
             val prereqs = validatePrerequisites()
             val scopedPath = normalizeStoragePath(remotePath, prereqs.uid)
-            val metadata = storageMetadata {
-                this.contentType = contentType
-            }
+            val metadata = buildMediaMetadata(
+                contentType = contentType,
+                cacheControl = cacheControl
+            )
             val result = executeWithBucketFallback(
                 prereqs = prereqs,
                 storagePath = scopedPath,
@@ -317,7 +331,7 @@ class CloudMediaStorageService(
             }
             Log.i(
                 TAG,
-                "uploadBytes succeeded: bucket=${result.bucketName}, path=${result.storagePath}, bytes=${bytes.size}"
+                "uploadBytes succeeded: bucket=${result.bucketName}, path=${result.storagePath}, bytes=${bytes.size}, cacheControl=${metadata.cacheControl}"
             )
             Result.success(result)
         } catch (e: TimeoutCancellationException) {
@@ -337,12 +351,14 @@ class CloudMediaStorageService(
         bytes: ByteArray,
         remotePath: String,
         contentType: String,
+        cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL,
         timeoutMs: Long = UPLOAD_TIMEOUT_MS,
         onProgress: (Float) -> Unit = {}
     ): Result<String> = uploadBytesWithMeta(
         bytes = bytes,
         remotePath = remotePath,
         contentType = contentType,
+        cacheControl = cacheControl,
         timeoutMs = timeoutMs,
         onProgress = onProgress
     ).map { it.downloadUrl }
@@ -352,6 +368,8 @@ class CloudMediaStorageService(
         remotePath: String,
         defaultContentType: String = "image/jpeg",
         existingStoragePath: String? = null,
+        cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL,
+        deleteLocalFileAfterUpload: Boolean = false,
         timeoutMs: Long = UPLOAD_TIMEOUT_MS,
         onProgress: (Float) -> Unit = {}
     ): Result<CloudUploadResult> {
@@ -375,6 +393,8 @@ class CloudMediaStorageService(
                 file = localFile,
                 remotePath = remotePath,
                 contentType = defaultContentType,
+                cacheControl = cacheControl,
+                deleteLocalFileAfterUpload = deleteLocalFileAfterUpload,
                 timeoutMs = timeoutMs,
                 onProgress = onProgress
             )
@@ -393,6 +413,7 @@ class CloudMediaStorageService(
                     bytes = bytes,
                     remotePath = remotePath,
                     contentType = detectedType,
+                    cacheControl = cacheControl,
                     timeoutMs = timeoutMs,
                     onProgress = onProgress
                 )
@@ -410,12 +431,16 @@ class CloudMediaStorageService(
         rawDataUrlOrRemoteUrl: String,
         remotePath: String,
         defaultContentType: String = "image/jpeg",
+        cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL,
+        deleteLocalFileAfterUpload: Boolean = false,
         timeoutMs: Long = UPLOAD_TIMEOUT_MS,
         onProgress: (Float) -> Unit = {}
     ): Result<String> = ensureRemoteMediaUrlWithMeta(
         rawDataUrlOrRemoteUrl = rawDataUrlOrRemoteUrl,
         remotePath = remotePath,
         defaultContentType = defaultContentType,
+        cacheControl = cacheControl,
+        deleteLocalFileAfterUpload = deleteLocalFileAfterUpload,
         timeoutMs = timeoutMs,
         onProgress = onProgress
     ).map { it.downloadUrl }
@@ -476,11 +501,37 @@ class CloudMediaStorageService(
 
     companion object {
         const val TAG = "KindredMediaUpload"
+        const val DEFAULT_MEDIA_CACHE_CONTROL = "public, max-age=31536000"
         const val UPLOAD_TIMEOUT_MS = 60_000L
         const val DOWNLOAD_TIMEOUT_MS = 30_000L
         const val MAX_INLINE_FIRESTORE_BYTES = 640_000
         const val MAX_INLINE_FIRESTORE_MEDIA_CHARS = 900_000
         const val MAX_INLINE_FIRESTORE_PHOTO_LIST_CHARS = 175_000
+
+        fun buildMediaMetadata(
+            contentType: String,
+            cacheControl: String = DEFAULT_MEDIA_CACHE_CONTROL
+        ): StorageMetadata {
+            val cleanContentType = contentType.trim().ifBlank { "application/octet-stream" }
+            val cleanCacheControl = cacheControl.trim().ifBlank { DEFAULT_MEDIA_CACHE_CONTROL }
+            return storageMetadata {
+                this.contentType = cleanContentType
+                this.cacheControl = cleanCacheControl
+            }
+        }
+
+        fun cleanupTempFileBestEffort(file: File?) {
+            if (file == null) return
+            runCatching {
+                if (file.exists()) {
+                    file.delete()
+                }
+            }
+        }
+
+        fun cleanupTempFilesBestEffort(files: Collection<File?>) {
+            files.forEach { cleanupTempFileBestEffort(it) }
+        }
 
         fun buildProfilePicturePath(uid: String, fileName: String): String {
             val cleanUid = uid.trim().trim('/')
@@ -644,9 +695,11 @@ class CloudMediaStorageService(
             timeoutMs: Long = DOWNLOAD_TIMEOUT_MS
         ): Result<File> = withContext(Dispatchers.IO) {
             var connection: HttpURLConnection? = null
+            var tempFile: File? = null
             try {
                 targetFile.parentFile?.mkdirs()
-                val tempFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
+                val stagingTempFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
+                tempFile = stagingTempFile
                 withTimeout(timeoutMs) {
                     connection = (URL(url).openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
@@ -661,7 +714,7 @@ class CloudMediaStorageService(
                         throw IOException("Media download failed (HTTP $code)")
                     }
                     conn.inputStream.use { input ->
-                        FileOutputStream(tempFile).use { output ->
+                        FileOutputStream(stagingTempFile).use { output ->
                             val buf = ByteArray(32 * 1024)
                             while (true) {
                                 val read = input.read(buf)
@@ -671,14 +724,14 @@ class CloudMediaStorageService(
                             output.flush()
                         }
                     }
-                    if (!tempFile.exists() || tempFile.length() <= 0L) {
-                        tempFile.delete()
+                    if (!stagingTempFile.exists() || stagingTempFile.length() <= 0L) {
+                        stagingTempFile.delete()
                         throw IOException("Downloaded video file was empty.")
                     }
                     if (targetFile.exists()) targetFile.delete()
-                    if (!tempFile.renameTo(targetFile)) {
-                        tempFile.copyTo(targetFile, overwrite = true)
-                        tempFile.delete()
+                    if (!stagingTempFile.renameTo(targetFile)) {
+                        stagingTempFile.copyTo(targetFile, overwrite = true)
+                        stagingTempFile.delete()
                     }
                 }
                 Result.success(targetFile)
@@ -691,6 +744,7 @@ class CloudMediaStorageService(
                 Log.e(TAG, "downloadUrlToFile failed for $url", e)
                 Result.failure(e)
             } finally {
+                cleanupTempFileBestEffort(tempFile)
                 runCatching { connection?.disconnect() }
             }
         }

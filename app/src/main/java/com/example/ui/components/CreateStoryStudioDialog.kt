@@ -67,6 +67,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -183,18 +184,31 @@ fun CreateStoryStudioDialog(
         }
     }
 
-    fun processPhotoUri(uri: Uri) {
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoClipHelper.cleanupPreparedUpload(capturedVideo)
+            com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(pendingSystemPhotoFile)
+            com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(pendingSystemVideoFile)
+        }
+    }
+
+    fun processPhotoUri(uri: Uri, tempSourceFile: File? = null) {
         scope.launch {
             isPreparingMedia = true
             previewError = null
-            val dataUrl = MediaImageHelper.compressUriForFeedPostDataUrl(
-                context = context,
-                uri = uri,
-                maxDim = 1080,
-                maxRawBytes = 220_000
-            )
+            val dataUrl = try {
+                MediaImageHelper.compressUriForFeedPostDataUrl(
+                    context = context,
+                    uri = uri,
+                    maxDim = 1080,
+                    maxRawBytes = 220_000
+                )
+            } finally {
+                com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(tempSourceFile)
+            }
             isPreparingMedia = false
             if (dataUrl != null) {
+                VideoClipHelper.cleanupPreparedUpload(capturedVideo)
                 capturedVideo = null
                 capturedPhotoDataUrl = dataUrl
             } else {
@@ -203,17 +217,22 @@ fun CreateStoryStudioDialog(
         }
     }
 
-    fun processVideoUri(uri: Uri) {
+    fun processVideoUri(uri: Uri, tempSourceFile: File? = null) {
         scope.launch {
             isPreparingMedia = true
             previewError = null
-            val res = VideoClipHelper.prepareVideoForUpload(
-                context = context,
-                uri = uri,
-                cacheKey = "story_cam_${System.currentTimeMillis()}"
-            )
+            val res = try {
+                VideoClipHelper.prepareVideoForUpload(
+                    context = context,
+                    uri = uri,
+                    cacheKey = "story_cam_${System.currentTimeMillis()}"
+                )
+            } finally {
+                com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(tempSourceFile)
+            }
             isPreparingMedia = false
             res.onSuccess { clip ->
+                VideoClipHelper.cleanupPreparedUpload(capturedVideo)
                 capturedPhotoDataUrl = null
                 capturedVideo = clip
             }.onFailure { err ->
@@ -228,7 +247,9 @@ fun CreateStoryStudioDialog(
         val file = pendingSystemPhotoFile
         pendingSystemPhotoFile = null
         if (saved && file != null && file.exists() && file.length() > 0L) {
-            processPhotoUri(Uri.fromFile(file))
+            processPhotoUri(Uri.fromFile(file), tempSourceFile = file)
+        } else {
+            com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(file)
         }
     }
 
@@ -238,7 +259,9 @@ fun CreateStoryStudioDialog(
         val file = pendingSystemVideoFile
         pendingSystemVideoFile = null
         if (saved && file != null && file.exists() && file.length() > 0L) {
-            processVideoUri(Uri.fromFile(file))
+            processVideoUri(Uri.fromFile(file), tempSourceFile = file)
+        } else {
+            com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(file)
         }
     }
 
@@ -300,9 +323,10 @@ fun CreateStoryStudioDialog(
             ContextCompat.getMainExecutor(context),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    processPhotoUri(Uri.fromFile(photoFile))
+                    processPhotoUri(Uri.fromFile(photoFile), tempSourceFile = photoFile)
                 }
                 override fun onError(exception: ImageCaptureException) {
+                    com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(photoFile)
                     runCatching {
                         val (file, uri) = VideoClipHelper.createCaptureStoryPhotoUri(context)
                         pendingSystemPhotoFile = file
@@ -338,8 +362,9 @@ fun CreateStoryStudioDialog(
                         isRecordingVideo = false
                         activeRecording = null
                         if (!recordEvent.hasError()) {
-                            processVideoUri(Uri.fromFile(videoFile))
+                            processVideoUri(Uri.fromFile(videoFile), tempSourceFile = videoFile)
                         } else {
+                            com.example.data.CloudMediaStorageService.cleanupTempFileBestEffort(videoFile)
                             onStatusMessage("Video recording failed")
                         }
                     }
@@ -608,6 +633,7 @@ fun CreateStoryStudioDialog(
                         ) {
                             IconButton(
                                 onClick = {
+                                    VideoClipHelper.cleanupPreparedUpload(capturedVideo)
                                     capturedPhotoDataUrl = null
                                     capturedVideo = null
                                     captionDraft = ""
@@ -660,15 +686,27 @@ fun CreateStoryStudioDialog(
                                                          vidWithRes(vid, cap) { success, errMsg ->
                                                              done = true
                                                              isPublishing = false
-                                                             if (success) onDismiss()
-                                                             else previewError = errMsg ?: "Failed to upload video story"
+                                                             if (success) {
+                                                                 onDismiss()
+                                                             } else {
+                                                                 if (!vid.localCachedFile.exists()) {
+                                                                     capturedVideo = null
+                                                                 }
+                                                                 previewError = errMsg ?: "Failed to upload video story"
+                                                             }
                                                          }
                                                      } else {
                                                          onPostVideoStory(vid, cap) { success ->
                                                              done = true
                                                              isPublishing = false
-                                                             if (success) onDismiss()
-                                                             else previewError = "Failed to upload video story"
+                                                             if (success) {
+                                                                 onDismiss()
+                                                             } else {
+                                                                 if (!vid.localCachedFile.exists()) {
+                                                                     capturedVideo = null
+                                                                 }
+                                                                 previewError = "Failed to upload video story"
+                                                             }
                                                          }
                                                      }
                                                      while (!done) { kotlinx.coroutines.delay(100L) }
@@ -678,6 +716,7 @@ fun CreateStoryStudioDialog(
                                              }
                                         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                                             android.util.Log.e("CreateStoryStudio", "Story upload timed out", e)
+                                            if (vid != null && !vid.localCachedFile.exists()) capturedVideo = null
                                             previewError = "Upload timed out. Check network connection."
                                             isPublishing = false
                                         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -685,6 +724,7 @@ fun CreateStoryStudioDialog(
                                             throw e
                                         } catch (e: Exception) {
                                             android.util.Log.e("CreateStoryStudio", "Story upload error", e)
+                                            if (vid != null && !vid.localCachedFile.exists()) capturedVideo = null
                                             previewError = e.localizedMessage ?: "Upload failed"
                                             isPublishing = false
                                         } finally {

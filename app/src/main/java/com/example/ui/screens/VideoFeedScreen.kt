@@ -65,6 +65,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,6 +138,12 @@ fun VideoFeedScreen(
     var isMuted by remember { mutableStateOf(false) }
     var activeCommentsVideoPost by remember { mutableStateOf<VideoPost?>(null) }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoClipHelper.cleanupPreparedUpload(pendingUpload)
+        }
+    }
+
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -146,6 +153,7 @@ fun VideoFeedScreen(
                 val res = VideoClipHelper.prepareVideoForUpload(context, uri)
                 isPreparing = false
                 res.onSuccess { clip ->
+                    VideoClipHelper.cleanupPreparedUpload(pendingUpload)
                     pendingUpload = clip
                 }.onFailure { err ->
                     onStatusMessage(err.localizedMessage ?: "Unable to prepare video")
@@ -331,6 +339,7 @@ fun VideoFeedScreen(
         AlertDialog(
             onDismissRequest = {
                 if (!isPublishing) {
+                    VideoClipHelper.cleanupPreparedUpload(pendingUpload)
                     pendingUpload = null
                     captionDraft = ""
                     uploadError = null
@@ -402,6 +411,9 @@ fun VideoFeedScreen(
                                                 captionDraft = ""
                                                 uploadError = null
                                             } else {
+                                                if (!upload.localCachedFile.exists()) {
+                                                    pendingUpload = null
+                                                }
                                                 uploadError = errMsg ?: "Publish failed"
                                             }
                                         }
@@ -415,6 +427,7 @@ fun VideoFeedScreen(
                                 }
                             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                                 android.util.Log.e("VideoFeed", "Reel publish timed out", e)
+                                if (!upload.localCachedFile.exists()) pendingUpload = null
                                 uploadError = "Upload timed out. Check network connection."
                                 isPublishing = false
                             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -422,6 +435,7 @@ fun VideoFeedScreen(
                                 throw e
                             } catch (e: Exception) {
                                 android.util.Log.e("VideoFeed", "Reel publish error", e)
+                                if (!upload.localCachedFile.exists()) pendingUpload = null
                                 uploadError = e.localizedMessage ?: "Publish failed"
                                 isPublishing = false
                             } finally {
@@ -443,6 +457,7 @@ fun VideoFeedScreen(
                 TextButton(
                     onClick = {
                         if (!isPublishing) {
+                            VideoClipHelper.cleanupPreparedUpload(pendingUpload)
                             pendingUpload = null
                             captionDraft = ""
                             uploadError = null

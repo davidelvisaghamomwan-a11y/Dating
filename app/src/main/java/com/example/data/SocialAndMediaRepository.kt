@@ -1042,6 +1042,8 @@ class SocialAndMediaRepository(
             Log.e(CloudMediaStorageService.TAG, "uploadProfileVideo failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
             Result.failure(IllegalStateException(msg, e))
+        } finally {
+            VideoClipHelper.cleanupPreparedUpload(prepared)
         }
     }
 
@@ -1290,6 +1292,8 @@ class SocialAndMediaRepository(
             Log.e(CloudMediaStorageService.TAG, "postVideoStory failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
             Result.failure(IllegalStateException(msg, e))
+        } finally {
+            VideoClipHelper.cleanupPreparedUpload(prepared)
         }
     }
 
@@ -1724,6 +1728,8 @@ class SocialAndMediaRepository(
             Log.e(CloudMediaStorageService.TAG, "publishVideoPost failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
             Result.failure(IllegalStateException(msg, e))
+        } finally {
+            VideoClipHelper.cleanupPreparedUpload(prepared)
         }
     }
 
@@ -2088,6 +2094,8 @@ class SocialAndMediaRepository(
             Log.e(CloudMediaStorageService.TAG, "publishFeedPost failed for $docPath: $msg", e)
             handleFirestoreError(e, OperationType.CREATE, docPath)
             Result.failure(IllegalStateException(msg, e))
+        } finally {
+            VideoClipHelper.cleanupPreparedUpload(preparedVideo)
         }
     }
 

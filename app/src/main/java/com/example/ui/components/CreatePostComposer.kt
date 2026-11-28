@@ -58,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -198,12 +199,19 @@ fun CreatePostComposerSheet(
     var isPublishing by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            VideoClipHelper.cleanupPreparedUpload(preparedVideo)
+        }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(6)
     ) { uris ->
         if (uris.isNotEmpty()) {
             scope.launch {
                 isPreparingMedia = true
+                VideoClipHelper.cleanupPreparedUpload(preparedVideo)
                 preparedVideo = null
                 val totalTargetCount = (photoUrls.size + uris.size).coerceIn(1, 6)
                 val perPhotoMaxBytes = if (totalTargetCount == 1) {
@@ -240,6 +248,7 @@ fun CreatePostComposerSheet(
                 val res = VideoClipHelper.prepareVideoForUpload(context, uri)
                 isPreparingMedia = false
                 res.onSuccess { clip ->
+                    VideoClipHelper.cleanupPreparedUpload(preparedVideo)
                     preparedVideo = clip
                 }.onFailure { err ->
                     errorMsg = err.localizedMessage ?: "Could not process video"
@@ -308,6 +317,9 @@ fun CreatePostComposerSheet(
                                                 if (success) {
                                                     onDismiss()
                                                 } else {
+                                                    if (vid != null && !vid.localCachedFile.exists()) {
+                                                        preparedVideo = null
+                                                    }
                                                     errorMsg = errMsg ?: "Publish failed. Please try again."
                                                 }
                                             }
@@ -320,6 +332,7 @@ fun CreatePostComposerSheet(
                                     }
                                 } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                                     android.util.Log.e("CreatePostComposer", "Publish timed out", e)
+                                    if (vid != null && !vid.localCachedFile.exists()) preparedVideo = null
                                     errorMsg = "Publishing timed out. Check network connection."
                                     isPublishing = false
                                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -327,6 +340,7 @@ fun CreatePostComposerSheet(
                                     throw e
                                 } catch (e: Exception) {
                                     android.util.Log.e("CreatePostComposer", "Publish error", e)
+                                    if (vid != null && !vid.localCachedFile.exists()) preparedVideo = null
                                     errorMsg = e.localizedMessage ?: "Publish failed"
                                     isPublishing = false
                                 } finally {
@@ -477,7 +491,10 @@ fun CreatePostComposerSheet(
                         }
                         Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(42.dp).align(Alignment.Center))
                         IconButton(
-                            onClick = { preparedVideo = null },
+                            onClick = {
+                                VideoClipHelper.cleanupPreparedUpload(preparedVideo)
+                                preparedVideo = null
+                            },
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(8.dp)

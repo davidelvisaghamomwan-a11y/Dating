@@ -1937,6 +1937,7 @@ class KindredRepository(
             handleFirestoreError(e, OperationType.WRITE, docPath)
             Result.failure(IllegalStateException(msg, e))
         } finally {
+            VideoClipHelper.cleanupPreparedUpload(preparedVideo)
             if (cleanMedia != null && cleanMedia.startsWith("file://")) {
                 runCatching {
                     val f = File(cleanMedia.removePrefix("file://"))
