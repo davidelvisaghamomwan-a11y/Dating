@@ -692,6 +692,11 @@ object KindredConstants {
     const val MAX_PROFILE_PHOTOS = 12
     const val ADMIN_EMAIL = "davidelvisaghamomwan@gmail.com"
 
+    // Video dimensions for Instagram-style feed
+    const val FEED_VIDEO_WIDTH = 1080
+    const val FEED_VIDEO_HEIGHT = 1350
+    const val FEED_VIDEO_ASPECT_RATIO = 4f / 5f
+
     val MODERATION_VIOLATION_REASONS = listOf(
         "Harassment or bullying",
         "Hate speech or discrimination",

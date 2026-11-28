@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -467,7 +468,7 @@ fun CreatePostComposerSheet(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp)
+                            .aspectRatio(com.example.model.KindredConstants.FEED_VIDEO_ASPECT_RATIO)
                             .clip(RoundedCornerShape(14.dp))
                             .background(Color(0xFF14101A))
                     ) {

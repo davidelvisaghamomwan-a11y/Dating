@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -98,6 +99,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1263,44 +1265,48 @@ private fun HomeReelPostCard(
     val heartAlpha = remember { Animatable(1f) }
     val likeScale = remember { Animatable(1f) }
 
-    fun triggerHeartAnimation() {
-        if (!isLiked) {
-            onToggleLike()
-        }
+    val currentIsLiked by rememberUpdatedState(isLiked)
+    val currentOnToggleLike by rememberUpdatedState(onToggleLike)
+
+    fun handleReelTapLikeToggle() {
+        val willLike = !currentIsLiked
+        currentOnToggleLike()
         scope.launch {
-            showHeartPop = true
-            heartScale.snapTo(0.2f)
-            heartAlpha.snapTo(1f)
             launch {
                 likeScale.animateTo(1.35f, spring(Spring.DampingRatioMediumBouncy))
                 likeScale.animateTo(1f)
             }
-            heartScale.animateTo(
-                targetValue = 1.3f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium
-                )
-            )
-            heartScale.animateTo(
-                targetValue = 1.0f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessLow
-                )
-            )
-            delay(500L)
-            launch {
+            if (willLike) {
+                showHeartPop = true
+                heartScale.snapTo(0.2f)
+                heartAlpha.snapTo(1f)
                 heartScale.animateTo(
-                    targetValue = 1.2f,
+                    targetValue = 1.3f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                )
+                heartScale.animateTo(
+                    targetValue = 1.0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                )
+                delay(500L)
+                launch {
+                    heartScale.animateTo(
+                        targetValue = 1.2f,
+                        animationSpec = tween(durationMillis = 250)
+                    )
+                }
+                heartAlpha.animateTo(
+                    targetValue = 0f,
                     animationSpec = tween(durationMillis = 250)
                 )
+                showHeartPop = false
             }
-            heartAlpha.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 250)
-            )
-            showHeartPop = false
         }
     }
     var userPaused by remember(reel.id) { mutableStateOf(false) }
@@ -1551,22 +1557,20 @@ private fun HomeReelPostCard(
             }
         }
 
-        // 2. Full-bleed 4:5 Reel Video Player
+        // 2. Full-bleed 4:5 Feed Video Player (1080x1350 aspect)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.5625f)
+                .aspectRatio(com.example.model.KindredConstants.FEED_VIDEO_ASPECT_RATIO)
                 .background(Color(0xFF0D0C10))
                 .pointerInput(reel.id) {
                     detectTapGestures(
-                        onDoubleTap = {
-                            triggerHeartAnimation()
-                        },
                         onTap = {
-                            userPaused = !userPaused
+                            handleReelTapLikeToggle()
                         }
                     )
-                },
+                }
+                .testTag("home_reel_media_${reel.id}"),
             contentAlignment = Alignment.Center
         ) {
             val file = resolvedVideoFile
@@ -1641,6 +1645,26 @@ private fun HomeReelPostCard(
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
+                    )
+                }
+            }
+
+            // Play/Pause control bottom-start
+            if (file != null) {
+                IconButton(
+                    onClick = { userPaused = !userPaused },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(10.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                        .size(34.dp)
+                        .testTag("home_reel_play_pause_${reel.id}")
+                ) {
+                    Icon(
+                        imageVector = if (playVideo) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (playVideo) "Pause reel" else "Play reel",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }

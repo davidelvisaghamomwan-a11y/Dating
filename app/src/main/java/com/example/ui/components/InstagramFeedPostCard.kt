@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
@@ -70,6 +71,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.model.FeedPost
+import com.example.model.KindredConstants
 import com.example.model.PublicProfile
 import com.example.ui.theme.ChampagneGold
 import com.example.ui.theme.CoralRose
@@ -165,44 +168,48 @@ fun InstagramFeedPostCard(
     val heartAlpha = remember { Animatable(1f) }
     val likeScale = remember { Animatable(1f) }
 
-    fun triggerHeartAnimation() {
-        if (!isLiked) {
-            onToggleLike()
-        }
+    val currentIsLiked by rememberUpdatedState(isLiked)
+    val currentOnToggleLike by rememberUpdatedState(onToggleLike)
+
+    fun handlePostTapLikeToggle() {
+        val willLike = !currentIsLiked
+        currentOnToggleLike()
         scope.launch {
-            showHeartPop = true
-            heartScale.snapTo(0.2f)
-            heartAlpha.snapTo(1f)
             launch {
                 likeScale.animateTo(1.35f, spring(Spring.DampingRatioMediumBouncy))
                 likeScale.animateTo(1f)
             }
-            heartScale.animateTo(
-                targetValue = 1.3f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium
-                )
-            )
-            heartScale.animateTo(
-                targetValue = 1.0f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness = Spring.StiffnessLow
-                )
-            )
-            delay(500L)
-            launch {
+            if (willLike) {
+                showHeartPop = true
+                heartScale.snapTo(0.2f)
+                heartAlpha.snapTo(1f)
                 heartScale.animateTo(
-                    targetValue = 1.2f,
+                    targetValue = 1.3f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                )
+                heartScale.animateTo(
+                    targetValue = 1.0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                )
+                delay(500L)
+                launch {
+                    heartScale.animateTo(
+                        targetValue = 1.2f,
+                        animationSpec = tween(durationMillis = 250)
+                    )
+                }
+                heartAlpha.animateTo(
+                    targetValue = 0f,
                     animationSpec = tween(durationMillis = 250)
                 )
+                showHeartPop = false
             }
-            heartAlpha.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 250)
-            )
-            showHeartPop = false
         }
     }
 
@@ -456,7 +463,7 @@ fun InstagramFeedPostCard(
         val firstBitmap: ImageBitmap? = photoUrls.firstOrNull()?.let { decodedBitmaps[it] }
         val primaryAspectRatio = remember(post.id, firstBitmap, post.mediaType) {
             when {
-                post.mediaType == "VIDEO" -> 0.5625f
+                post.mediaType == "VIDEO" -> KindredConstants.FEED_VIDEO_ASPECT_RATIO
                 firstBitmap != null && firstBitmap.height > 0 -> {
                     (firstBitmap.width.toFloat() / firstBitmap.height.toFloat()).coerceIn(0.75f, 1.91f)
                 }
@@ -471,16 +478,12 @@ fun InstagramFeedPostCard(
                 .background(Color(0xFF0D0C10))
                 .pointerInput(post.id) {
                     detectTapGestures(
-                        onDoubleTap = {
-                            triggerHeartAnimation()
-                        },
                         onTap = {
-                            if (post.mediaType == "VIDEO") {
-                                userPaused = !userPaused
-                            }
+                            handlePostTapLikeToggle()
                         }
                     )
-                },
+                }
+                .testTag("feed_post_media_${post.id}"),
             contentAlignment = Alignment.Center
         ) {
             when {
@@ -539,6 +542,26 @@ fun InstagramFeedPostCard(
                         }
                     }
 
+                    // Play/Pause control bottom-start so tapping post still toggles like/unlike
+                    if (file != null) {
+                        IconButton(
+                            onClick = { userPaused = !userPaused },
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(10.dp)
+                                .background(Color.Black.copy(alpha = 0.55f), CircleShape)
+                                .size(34.dp)
+                                .testTag("feed_video_play_pause_${post.id}")
+                        ) {
+                            Icon(
+                                imageVector = if (playVideo) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (playVideo) "Pause video" else "Play video",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
                     // Mute/Unmute audio control
                     IconButton(
                         onClick = { isMuted = !isMuted },
@@ -569,7 +592,7 @@ fun InstagramFeedPostCard(
                             .fillMaxSize()
                             .pointerInput(post.id, page) {
                                 detectTapGestures(
-                                    onDoubleTap = { triggerHeartAnimation() }
+                                    onTap = { handlePostTapLikeToggle() }
                                 )
                             }
                         if (bmp != null) {
@@ -631,7 +654,7 @@ fun InstagramFeedPostCard(
                         .fillMaxSize()
                         .pointerInput(post.id) {
                             detectTapGestures(
-                                onDoubleTap = { triggerHeartAnimation() }
+                                onTap = { handlePostTapLikeToggle() }
                             )
                         }
                     if (bmp != null) {

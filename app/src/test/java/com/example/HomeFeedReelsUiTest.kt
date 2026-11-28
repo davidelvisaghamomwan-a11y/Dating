@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -14,16 +15,20 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.dp
 import com.example.model.FeedPost
+import com.example.model.KindredConstants
 import com.example.model.PublicProfile
 import com.example.model.VideoPost
+import com.example.ui.components.InstagramFeedPostCard
 import com.example.ui.screens.HomeFeedScreen
 import com.google.firebase.Timestamp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlin.math.abs
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-xxhdpi")
@@ -205,6 +210,79 @@ class HomeFeedReelsUiTest {
 
         composeTestRule.waitForIdle()
         org.junit.Assert.assertTrue("Feed should be refreshed automatically when opening screen", refreshCalled)
+    }
+
+    @Test
+    fun feedPost_singleTapLikesAndSecondTapUnlikes_andVideoUses4By5Ratio() {
+        assertEquals(1080, KindredConstants.FEED_VIDEO_WIDTH)
+        assertEquals(1350, KindredConstants.FEED_VIDEO_HEIGHT)
+        assertEquals(4f / 5f, KindredConstants.FEED_VIDEO_ASPECT_RATIO, 0.0001f)
+
+        val currentUser = PublicProfile(userId = "me_1", displayName = "Me")
+        val initialVideoPost = FeedPost(
+            id = "vid_feed_45",
+            userId = "author_2",
+            authorName = "Maya",
+            caption = "Portrait 4:5 video",
+            mediaType = "VIDEO",
+            likedByUids = emptyList(),
+            createdAt = Timestamp(500L, 0)
+        )
+        val postState = androidx.compose.runtime.mutableStateOf(initialVideoPost)
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(412.dp, 915.dp)) {
+                    InstagramFeedPostCard(
+                        post = postState.value,
+                        authorProfile = PublicProfile(userId = "author_2", displayName = "Maya"),
+                        currentUserId = currentUser.userId,
+                        resolveVideoFile = { Result.failure(IllegalStateException("none")) },
+                        onToggleLike = {
+                            val liked = currentUser.userId in postState.value.likedByUids
+                            postState.value = postState.value.copy(
+                                likedByUids = if (liked) {
+                                    postState.value.likedByUids - currentUser.userId
+                                } else {
+                                    postState.value.likedByUids + currentUser.userId
+                                }
+                            )
+                        },
+                        onToggleSave = {},
+                        onOpenComments = {},
+                        onDeletePost = {},
+                        onOpenAuthor = {}
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+
+        // Verify 4:5 (1080x1350) full-width aspect ratio on feed post video container
+        val bounds = composeTestRule.onNodeWithTag("feed_post_media_${initialVideoPost.id}")
+            .fetchSemanticsNode().boundsInRoot
+        val ratio = bounds.width / bounds.height
+        assertTrue(
+            "Expected 4:5 aspect ratio (0.8), got $ratio (${bounds.width}x${bounds.height})",
+            abs(ratio - KindredConstants.FEED_VIDEO_ASPECT_RATIO) < 0.02f
+        )
+
+        // First tap on post -> likes it
+        composeTestRule.onNodeWithTag("feed_post_media_${initialVideoPost.id}").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Single tap should like the post",
+            currentUser.userId in postState.value.likedByUids
+        )
+
+        // Second tap on same post -> unlikes it
+        composeTestRule.onNodeWithTag("feed_post_media_${initialVideoPost.id}").performClick()
+        composeTestRule.waitForIdle()
+        assertTrue(
+            "Second tap on the same post should unlike it",
+            currentUser.userId !in postState.value.likedByUids
+        )
     }
 }
 
